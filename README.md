@@ -38,6 +38,8 @@ Canvas is an AI-assisted website-building SaaS. The current foundation includes 
 
 Open [http://localhost:3000](http://localhost:3000), create an account, then create a workspace and project. The Pages screen manages site structure and URLs. Media provides a private, project-scoped image library. Brand / Theme manages company identity, logos selected from Media, semantic colors, controlled design scales, and a live light/dark preview. Project owners manage invitation links and members from Collaborators.
 
+Builder renders the controlled project runtime in an iframe sandbox with an opaque origin. Preview sessions and asset URLs use short-lived HMAC tokens, so set `PREVIEW_TOKEN_SECRET` to a private random value of at least 32 characters. The local same-origin route is a development compromise: `allow-same-origin` is deliberately omitted, embedded resource requests are credentialless, preview responses have a restrictive CSP, and preview code cannot read Canvas cookies or browser storage. Production can move the same token-backed routes to a dedicated preview origin for stronger process/origin isolation. Light mode uses the primary logo; Dark mode uses the alternate logo when available and otherwise falls back to primary. Membership is rechecked for token-protected requests. A removed collaborator may retain already-rendered, non-sensitive manifest text until the isolated frame refreshes, but cannot load protected media or create a new session; tokens expire after five minutes by default.
+
 ## Quality checks
 
 ```bash
@@ -58,6 +60,7 @@ Integration tests use `DATABASE_URL` and clear records from the Phase 1 tables. 
 - `src/server/permissions` centralizes authorization checks.
 - `src/server/db` owns the PostgreSQL client, schema mapping, and migration runner.
 - `src/server/storage` defines object storage and its local development adapter.
+- `src/generated-runtime` owns the versioned preview manifest, signed sessions, restrictive response policy, isolated document renderer, runtime router, messaging protocol, and placeholder content-provider boundary.
 - `migrations` contains deterministic SQL migrations and database integrity constraints.
 
 Sessions are opaque random tokens stored only in HTTP-only, same-site cookies; only token hashes are persisted. Credentials use Argon2id. Invitation tokens follow the same plaintext-once/hash-at-rest model and expire after seven days by default. Every workspace/project operation derives the user ID from the server session and rechecks the effective owner/collaborator role server-side.
@@ -82,5 +85,7 @@ Media metadata and hierarchy live in PostgreSQL while image bytes live behind th
 | `STORAGE_DRIVER` | No | Object storage adapter; Phase 5 supports `local` (default). |
 | `LOCAL_STORAGE_PATH` | No | Local private object root; defaults to `.canvas-storage`. |
 | `MEDIA_MAX_BYTES` | No | Maximum bytes per uploaded image; defaults to `10485760` (10 MB). |
+| `PREVIEW_TOKEN_SECRET` | Yes | Private HMAC secret of at least 32 characters for preview sessions. |
+| `PREVIEW_TOKEN_TTL_SECONDS` | No | Preview session lifetime, constrained to 30–900 seconds; defaults to `300`. |
 
 No AI, worker, or generated-runtime configuration is required yet.

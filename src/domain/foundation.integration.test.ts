@@ -18,6 +18,8 @@ import { BrandService, ThemeService, getProjectDesignSystem } from "@/domain/the
 import { DEFAULT_DARK_TOKENS, DEFAULT_LIGHT_TOKENS, DEFAULT_THEME } from "@/domain/theme/defaults";
 import { MediaService, getProjectMediaContext } from "@/domain/media/service";
 import type { ObjectStorage } from "@/server/storage";
+import { PreviewManifestService } from "@/generated-runtime/manifest/service";
+import { PreviewTokenService } from "@/generated-runtime/security/preview-token";
 
 async function createUser(label: string) {
   const id = randomUUID();
@@ -497,5 +499,34 @@ describe.sequential("Phase 1 persistence and tenant isolation", () => {
     await expect(db.insert(mediaAssets).values({ projectId: a.id, folderId: foreign?.id, originalFilename: "x.png", displayName: "x", storageKey: "unique/x.png", mimeType: "image/png", sizeBytes: 1, width: 1, height: 1, createdByUserId: owner.id })).rejects.toMatchObject({ cause: { code: "23503" } });
     await new MembershipService().remove(owner.id, { projectId: a.id, userId: collaborator.id });
     await expect(media.createFolder(collaborator.id, { projectId: a.id, name: "Revoked" })).rejects.toThrowError(/do not have access/);
+  });
+
+  it("builds safe versioned preview manifests for owners and collaborators and revokes access", async () => {
+    const owner = await createUser("owner"); const collaborator = await createUser("collaborator"); const stranger = await createUser("stranger");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Preview Site" });
+    const other = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Other" });
+    await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
+    const tree = new PageTreeService(); const home = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const folder = await tree.create(owner.id, { projectId: project.id, type: "folder", name: "Company" });
+    const about = await tree.create(owner.id, { projectId: project.id, parentId: folder.id, type: "page", name: "About" });
+    const services = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Services" });
+    const web = await tree.create(owner.id, { projectId: project.id, parentId: services.id, type: "page", name: "Web" });
+    const removed = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Removed" }); await tree.deleteSubtree(owner.id, { projectId: project.id, nodeId: removed.id });
+    const themes = new ThemeService(); const currentTheme = await themes.read(owner.id, project.id); await themes.update(owner.id, { projectId: project.id, expectedRevision: currentTheme.revision, theme: { ...DEFAULT_THEME, lightTokens: { ...DEFAULT_LIGHT_TOKENS, accent: "#123456" }, radiusScale: 80, spacingScale: 70, shadowScale: 60, fontScale: 55, borderScale: 65 } });
+    const [logo] = await db.insert(mediaAssets).values({ projectId: project.id, originalFilename: "logo.png", displayName: "Logo", storageKey: `projects/${project.id}/safe-logo`, mimeType: "image/png", sizeBytes: 100, width: 200, height: 80, altText: "Preview Site logo", createdByUserId: owner.id }).returning();
+    await db.insert(mediaAssets).values({ projectId: other.id, originalFilename: "foreign.png", displayName: "Foreign", storageKey: `projects/${other.id}/foreign`, mimeType: "image/png", sizeBytes: 100, width: 20, height: 20, createdByUserId: owner.id });
+    if (!logo) throw new Error("Logo was not created.");
+    await db.update(projectBrandSettings).set({ primaryLogoMediaId: logo.id, alternateLogoMediaId: logo.id }).where(eq(projectBrandSettings.projectId, project.id));
+    const tokens = new PreviewTokenService("integration-preview-secret-that-is-definitely-long-enough"); const previews = new PreviewManifestService(undefined, tokens);
+    const ownerSession = await previews.createSession(owner.id, project.id); const manifest = ownerSession.manifest; const serializedManifest = JSON.stringify(manifest);
+    expect(manifest).toMatchObject({ manifestVersion: 1, projectId: project.id, homepage: home.id, routes: { "/": { pageId: home.id }, "/about": { pageId: about.id }, "/services": { pageId: services.id }, "/services/web": { pageId: web.id } }, brand: { logoMediaIds: { light: logo.id, dark: logo.id } }, theme: { colors: { light: { accent: "#123456" } } } });
+    expect(manifest.pages.some((page) => page.pageId === removed.id)).toBe(false); expect(Object.values(manifest.routes).some((route) => route.name === "Company")).toBe(false);
+    expect(manifest.media[logo.id]).toMatchObject({ id: logo.id, previewUrl: expect.stringContaining(`/api/preview/media/${logo.id}?token=`) });
+    expect(Object.values(manifest.media)).toHaveLength(1); expect(serializedManifest).not.toContain("storageKey"); expect(serializedManifest).not.toContain("safe-logo"); expect(serializedManifest).not.toContain("DATABASE_URL");
+    await expect(previews.createSession(collaborator.id, project.id)).resolves.toMatchObject({ manifest: { projectId: project.id } });
+    await expect(previews.createSession(stranger.id, project.id)).rejects.toThrowError(/do not have access/);
+    const collaboratorSession = await previews.createSession(collaborator.id, project.id); await new MembershipService().remove(owner.id, { projectId: project.id, userId: collaborator.id });
+    await expect(previews.fromToken(collaboratorSession.token)).rejects.toThrowError(/do not have access/);
   });
 });
