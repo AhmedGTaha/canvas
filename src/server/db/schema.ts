@@ -22,6 +22,8 @@ export const pageNodeType = pgEnum("page_node_type", ["page", "folder"]);
 export const aiMessageRole = pgEnum("ai_message_role", ["user", "assistant", "system_internal"]);
 export const generationTargetType = pgEnum("generation_target_type", ["project", "page", "building_block"]);
 export const generationJobStatus = pgEnum("generation_job_status", ["queued", "preparing_context", "generating", "validating", "applying", "completed", "failed", "cancelled"]);
+export const changeSetOperation = pgEnum("change_set_operation", ["page_generate", "page_modify", "block_generate", "block_modify", "block_duplicate", "block_global_toggle", "block_archive", "page_version_restore", "block_version_restore", "checkpoint_restore", "undo", "redo"]);
+export const changeSetEntityType = pgEnum("change_set_entity_type", ["page", "building_block", "project"]);
 export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify", "block_generate", "block_modify"]);
 
 export const users = pgTable("users", {
@@ -283,6 +285,7 @@ export const pageVersions = pgTable("page_versions", {
   sourceHash: char("source_hash", { length: 64 }).notNull(),
   createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   generationJobId: uuid("generation_job_id"),
+  changeSetId: uuid("change_set_id"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (table) => [unique("page_versions_page_number_unique").on(table.pageId, table.versionNumber), unique("page_versions_generation_job_unique").on(table.generationJobId), unique("page_versions_id_page_project_unique").on(table.id, table.pageId, table.projectId), index("page_versions_page_created_idx").on(table.projectId, table.pageId, table.createdAt)]);
 
@@ -340,6 +343,54 @@ export const buildingBlockUsages = pgTable("building_block_usages", {
   index("building_block_usages_page_idx").on(table.pageId),
 ]);
 
+export const changeSets = pgTable("change_sets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  operation: changeSetOperation("operation").notNull(),
+  summary: varchar("summary", { length: 300 }).notNull(),
+  reversible: boolean("reversible").notNull().default(true),
+  sequence: bigint("sequence", { mode: "number" }).generatedAlwaysAsIdentity(),
+  generationJobId: uuid("generation_job_id"),
+  sourceChangeSetId: uuid("source_change_set_id"),
+  undoneAt: timestamp("undone_at", { withTimezone: true, mode: "date" }),
+  undoneByChangeSetId: uuid("undone_by_change_set_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [unique("change_sets_id_project_unique").on(table.id, table.projectId), index("change_sets_project_sequence_idx").on(table.projectId, table.sequence)]);
+
+export const changeSetItems = pgTable("change_set_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  changeSetId: uuid("change_set_id").notNull(),
+  projectId: uuid("project_id").notNull(),
+  entityType: changeSetEntityType("entity_type").notNull(),
+  entityId: uuid("entity_id"),
+  beforeVersionId: uuid("before_version_id"),
+  afterVersionId: uuid("after_version_id"),
+  beforeState: jsonb("before_state"),
+  afterState: jsonb("after_state"),
+  position: integer("position").notNull(),
+}, (table) => [unique("change_set_items_set_position_unique").on(table.changeSetId, table.position), index("change_set_items_entity_idx").on(table.projectId, table.entityType, table.entityId)]);
+
+export const projectCheckpoints = pgTable("project_checkpoints", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 120 }).notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  projectState: jsonb("project_state").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [unique("project_checkpoints_id_project_unique").on(table.id, table.projectId), index("project_checkpoints_project_created_idx").on(table.projectId, table.createdAt)]);
+
+export const projectCheckpointItems = pgTable("project_checkpoint_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  checkpointId: uuid("checkpoint_id").notNull(),
+  projectId: uuid("project_id").notNull(),
+  entityType: changeSetEntityType("entity_type").notNull(),
+  entityId: uuid("entity_id"),
+  versionId: uuid("version_id"),
+  entityState: jsonb("entity_state").notNull().default({}),
+  position: integer("position").notNull(),
+}, (table) => [unique("project_checkpoint_items_position_unique").on(table.checkpointId, table.position), unique("project_checkpoint_items_entity_unique").on(table.checkpointId, table.entityType, table.entityId), index("project_checkpoint_items_checkpoint_idx").on(table.checkpointId, table.position)]);
+
 export const aiJobRateLimits = pgTable("ai_job_rate_limits", {
   scope: varchar("scope", { length: 16 }).notNull(),
   subjectId: uuid("subject_id").notNull(),
@@ -363,6 +414,10 @@ export type AIConversation = typeof aiConversations.$inferSelect;
 export type AIMessage = typeof aiMessages.$inferSelect;
 export type GenerationJob = typeof generationJobs.$inferSelect;
 export type PageVersion = typeof pageVersions.$inferSelect;
+export type ChangeSet = typeof changeSets.$inferSelect;
+export type ChangeSetItem = typeof changeSetItems.$inferSelect;
+export type ProjectCheckpoint = typeof projectCheckpoints.$inferSelect;
+export type ProjectCheckpointItem = typeof projectCheckpointItems.$inferSelect;
 export type BuildingBlock = typeof buildingBlocks.$inferSelect;
 export type BuildingBlockVersion = typeof buildingBlockVersions.$inferSelect;
 export type BuildingBlockUsage = typeof buildingBlockUsages.$inferSelect;

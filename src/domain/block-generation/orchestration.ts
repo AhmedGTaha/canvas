@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, buildingBlockVersions, buildingBlocks, generationJobMedia, generationJobs, mediaAssets } from "@/server/db/schema";
@@ -11,6 +11,7 @@ import { AIError, type AIProvider } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
 import { validateGeneratedBlockSource, type GeneratedBlockManifest } from "@/domain/blocks/validation";
+import { recordChangeSet } from "@/domain/history/change-set-service";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
 import { assembleBlockGenerationRequest } from "./prompt";
@@ -155,7 +156,14 @@ export class BlockGenerationOrchestrationService {
       const [existing] = await transaction.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.generationJobId, job.id)).limit(1);
       if (existing) return (await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultBlockVersionId: existing.id, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning())[0]!;
       const [latest] = await transaction.select({ versionNumber: buildingBlockVersions.versionNumber }).from(buildingBlockVersions).where(and(eq(buildingBlockVersions.projectId, job.projectId), eq(buildingBlockVersions.buildingBlockId, block.id))).orderBy(desc(buildingBlockVersions.versionNumber)).limit(1);
+      const versionId = randomUUID();
+      const changeSet = await recordChangeSet(transaction, {
+        projectId: job.projectId, actorUserId: job.actorUserId, operation: job.operation === "block_generate" ? "block_generate" : "block_modify",
+        summary: `${block.name}: ${input.summary.headline}`, generationJobId: job.id,
+        items: [{ entityType: "building_block", entityId: block.id, beforeVersionId: job.baseBlockVersionId, afterVersionId: versionId }],
+      });
       const [version] = await transaction.insert(buildingBlockVersions).values({
+        id: versionId, changeSetId: changeSet.id,
         projectId: job.projectId, buildingBlockId: block.id, versionNumber: (latest?.versionNumber ?? 0) + 1,
         sourceCode: input.sourceCode, manifest: input.manifest, changeSummary: input.summary,
         sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id,
@@ -163,7 +171,7 @@ export class BlockGenerationOrchestrationService {
       if (!version) throw new AIError("AI_INTERNAL_ERROR", "Building Block version could not be created.");
       await transaction.update(buildingBlocks).set({ currentVersionId: version.id, updatedAt: new Date() }).where(eq(buildingBlocks.id, block.id));
       const [message] = await transaction.insert(aiMessages).values({ conversationId: job.conversationId, role: "assistant", content: summaryMessage(input.summary), metadata: { generationJobId: job.id, buildingBlockVersionId: version.id, summary: input.summary } }).returning();
-      const [completed] = await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultBlockVersionId: version.id, resultMessageId: message?.id, provider: input.provider, providerModel: input.model, providerRequestId: input.providerRequestId, usageMetadata: input.usage, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning();
+      const [completed] = await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultBlockVersionId: version.id, resultChangeSetId: changeSet.id, resultMessageId: message?.id, provider: input.provider, providerModel: input.model, providerRequestId: input.providerRequestId, usageMetadata: input.usage, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning();
       await transaction.insert(auditEvents).values([
         { projectId: job.projectId, userId: job.actorUserId, action: "block.version_created", entityType: "building_block_version", entityId: version.id, metadata: { blockId: block.id, versionNumber: version.versionNumber } },
         { projectId: job.projectId, userId: job.actorUserId, action: "block.version_activated", entityType: "building_block_version", entityId: version.id, metadata: { blockId: block.id } },

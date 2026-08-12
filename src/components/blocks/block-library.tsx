@@ -9,6 +9,7 @@ import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
 import { SelectedElementChip } from "@/components/builder/builder-workspace";
+import { HistoryControls } from "@/components/history/history-controls";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import { AI_LIMITS } from "@/domain/ai/limits";
 import { BLOCK_MEDIA_ATTACHMENT_LIMIT } from "@/domain/generated-source/limits";
@@ -211,6 +212,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
           {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · Version ${selected.currentVersionNumber}` : " · Not created yet"}</span> : <span>Select a block to preview it.</span>}
         </div>
         <div className="builder-toolbar-right">
+          <HistoryControls projectId={projectId} target={selected ? { kind: "block", id: selected.id, name: selected.name } : null} onChanged={() => { void reloadBlocks(); void refreshPreview(); }} />
           <Button type="button" variant={selectMode ? "secondary" : "ghost"} aria-pressed={selectMode} disabled={!selected} onClick={toggleSelectMode}><MousePointerClick size={15} />{selectMode ? "Selecting" : "Select element"}</Button>
           <div className="segmented compact" role="group" aria-label="Preview theme">
             <button type="button" className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><Sun size={14} />Light</button>

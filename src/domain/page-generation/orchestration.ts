@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, generationJobMedia, generationJobs, mediaAssets, pageNodes, pageVersions } from "@/server/db/schema";
@@ -11,6 +11,7 @@ import { AIError, type AIProvider } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
 import { loadActiveBlockSources, reconcilePageBlockUsages } from "@/domain/blocks/usages";
+import { recordChangeSet } from "@/domain/history/change-set-service";
 import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedPageResponseSchema, type PageChangeSummary } from "./contract";
@@ -128,11 +129,18 @@ export class PageGenerationOrchestrationService {
       // state and active usage state can never disagree after a successful activation.
       const resolvedUsages = await this.reconcile(transaction, job.projectId, page.id, input.manifest.blockUsages);
       const manifest = { ...input.manifest, blockUsages: resolvedUsages };
-      const [version] = await transaction.insert(pageVersions).values({ projectId: job.projectId, pageId: page.id, versionNumber: (latest?.versionNumber ?? 0) + 1, sourceCode: input.sourceCode, manifest, seoMetadata: { title: page.pageTitle, description: page.metaDescription }, changeSummary: input.summary, sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id }).returning();
+      // The Change Set is written first so the immutable version can point at it.
+      const versionId = randomUUID();
+      const changeSet = await recordChangeSet(transaction, {
+        projectId: job.projectId, actorUserId: job.actorUserId, operation: job.operation === "page_generate" ? "page_generate" : "page_modify",
+        summary: `${page.name}: ${input.summary.headline}`, generationJobId: job.id,
+        items: [{ entityType: "page", entityId: page.id, beforeVersionId: job.basePageVersionId, afterVersionId: versionId }],
+      });
+      const [version] = await transaction.insert(pageVersions).values({ id: versionId, changeSetId: changeSet.id, projectId: job.projectId, pageId: page.id, versionNumber: (latest?.versionNumber ?? 0) + 1, sourceCode: input.sourceCode, manifest, seoMetadata: { title: page.pageTitle, description: page.metaDescription }, changeSummary: input.summary, sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id }).returning();
       if (!version) throw new AIError("AI_INTERNAL_ERROR", "Page version could not be created.");
       await transaction.update(pageNodes).set({ currentVersionId: version.id, updatedAt: new Date() }).where(eq(pageNodes.id, page.id));
       const [message] = await transaction.insert(aiMessages).values({ conversationId: job.conversationId, role: "assistant", content: summaryMessage(input.summary), metadata: { generationJobId: job.id, pageVersionId: version.id, summary: input.summary } }).returning();
-      const [completed] = await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultPageVersionId: version.id, resultMessageId: message?.id, provider: input.provider, providerModel: input.model, providerRequestId: input.providerRequestId, usageMetadata: input.usage, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning();
+      const [completed] = await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultPageVersionId: version.id, resultChangeSetId: changeSet.id, resultMessageId: message?.id, provider: input.provider, providerModel: input.model, providerRequestId: input.providerRequestId, usageMetadata: input.usage, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning();
       await transaction.insert(auditEvents).values([{ projectId: job.projectId, userId: job.actorUserId, action: "page.version_created", entityType: "page_version", entityId: version.id, metadata: { pageId: page.id, versionNumber: version.versionNumber } }, { projectId: job.projectId, userId: job.actorUserId, action: "page.version_activated", entityType: "page_version", entityId: version.id, metadata: { pageId: page.id } }, { projectId: job.projectId, userId: job.actorUserId, action: "ai.page_generation_completed", entityType: "generation_job", entityId: job.id, metadata: { pageId: page.id, versionId: version.id } }]);
       if (!completed) throw new AIError("AI_INTERNAL_ERROR", "Generation job could not be completed."); return completed;
     });

@@ -6,6 +6,7 @@ import { BuildingBlockRepository } from "./repository";
 import { duplicateBlockManifest, duplicateBlockName } from "./duplication";
 import { blockDeleted, blockGenerationActive, blockGlobalConversionFailed, blockInUse, blockNotFound } from "./errors";
 import { createBlockSchema, blockReferenceSchema, listBlocksSchema, setBlockGlobalSchema, updateBlockSchema } from "./schemas";
+import { recordChangeSet } from "@/domain/history/change-set-service";
 
 const ACTIVE_JOB_STATUSES = ["queued", "preparing_context", "generating", "validating", "applying"] as const;
 
@@ -107,6 +108,11 @@ export class BuildingBlockService {
       }
       const [updated] = await transaction.update(buildingBlocks).set({ isGlobal: parsed.isGlobal, updatedAt: new Date() }).where(eq(buildingBlocks.id, locked.id)).returning();
       if (!updated) throw blockNotFound();
+      await recordChangeSet(transaction, {
+        projectId: parsed.projectId, actorUserId: userId, operation: "block_global_toggle",
+        summary: `${locked.name}: ${parsed.isGlobal ? "shared across pages" : "no longer shared"}`,
+        items: [{ entityType: "building_block", entityId: locked.id, beforeVersionId: locked.currentVersionId, afterVersionId: locked.currentVersionId, beforeState: { isGlobal: locked.isGlobal, archived: Boolean(locked.deletedAt) }, afterState: { isGlobal: parsed.isGlobal, archived: Boolean(locked.deletedAt) } }],
+      });
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: parsed.isGlobal ? "block.made_global" : "block.made_local", entityType: "building_block", entityId: locked.id, metadata: { usageCount: usages.length } });
       return updated;
     });
@@ -137,6 +143,10 @@ export class BuildingBlockService {
         await transaction.update(buildingBlocks).set({ currentVersionId: copiedVersion.id, updatedAt: new Date() }).where(eq(buildingBlocks.id, copy.id));
         copy.currentVersionId = copiedVersion.id;
       }
+      await recordChangeSet(transaction, {
+        projectId: parsed.projectId, actorUserId: userId, operation: "block_duplicate", summary: `Duplicated ${block.name} as ${copy.name}`,
+        items: [{ entityType: "building_block", entityId: copy.id, beforeVersionId: null, afterVersionId: copy.currentVersionId, afterState: { isGlobal: copy.isGlobal, archived: false } }],
+      });
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "block.duplicated", entityType: "building_block", entityId: copy.id, metadata: { sourceBlockId: block.id } });
       return copy;
     });
@@ -161,6 +171,10 @@ export class BuildingBlockService {
       if (usages.length) throw blockInUse(new Set(usages.map((usage) => usage.pageId)).size);
       const now = new Date();
       const [archived] = await transaction.update(buildingBlocks).set({ deletedAt: now, updatedAt: now }).where(eq(buildingBlocks.id, locked.id)).returning();
+      await recordChangeSet(transaction, {
+        projectId: parsed.projectId, actorUserId: userId, operation: "block_archive", summary: `Archived ${locked.name}`,
+        items: [{ entityType: "building_block", entityId: locked.id, beforeVersionId: locked.currentVersionId, afterVersionId: locked.currentVersionId, beforeState: { isGlobal: locked.isGlobal, archived: false }, afterState: { isGlobal: locked.isGlobal, archived: true } }],
+      });
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "block.archived", entityType: "building_block", entityId: locked.id });
       return archived!;
     });

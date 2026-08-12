@@ -20,18 +20,30 @@ type TransactionLike = Pick<Database, "select" | "insert" | "delete">;
  * Version. Global usages stay unpinned; non-global usages pin the version that was
  * active when the page was activated.
  */
-export async function reconcilePageBlockUsages(transaction: TransactionLike, input: { projectId: string; pageId: string; usages: GeneratedBlockUsage[] }) {
+export async function reconcilePageBlockUsages(transaction: TransactionLike, input: { projectId: string; pageId: string; usages: GeneratedBlockUsage[]; restorePins?: Map<string, string> }) {
   const blockIds = [...new Set(input.usages.map((usage) => usage.blockId))];
   const blocks = blockIds.length
     ? await transaction.select().from(buildingBlocks).where(and(eq(buildingBlocks.projectId, input.projectId), inArray(buildingBlocks.id, blockIds), isNull(buildingBlocks.deletedAt)))
     : [];
   const byId = new Map(blocks.map((block) => [block.id, block]));
 
+  // A restore may carry the exact pins a historical Page Version rendered with; they are
+  // honoured only when the pinned version still belongs to that non-global block.
+  const pinnedIds = [...new Set([...(input.restorePins?.values() ?? [])])];
+  const pinnedRows = pinnedIds.length
+    ? await transaction.select({ id: buildingBlockVersions.id, buildingBlockId: buildingBlockVersions.buildingBlockId }).from(buildingBlockVersions)
+        .where(and(eq(buildingBlockVersions.projectId, input.projectId), inArray(buildingBlockVersions.id, pinnedIds)))
+    : [];
+  const pinnedOwner = new Map(pinnedRows.map((row) => [row.id, row.buildingBlockId]));
+
   const resolved: ReconciledBlockUsage[] = input.usages.map((usage) => {
     const block = byId.get(usage.blockId);
     if (!block) throw blockReferenceInvalid();
     if (!block.currentVersionId) throw blockNotGenerated();
-    return { ...usage, isGlobal: block.isGlobal, versionId: block.isGlobal ? null : block.currentVersionId, resolvedVersionId: block.currentVersionId };
+    if (block.isGlobal) return { ...usage, isGlobal: true, versionId: null, resolvedVersionId: block.currentVersionId };
+    const requested = input.restorePins?.get(`${usage.blockId}:${usage.usageKey}`);
+    const pinned = requested && pinnedOwner.get(requested) === block.id ? requested : block.currentVersionId;
+    return { ...usage, isGlobal: false, versionId: pinned, resolvedVersionId: pinned };
   });
 
   await transaction.delete(buildingBlockUsages).where(and(eq(buildingBlockUsages.projectId, input.projectId), eq(buildingBlockUsages.pageId, input.pageId)));
