@@ -65,6 +65,7 @@ export class PageTreeService {
         id: crypto.randomUUID(), projectId: parsed.projectId, parentId: parsed.parentId, type: parsed.type, name: parsed.name,
         slug, routePath: null, position: this.nextPosition(nodes, parsed.parentId), isHomepage, pageTitle: null, metaDescription: null,
         createdByUserId: userId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+        currentVersionId: null,
       };
       const routes = computePageRoutes([...nodes, draft]);
       draft.routePath = routes.get(draft.id) ?? null;

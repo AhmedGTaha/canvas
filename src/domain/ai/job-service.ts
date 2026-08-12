@@ -1,10 +1,10 @@
 import { and, desc, eq, inArray, sql as drizzleSql } from "drizzle-orm";
 import { db, sql, type Database } from "@/server/db/client";
-import { aiConversations, aiJobRateLimits, aiMessages, auditEvents, generationJobs } from "@/server/db/schema";
+import { aiConversations, aiJobRateLimits, aiMessages, auditEvents, generationJobMedia, generationJobs, mediaAssets, pageNodes } from "@/server/db/schema";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DomainError } from "@/domain/shared/errors";
 import { AIError } from "./provider";
-import { createAssistantJobSchema } from "./schemas";
+import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 
 export type GenerationJobStatus = typeof generationJobs.$inferSelect.status;
 const TERMINAL: GenerationJobStatus[] = ["completed", "failed", "cancelled"];
@@ -47,6 +47,38 @@ export class GenerationJobService {
     });
   }
 
+  async createPageJob(userId: string, input: unknown) {
+    const parsed = createPageJobSchema.parse(input);
+    await this.access.requireProjectAccess(userId, parsed.projectId);
+    await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
+    try {
+      return await this.database.transaction(async (transaction) => {
+        const [page] = await transaction.select().from(pageNodes).where(and(eq(pageNodes.id, parsed.pageId), eq(pageNodes.projectId, parsed.projectId), eq(pageNodes.type, "page"), drizzleSql`${pageNodes.deletedAt} IS NULL`)).for("update");
+        if (!page) throw new DomainError("NOT_FOUND", "Page not found in this project.");
+        const selectedIds = [...new Set(parsed.selectedMediaIds)];
+        const selected = selectedIds.length ? await transaction.select({ id: mediaAssets.id }).from(mediaAssets).where(and(eq(mediaAssets.projectId, parsed.projectId), inArray(mediaAssets.id, selectedIds), drizzleSql`${mediaAssets.deletedAt} IS NULL`)) : [];
+        if (selected.length !== selectedIds.length) throw new DomainError("NOT_FOUND", "One or more selected Media items are not active in this project.");
+        let [conversation] = await transaction.select().from(aiConversations).where(and(eq(aiConversations.projectId, parsed.projectId), eq(aiConversations.pageId, parsed.pageId), drizzleSql`${aiConversations.archivedAt} IS NULL`)).orderBy(desc(aiConversations.updatedAt)).limit(1);
+        if (!conversation) [conversation] = await transaction.insert(aiConversations).values({ projectId: parsed.projectId, pageId: parsed.pageId, createdByUserId: userId }).returning();
+        if (!conversation) throw new Error("Page conversation insert failed.");
+        const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
+        if (!message) throw new Error("User message insert failed.");
+        const operation = page.currentVersionId ? "page_modify" as const : "page_generate" as const;
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash" }).returning();
+        if (!job) throw new Error("Generation job insert failed.");
+        if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
+        await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
+        await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.page_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, pageId: page.id, mediaCount: selectedIds.length } });
+        console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId, pageId: page.id, operation }));
+        return { job, message, conversation };
+      });
+    } catch (error) {
+      const code = (error as { cause?: { code?: string }; code?: string }).cause?.code ?? (error as { code?: string }).code;
+      if (code === "23505") throw new DomainError("CONFLICT", "Canvas is already updating this page.");
+      throw error;
+    }
+  }
+
   async get(userId: string, projectId: string, jobId: string) {
     await this.access.requireProjectAccess(userId, projectId);
     const [job] = await this.database.select().from(generationJobs).where(and(eq(generationJobs.id, jobId), eq(generationJobs.projectId, projectId))).limit(1);
@@ -55,6 +87,17 @@ export class GenerationJobService {
   }
 
   async list(userId: string, projectId: string) { await this.access.requireProjectAccess(userId, projectId); return this.database.select().from(generationJobs).where(eq(generationJobs.projectId, projectId)).orderBy(desc(generationJobs.createdAt)).limit(50); }
+
+  async getPageState(userId: string, projectId: string, pageId: string) {
+    await this.access.requireProjectAccess(userId, projectId);
+    const [page] = await this.database.select({ id: pageNodes.id, currentVersionId: pageNodes.currentVersionId }).from(pageNodes).where(and(eq(pageNodes.id, pageId), eq(pageNodes.projectId, projectId), eq(pageNodes.type, "page"), drizzleSql`${pageNodes.deletedAt} IS NULL`)).limit(1);
+    if (!page) throw new DomainError("NOT_FOUND", "Page not found.");
+    const [conversation] = await this.database.select().from(aiConversations).where(and(eq(aiConversations.projectId, projectId), eq(aiConversations.pageId, pageId), drizzleSql`${aiConversations.archivedAt} IS NULL`)).orderBy(desc(aiConversations.updatedAt)).limit(1);
+    const messages = conversation ? (await this.database.select().from(aiMessages).where(and(eq(aiMessages.conversationId, conversation.id), inArray(aiMessages.role, ["user", "assistant"]))).orderBy(desc(aiMessages.createdAt)).limit(20)).reverse() : [];
+    const [activeJob] = await this.database.select().from(generationJobs).where(and(eq(generationJobs.projectId, projectId), eq(generationJobs.targetId, pageId), inArray(generationJobs.operation, ["page_generate", "page_modify"]), inArray(generationJobs.status, ["queued", "preparing_context", "generating", "validating", "applying"]))).orderBy(desc(generationJobs.createdAt)).limit(1);
+    const [latestJob] = activeJob ? [] : await this.database.select().from(generationJobs).where(and(eq(generationJobs.projectId, projectId), eq(generationJobs.targetId, pageId), inArray(generationJobs.operation, ["page_generate", "page_modify"]))).orderBy(desc(generationJobs.createdAt)).limit(1);
+    return { page, conversation: conversation ?? null, messages, job: activeJob ?? latestJob ?? null };
+  }
 
   async requestCancellation(userId: string, projectId: string, jobId: string) {
     const job = await this.get(userId, projectId, jobId);
@@ -88,7 +131,7 @@ export async function claimGenerationJob(workerId: string) {
     UPDATE generation_jobs SET status = 'preparing_context', progress_stage = 'Preparing project context', claimed_at = now(),
       worker_id = ${workerId}, attempt_count = attempt_count + 1, started_at = COALESCE(started_at, now())
     WHERE id = (SELECT id FROM generation_jobs
-      WHERE ((status = 'queued' AND available_at <= now()) OR (status IN ('preparing_context', 'generating') AND claimed_at < now() - interval '5 minutes'))
+      WHERE ((status = 'queued' AND available_at <= now()) OR (status IN ('preparing_context', 'generating', 'validating', 'applying') AND claimed_at < now() - interval '5 minutes'))
         AND attempt_count < 3 AND cancel_requested_at IS NULL
       ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT 1)
     RETURNING id`;

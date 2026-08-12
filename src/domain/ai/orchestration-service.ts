@@ -6,6 +6,7 @@ import { AIError, type AIProvider } from "./provider";
 import { ProjectContextBuilder, type ProjectContextTarget } from "./context";
 import { assembleProviderRequest } from "./prompt-assembler";
 import { GenerationJobLifecycle, safeAIError } from "./job-service";
+import { PageGenerationOrchestrationService } from "@/domain/page-generation/orchestration";
 
 const MAX_ATTEMPTS = 3;
 
@@ -23,6 +24,7 @@ export class AIOrchestrationService {
   async process(jobId: string) {
     const job = await this.current(jobId);
     if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return job ?? null;
+    if (job.operation === "page_generate" || job.operation === "page_modify") return new PageGenerationOrchestrationService(this.database, this.contextBuilder, this.lifecycle, this.providerResolver).process(jobId);
     if (await this.cancelIfRequested(jobId)) return this.current(jobId);
     try {
       const [prompt] = job.promptMessageId ? await this.database.select().from(aiMessages).where(eq(aiMessages.id, job.promptMessageId)).limit(1) : [];

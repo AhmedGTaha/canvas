@@ -22,6 +22,7 @@ export const pageNodeType = pgEnum("page_node_type", ["page", "folder"]);
 export const aiMessageRole = pgEnum("ai_message_role", ["user", "assistant", "system_internal"]);
 export const generationTargetType = pgEnum("generation_target_type", ["project", "page", "building_block"]);
 export const generationJobStatus = pgEnum("generation_job_status", ["queued", "preparing_context", "generating", "validating", "applying", "completed", "failed", "cancelled"]);
+export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -136,6 +137,7 @@ export const pageNodes = pgTable("page_nodes", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+  currentVersionId: uuid("current_version_id"),
 }, (table) => [
   unique("page_nodes_id_project_unique").on(table.id, table.projectId),
   index("page_nodes_project_parent_position_idx").on(table.projectId, table.parentId, table.position),
@@ -241,6 +243,9 @@ export const generationJobs = pgTable("generation_jobs", {
   actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   targetType: generationTargetType("target_type").notNull(),
   targetId: uuid("target_id"),
+  operation: generationOperation("operation").notNull().default("assistant"),
+  basePageVersionId: uuid("base_page_version_id"),
+  resultPageVersionId: uuid("result_page_version_id"),
   promptMessageId: uuid("prompt_message_id"),
   status: generationJobStatus("status").notNull().default("queued"),
   progressStage: varchar("progress_stage", { length: 80 }).notNull().default("Queued"),
@@ -262,7 +267,29 @@ export const generationJobs = pgTable("generation_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
   finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
-}, (table) => [index("generation_jobs_project_created_idx").on(table.projectId, table.createdAt), index("generation_jobs_claim_idx").on(table.status, table.availableAt, table.createdAt)]);
+}, (table) => [unique("generation_jobs_id_project_unique").on(table.id, table.projectId), index("generation_jobs_project_created_idx").on(table.projectId, table.createdAt), index("generation_jobs_claim_idx").on(table.status, table.availableAt, table.createdAt)]);
+
+export const pageVersions = pgTable("page_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  pageId: uuid("page_id").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  sourceCode: text("source_code").notNull(),
+  manifest: jsonb("manifest").notNull(),
+  seoMetadata: jsonb("seo_metadata").notNull(),
+  changeSummary: jsonb("change_summary").notNull(),
+  sourceHash: char("source_hash", { length: 64 }).notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  generationJobId: uuid("generation_job_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [unique("page_versions_page_number_unique").on(table.pageId, table.versionNumber), unique("page_versions_generation_job_unique").on(table.generationJobId), unique("page_versions_id_page_project_unique").on(table.id, table.pageId, table.projectId), index("page_versions_page_created_idx").on(table.projectId, table.pageId, table.createdAt)]);
+
+export const generationJobMedia = pgTable("generation_job_media", {
+  generationJobId: uuid("generation_job_id").notNull(),
+  projectId: uuid("project_id").notNull(),
+  mediaAssetId: uuid("media_asset_id").notNull(),
+  position: integer("position").notNull(),
+}, (table) => [primaryKey({ columns: [table.generationJobId, table.mediaAssetId] }), unique("generation_job_media_job_position_unique").on(table.generationJobId, table.position), index("generation_job_media_project_idx").on(table.projectId, table.mediaAssetId)]);
 
 export const aiJobRateLimits = pgTable("ai_job_rate_limits", {
   scope: varchar("scope", { length: 16 }).notNull(),
@@ -286,3 +313,4 @@ export type ProjectInstruction = typeof projectInstructions.$inferSelect;
 export type AIConversation = typeof aiConversations.$inferSelect;
 export type AIMessage = typeof aiMessages.$inferSelect;
 export type GenerationJob = typeof generationJobs.$inferSelect;
+export type PageVersion = typeof pageVersions.$inferSelect;

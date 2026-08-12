@@ -12,10 +12,10 @@ export function normalizeGeminiError(error: unknown): AIError {
   if (error instanceof DOMException && error.name === "AbortError") return new AIError("AI_JOB_CANCELLED", "The AI request was cancelled.");
   const status = errorStatus(error);
   if (status === 401 || status === 403) return new AIError("AI_PROVIDER_AUTH_FAILED", "AI provider authentication failed.");
-  if (status === 429) return new AIError("AI_PROVIDER_RATE_LIMITED", "The AI provider is busy. Try again shortly.", true);
-  if (status && status >= 500) return new AIError("AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.", true);
-  if (error instanceof Error && /timeout/i.test(error.message)) return new AIError("AI_PROVIDER_TIMEOUT", "The AI provider took too long to respond.", true);
-  return new AIError("AI_PROVIDER_UNAVAILABLE", "The AI provider request failed.", true);
+  if (status === 429) return new AIError("AI_PROVIDER_RATE_LIMITED", "Canvas AI is busy right now. Try again shortly.", true);
+  if (status && status >= 500) return new AIError("AI_PROVIDER_UNAVAILABLE", "Canvas AI is temporarily unavailable. Try again shortly.", true);
+  if (error instanceof Error && /timeout/i.test(error.message)) return new AIError("AI_PROVIDER_TIMEOUT", "Canvas took too long to generate this page. Try again.", true);
+  return new AIError("AI_PROVIDER_UNAVAILABLE", "Canvas AI is temporarily unavailable. Try again shortly.", true);
 }
 
 export class GeminiProvider implements AIProvider {
@@ -49,7 +49,7 @@ export class GeminiProvider implements AIProvider {
     } catch (error) {
       if (controller.signal.aborted) {
         if (request.signal?.aborted) throw new AIError("AI_JOB_CANCELLED", "The AI request was cancelled.");
-        throw new AIError("AI_PROVIDER_TIMEOUT", "The AI provider took too long to respond.", true);
+        throw new AIError("AI_PROVIDER_TIMEOUT", "Canvas took too long to generate this page. Try again.", true);
       }
       throw normalizeGeminiError(error);
     } finally { clearTimeout(timeout); request.signal?.removeEventListener("abort", abort); }
@@ -62,4 +62,3 @@ export class GeminiProvider implements AIProvider {
     catch { throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "The AI provider returned an invalid structured response."); }
   }
 }
-

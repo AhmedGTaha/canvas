@@ -10,7 +10,7 @@ const resolvedTokens = z.object({
   typography: z.object({ multiplier: z.number(), body: cssValue, heading: cssValue }).strict(),
   borders: z.object({ width: cssValue, strongWidth: cssValue }).strict(),
 }).strict();
-const page = z.object({ pageId: z.uuid(), parentId: z.uuid().nullable(), name: z.string(), canonicalRoute: z.string().startsWith("/"), isHomepage: z.boolean(), seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).strict() }).strict();
+const page = z.object({ pageId: z.uuid(), parentId: z.uuid().nullable(), name: z.string(), canonicalRoute: z.string().startsWith("/"), isHomepage: z.boolean(), currentVersionId: z.uuid().nullable().default(null), contentStatus: z.enum(["unbuilt", "generated"]).default("unbuilt"), seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).strict() }).strict();
 export type PreviewNavigationItem = { type: "page"; id: string; label: string; route: string; children: PreviewNavigationItem[] } | { type: "group"; id: string; label: string; children: PreviewNavigationItem[] };
 const navigationItem: z.ZodType<PreviewNavigationItem> = z.lazy(() => z.discriminatedUnion("type", [
   z.object({ type: z.literal("page"), id: z.uuid(), label: z.string(), route: z.string().startsWith("/"), children: z.array(navigationItem) }).strict(),

@@ -8,4 +8,4 @@ export const createAssistantJobSchema = z.object({
   projectId: z.uuid(), conversationId: z.uuid(), content: z.string().trim().min(1).max(AI_LIMITS.userMessageCharacters),
   selectedMediaIds: z.array(z.uuid()).max(AI_LIMITS.mediaEntries).default([]),
 });
-
+export const createPageJobSchema = z.object({ projectId: z.uuid(), pageId: z.uuid(), content: z.string().trim().min(1).max(AI_LIMITS.userMessageCharacters), selectedMediaIds: z.array(z.uuid()).max(5).default([]) });

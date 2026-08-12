@@ -67,6 +67,12 @@ export class EditingLeaseService {
     return lease ?? null;
   }
 
+  async releaseForWorker(userId: string, input: unknown) {
+    const target = leaseTargetSchema.parse(input);
+    const [lease] = await this.database.delete(editingLeases).where(and(eq(editingLeases.projectId, target.projectId), eq(editingLeases.targetType, target.targetType), eq(editingLeases.targetId, target.targetId), eq(editingLeases.userId, userId))).returning();
+    return lease ?? null;
+  }
+
   async getActiveLease(userId: string, input: unknown) {
     const target = leaseTargetSchema.parse(input);
     await this.access.requireProjectAccess(userId, target.projectId);
