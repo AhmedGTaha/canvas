@@ -22,6 +22,26 @@ addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;
 addEventListener("error",()=>send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route,pageId:manifest.routes[route]?.pageId||null,message:"Preview could not be loaded."}));globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route})})()</script>${input.generatedBundle ? `<script nonce="${input.nonce}">${safeScript(input.generatedBundle)}</script>` : ""}</body></html>`;
 }
 
+/**
+ * Standalone Building Block preview. Reuses the same opaque-origin sandbox, CSP, nonce,
+ * theme tokens, and Media resolution as the page preview: the block simply renders
+ * inside a neutral project-theme canvas instead of a routed page.
+ */
+export function renderBlockPreviewDocument(input: { manifest: ProjectPreviewManifest; nonce: string; parentOrigin: string; instanceId: string; initialMode: "light" | "dark"; block: { id: string; name: string; contentStatus: "unbuilt" | "generated" }; blockBundle?: string }) {
+  const manifest = projectPreviewManifestSchema.parse(input.manifest);
+  const config = serialized({ manifest, parentOrigin: new URL(input.parentOrigin).origin, instanceId: input.instanceId, initialMode: input.initialMode, block: input.block, generated: Boolean(input.blockBundle) });
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(input.block.name)} preview</title><style nonce="${input.nonce}">${runtimeCss}${generatedRuntimeCss}${blockPreviewCss}${manifestThemeCss(manifest)}</style></head><body><div id="preview-root" aria-live="polite"></div><script nonce="${input.nonce}">"use strict";(()=>{const config=${config};const manifest=config.manifest;const sessionId=manifest.previewSessionId;const root=document.getElementById("preview-root");let mode=config.initialMode;
+const valid=manifest&&manifest.manifestVersion===1&&manifest.projectId&&manifest.theme&&manifest.media;if(!valid)throw new Error("Invalid preview manifest");
+function send(message){parent.postMessage({...message,sessionId,instanceId:config.instanceId},config.parentOrigin)}
+function el(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
+function render(){document.documentElement.dataset.theme=mode;root.replaceChildren();const canvas=el("div","block-canvas");if(config.generated){const host=el("div","generated-page-root block-surface");host.id="generated-root";canvas.append(host)}else{const empty=el("div","block-empty");empty.append(el("span","site-kicker","Building Block"),el("h1",null,config.block.name),el("p","site-lead","Describe this block and Canvas will create it."));canvas.append(empty)}root.append(canvas)}
+document.addEventListener("click",event=>{const link=event.target.closest("a[href]");if(link)event.preventDefault()});
+addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;const data=event.data;if(!data||data.sessionId!==sessionId||data.instanceId!==config.instanceId)return;if(data.type==="CANVAS_SET_THEME"&&(data.mode==="light"||data.mode==="dark")){mode=data.mode;document.documentElement.dataset.theme=mode}else if(data.type==="CANVAS_REFRESH")location.reload()});
+addEventListener("error",()=>send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:"/",pageId:null,message:"Preview could not be loaded."}));globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route:"/"})})()</script>${input.blockBundle ? `<script nonce="${input.nonce}">${safeScript(input.blockBundle)}</script>` : ""}</body></html>`;
+}
+
+const blockPreviewCss = `.block-canvas{min-height:100vh;padding:0;background:var(--color-background)}.block-surface{min-height:100vh}.block-empty{display:grid;align-content:center;justify-items:start;gap:var(--space-sm);min-height:60vh;padding:clamp(24px,6vw,64px)}.block-empty h1{margin:0;font-size:clamp(1.5rem,4vw,2.25rem)}`;
+
 function safeScript(value: string) { return value.replace(/<\/script/gi, "<\\/script").replace(/<!--/g, "<\\!--"); }
 
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character]!); }

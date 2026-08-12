@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { PreviewManifestService } from "@/generated-runtime/manifest/service";
-import { renderPreviewDocument } from "@/generated-runtime/preview/render-document";
+import { renderBlockPreviewDocument, renderPreviewDocument } from "@/generated-runtime/preview/render-document";
 import { previewSecurityHeaders } from "@/generated-runtime/security/headers";
 import { initialPreviewRoute, normalizePreviewRoute } from "@/generated-runtime/runtime/router";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
+import { BuildingBlockContentProvider } from "@/domain/blocks/preview";
 
-const querySchema = z.object({ route: z.string().max(1000).optional(), mode: z.enum(["light", "dark"]).optional(), instance: z.uuid() }).strict();
+const querySchema = z.object({ route: z.string().max(1000).optional(), mode: z.enum(["light", "dark"]).optional(), instance: z.uuid(), block: z.uuid().optional() }).strict();
 
 export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const nonce = randomBytes(18).toString("base64url");
@@ -14,8 +15,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
   try {
     const { token } = await params;
     const url = new URL(request.url);
-    const query = querySchema.parse({ route: url.searchParams.get("route") || undefined, mode: url.searchParams.get("mode") || undefined, instance: url.searchParams.get("instance") });
+    const query = querySchema.parse({ route: url.searchParams.get("route") || undefined, mode: url.searchParams.get("mode") || undefined, instance: url.searchParams.get("instance"), block: url.searchParams.get("block") || undefined });
     const { payload, manifest } = await new PreviewManifestService().fromToken(token);
+    if (query.block) {
+      const entry = manifest.blocks[query.block];
+      if (!entry) throw new Error("Building Block is not part of this project preview.");
+      const compiled = entry.activeVersionId ? await new BuildingBlockContentProvider().getActive(payload.projectId, entry.id) : null;
+      const document = renderBlockPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialMode: query.mode ?? "light", block: { id: entry.id, name: entry.name, contentStatus: entry.contentStatus }, blockBundle: compiled?.bundle });
+      return new Response(document, { headers: { ...previewSecurityHeaders(nonce, canvasOrigin), "Content-Type": "text/html; charset=utf-8" } });
+    }
     const route = query.route ? normalizePreviewRoute(query.route) : initialPreviewRoute(manifest);
     const page = manifest.pages.find((item) => item.pageId === manifest.routes[route]?.pageId);
     const generated = page?.currentVersionId ? await new GeneratedPageContentProvider().get(payload.projectId, page.pageId, page.currentVersionId) : null;

@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, sql as drizzleSql } from "drizzle-orm";
 import { db, sql, type Database } from "@/server/db/client";
-import { aiConversations, aiJobRateLimits, aiMessages, auditEvents, generationJobMedia, generationJobs, mediaAssets, pageNodes } from "@/server/db/schema";
+import { aiConversations, aiJobRateLimits, aiMessages, auditEvents, buildingBlocks, generationJobMedia, generationJobs, mediaAssets, pageNodes } from "@/server/db/schema";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DomainError } from "@/domain/shared/errors";
 import { AIError } from "./provider";
+import { createBlockJobSchema } from "@/domain/blocks/schemas";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 
 export type GenerationJobStatus = typeof generationJobs.$inferSelect.status;
@@ -77,6 +78,55 @@ export class GenerationJobService {
       if (code === "23505") throw new DomainError("CONFLICT", "Canvas is already updating this page.");
       throw error;
     }
+  }
+
+  /**
+   * Starts a Building Block generation/modification job. The block already has a durable
+   * UUID, so retries and reconnects stay deterministic, and the partial unique index on
+   * active block mutations enforces one AI job per block at the database level.
+   */
+  async createBlockJob(userId: string, input: unknown) {
+    const parsed = createBlockJobSchema.parse(input);
+    await this.access.requireProjectAccess(userId, parsed.projectId);
+    await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
+    try {
+      return await this.database.transaction(async (transaction) => {
+        const [block] = await transaction.select().from(buildingBlocks).where(and(eq(buildingBlocks.id, parsed.blockId), eq(buildingBlocks.projectId, parsed.projectId), drizzleSql`${buildingBlocks.deletedAt} IS NULL`)).for("update");
+        if (!block) throw new DomainError("NOT_FOUND", "Building Block not found in this project.");
+        const selectedIds = [...new Set(parsed.selectedMediaIds)];
+        const selected = selectedIds.length ? await transaction.select({ id: mediaAssets.id }).from(mediaAssets).where(and(eq(mediaAssets.projectId, parsed.projectId), inArray(mediaAssets.id, selectedIds), drizzleSql`${mediaAssets.deletedAt} IS NULL`)) : [];
+        if (selected.length !== selectedIds.length) throw new DomainError("NOT_FOUND", "One or more selected Media items are not active in this project.");
+        let [conversation] = await transaction.select().from(aiConversations).where(and(eq(aiConversations.projectId, parsed.projectId), eq(aiConversations.buildingBlockId, parsed.blockId), drizzleSql`${aiConversations.archivedAt} IS NULL`)).orderBy(desc(aiConversations.updatedAt)).limit(1);
+        if (!conversation) [conversation] = await transaction.insert(aiConversations).values({ projectId: parsed.projectId, buildingBlockId: parsed.blockId, createdByUserId: userId }).returning();
+        if (!conversation) throw new Error("Block conversation insert failed.");
+        const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
+        if (!message) throw new Error("User message insert failed.");
+        const operation = block.currentVersionId ? "block_modify" as const : "block_generate" as const;
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash" }).returning();
+        if (!job) throw new Error("Generation job insert failed.");
+        if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
+        await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
+        await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.block_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, blockId: block.id, mediaCount: selectedIds.length } });
+        console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId, blockId: block.id, operation }));
+        return { job, message, conversation };
+      });
+    } catch (error) {
+      const code = (error as { cause?: { code?: string }; code?: string }).cause?.code ?? (error as { code?: string }).code;
+      if (code === "23505") throw new DomainError("CONFLICT", "Canvas is already updating this Building Block.");
+      throw error;
+    }
+  }
+
+  /** Block-scoped composer state: conversation, recent messages, and the current job. */
+  async getBlockState(userId: string, projectId: string, blockId: string) {
+    await this.access.requireProjectAccess(userId, projectId);
+    const [block] = await this.database.select({ id: buildingBlocks.id, currentVersionId: buildingBlocks.currentVersionId }).from(buildingBlocks).where(and(eq(buildingBlocks.id, blockId), eq(buildingBlocks.projectId, projectId), drizzleSql`${buildingBlocks.deletedAt} IS NULL`)).limit(1);
+    if (!block) throw new DomainError("NOT_FOUND", "Building Block not found.");
+    const [conversation] = await this.database.select().from(aiConversations).where(and(eq(aiConversations.projectId, projectId), eq(aiConversations.buildingBlockId, blockId), drizzleSql`${aiConversations.archivedAt} IS NULL`)).orderBy(desc(aiConversations.updatedAt)).limit(1);
+    const messages = conversation ? (await this.database.select().from(aiMessages).where(and(eq(aiMessages.conversationId, conversation.id), inArray(aiMessages.role, ["user", "assistant"]))).orderBy(desc(aiMessages.createdAt)).limit(20)).reverse() : [];
+    const [activeJob] = await this.database.select().from(generationJobs).where(and(eq(generationJobs.projectId, projectId), eq(generationJobs.targetId, blockId), inArray(generationJobs.operation, ["block_generate", "block_modify"]), inArray(generationJobs.status, ["queued", "preparing_context", "generating", "validating", "applying"]))).orderBy(desc(generationJobs.createdAt)).limit(1);
+    const [latestJob] = activeJob ? [] : await this.database.select().from(generationJobs).where(and(eq(generationJobs.projectId, projectId), eq(generationJobs.targetId, blockId), inArray(generationJobs.operation, ["block_generate", "block_modify"]))).orderBy(desc(generationJobs.createdAt)).limit(1);
+    return { block, conversation: conversation ?? null, messages, job: activeJob ?? latestJob ?? null };
   }
 
   async get(userId: string, projectId: string, jobId: string) {

@@ -23,6 +23,7 @@ export const projectPreviewManifestSchema = z.object({
   brand: z.object({ companyName: z.string(), companyDescription: z.string().nullable(), primaryLogoMediaId: z.uuid().nullable(), alternateLogoMediaId: z.uuid().nullable(), logoMediaIds: z.object({ light: z.uuid().nullable(), dark: z.uuid().nullable() }).strict() }).strict(),
   theme: resolvedTokens,
   media: z.record(z.uuid(), z.object({ id: z.uuid(), displayName: z.string(), mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]), width: z.number().int().positive(), height: z.number().int().positive(), altText: z.string().nullable(), previewUrl: z.string().startsWith("/api/preview/media/") }).strict()),
+  blocks: z.record(z.uuid(), z.object({ id: z.uuid(), name: z.string(), kind: z.string(), isGlobal: z.boolean(), activeVersionId: z.uuid().nullable(), contentStatus: z.enum(["unbuilt", "generated"]) }).strict()).default({}),
   navigation: z.array(navigationItem),
 }).strict();
 

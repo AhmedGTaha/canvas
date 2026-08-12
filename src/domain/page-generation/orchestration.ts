@@ -10,6 +10,8 @@ import { DomainError } from "@/domain/shared/errors";
 import { AIError, type AIProvider } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
+import { loadActiveBlockSources, reconcilePageBlockUsages } from "@/domain/blocks/usages";
+import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
 import { generatedPageResponseSchema, type PageChangeSummary } from "./contract";
 import { assemblePageGenerationRequest } from "./prompt";
 import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
@@ -59,7 +61,12 @@ export class PageGenerationOrchestrationService {
       await this.lifecycle.transition(jobId, "validating", "Validating page");
       console.info(JSON.stringify({ event: "ai.source_validation.started", jobId }));
       const approved = new Set(context.media.map(({ id }) => id)); const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
-      const manifest = await validateGeneratedPageSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
+      // Only Building Blocks declared in the assembled context, active in this project,
+      // and already generated may be referenced. Anything else is a rejected reference.
+      const availableBlockIds = new Set(context.blocks.filter((block) => block.currentVersionId).map((block) => block.id));
+      const declaredBlockUsages = response.structuredData.blockUsages;
+      const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(declaredBlockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
+      const manifest = await validateGeneratedPageSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages, blockSources });
       console.info(JSON.stringify({ event: "ai.source_validation.completed", jobId, sourceHash: manifest.sourceHash }));
       if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -83,6 +90,15 @@ export class PageGenerationOrchestrationService {
     }
   }
 
+  private async reconcile(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], projectId: string, pageId: string, usages: GeneratedBlockUsage[]) {
+    try {
+      return await reconcilePageBlockUsages(transaction, { projectId, pageId, usages });
+    } catch (error) {
+      if (error instanceof AIError) throw error;
+      throw new AIError("AI_PROVIDER_INVALID_RESPONSE", error instanceof DomainError ? error.message : "Canvas could not resolve the Building Blocks this page uses.");
+    }
+  }
+
   private async commit(input: { jobId: string; sourceCode: string; manifest: GeneratedPageManifest; summary: PageChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
     return this.database.transaction(async (transaction) => {
       const [job] = await transaction.select().from(generationJobs).where(eq(generationJobs.id, input.jobId)).for("update");
@@ -96,7 +112,11 @@ export class PageGenerationOrchestrationService {
       const [existing] = await transaction.select().from(pageVersions).where(eq(pageVersions.generationJobId, job.id)).limit(1);
       if (existing) return (await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultPageVersionId: existing.id, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning())[0]!;
       const [latest] = await transaction.select({ versionNumber: pageVersions.versionNumber }).from(pageVersions).where(and(eq(pageVersions.projectId, job.projectId), eq(pageVersions.pageId, page.id))).orderBy(desc(pageVersions.versionNumber)).limit(1);
-      const [version] = await transaction.insert(pageVersions).values({ projectId: job.projectId, pageId: page.id, versionNumber: (latest?.versionNumber ?? 0) + 1, sourceCode: input.sourceCode, manifest: input.manifest, seoMetadata: { title: page.pageTitle, description: page.metaDescription }, changeSummary: input.summary, sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id }).returning();
+      // Usage rows and the activated Page Version are written together, so active page
+      // state and active usage state can never disagree after a successful activation.
+      const resolvedUsages = await this.reconcile(transaction, job.projectId, page.id, input.manifest.blockUsages);
+      const manifest = { ...input.manifest, blockUsages: resolvedUsages };
+      const [version] = await transaction.insert(pageVersions).values({ projectId: job.projectId, pageId: page.id, versionNumber: (latest?.versionNumber ?? 0) + 1, sourceCode: input.sourceCode, manifest, seoMetadata: { title: page.pageTitle, description: page.metaDescription }, changeSummary: input.summary, sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id }).returning();
       if (!version) throw new AIError("AI_INTERNAL_ERROR", "Page version could not be created.");
       await transaction.update(pageNodes).set({ currentVersionId: version.id, updatedAt: new Date() }).where(eq(pageNodes.id, page.id));
       const [message] = await transaction.insert(aiMessages).values({ conversationId: job.conversationId, role: "assistant", content: summaryMessage(input.summary), metadata: { generationJobId: job.id, pageVersionId: version.id, summary: input.summary } }).returning();

@@ -4,6 +4,7 @@ export const AI_LIMITS = {
   conversationMessages: 20,
   mediaEntries: 20,
   pageEntries: 50,
+  blockEntries: 40,
   projectDescriptionCharacters: 500,
   brandTextCharacters: 4_000,
 } as const;

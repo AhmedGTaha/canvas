@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { DomainError } from "@/domain/shared/errors";
-import { editingLeases, pageNodes } from "@/server/db/schema";
+import { buildingBlocks, editingLeases, pageNodes } from "@/server/db/schema";
 import { collaborationConfig } from "@/server/config/collaboration";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { leaseTargetSchema } from "./schemas";
@@ -17,7 +17,11 @@ export class EditingLeaseService {
   }
 
   private async validateTarget(projectId: string, targetType: "page" | "building_block", targetId: string) {
-    if (targetType === "building_block") return; // Building-block ownership is added when that domain exists.
+    if (targetType === "building_block") {
+      const [block] = await this.database.select({ id: buildingBlocks.id }).from(buildingBlocks).where(and(eq(buildingBlocks.id, targetId), eq(buildingBlocks.projectId, projectId), isNull(buildingBlocks.deletedAt))).limit(1);
+      if (!block) throw new DomainError("NOT_FOUND", "Lease target not found.");
+      return;
+    }
     const [page] = await this.database.select({ id: pageNodes.id }).from(pageNodes).where(and(eq(pageNodes.id, targetId), eq(pageNodes.projectId, projectId), eq(pageNodes.type, "page"), isNull(pageNodes.deletedAt))).limit(1);
     if (!page) throw new DomainError("NOT_FOUND", "Lease target not found.");
   }

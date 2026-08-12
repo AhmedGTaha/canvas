@@ -1,0 +1,41 @@
+import { describe, expect, it } from "vitest";
+import { blockKindLabel, blockKindSchema, blockNameSchema, createBlockSchema } from "./schemas";
+import { duplicateBlockManifest, duplicateBlockName } from "./duplication";
+
+const projectId = "11111111-1111-4111-8111-111111111111";
+
+describe("Building Block metadata validation", () => {
+  it("trims names and rejects blank or oversized names", () => {
+    expect(blockNameSchema.parse("  Global Navbar  ")).toBe("Global Navbar");
+    expect(() => blockNameSchema.parse("   ")).toThrow();
+    expect(() => blockNameSchema.parse("n".repeat(121))).toThrow();
+  });
+
+  it("normalizes kinds and rejects unsafe category slugs", () => {
+    expect(blockKindSchema.parse(" Navbar ")).toBe("navbar");
+    expect(blockKindSchema.parse("product_card")).toBe("product_card");
+    for (const invalid of ["9hero", "drop table", "hero-section", "hero;", ""]) expect(() => blockKindSchema.parse(invalid)).toThrow();
+  });
+
+  it("defaults new blocks to a private custom block", () => {
+    expect(createBlockSchema.parse({ projectId, name: "Hero" })).toMatchObject({ kind: "custom", isGlobal: false });
+  });
+
+  it("labels known and unknown kinds without technical jargon", () => {
+    expect(blockKindLabel("navbar")).toBe("Navbar");
+    expect(blockKindLabel("product_card")).toBe("Product Card");
+  });
+});
+
+describe("Building Block duplication", () => {
+  it("picks the first non-conflicting copy name", () => {
+    expect(duplicateBlockName("Global Navbar", [])).toBe("Global Navbar Copy");
+    expect(duplicateBlockName("Global Navbar", ["Global Navbar", "Global Navbar Copy"])).toBe("Global Navbar Copy 2");
+    expect(duplicateBlockName("Global Navbar", ["global navbar copy", "Global Navbar Copy 2"])).toBe("Global Navbar Copy 3");
+  });
+
+  it("copies safe manifest data and never carries the source version's usages", () => {
+    const copied = duplicateBlockManifest({ sourceHash: "a".repeat(64), referencedMediaIds: ["11111111-1111-4111-8111-111111111111"], internalRoutes: ["/contact"], usesClientInteractivity: true, blockUsages: [{ blockId: "x", usageKey: "y" }] });
+    expect(copied).toMatchObject({ referencedMediaIds: ["11111111-1111-4111-8111-111111111111"], internalRoutes: ["/contact"], usesClientInteractivity: true, blockUsages: [] });
+  });
+});

@@ -2,7 +2,8 @@ export type AIErrorCode =
   | "AI_PROVIDER_UNAVAILABLE" | "AI_PROVIDER_AUTH_FAILED" | "AI_PROVIDER_RATE_LIMITED"
   | "AI_PROVIDER_TIMEOUT" | "AI_PROVIDER_INVALID_RESPONSE" | "AI_CONTEXT_TOO_LARGE"
   | "AI_JOB_CANCELLED" | "AI_INTERNAL_ERROR" | "AI_NOT_CONFIGURED"
-  | "AI_PAGE_STALE" | "AI_PAGE_CONFLICT";
+  | "AI_PAGE_STALE" | "AI_PAGE_CONFLICT"
+  | "AI_BLOCK_STALE" | "AI_BLOCK_CONFLICT";
 
 export class AIError extends Error {
   constructor(public readonly code: AIErrorCode, message: string, public readonly retryable = false, public readonly retryAfterMs?: number, public readonly diagnostic?: string) {

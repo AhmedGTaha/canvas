@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Files, Hammer, Images, LayoutDashboard, Palette, Settings, UsersRound } from "lucide-react";
+import { Blocks, Files, Hammer, Images, LayoutDashboard, Palette, Settings, UsersRound } from "lucide-react";
 
 export function ProjectNav({ projectId }: { projectId: string }) {
   const pathname = usePathname();
@@ -10,6 +10,7 @@ export function ProjectNav({ projectId }: { projectId: string }) {
     { href: `/projects/${projectId}`, label: "Overview", icon: LayoutDashboard, exact: true },
     { href: `/projects/${projectId}/builder`, label: "Builder", icon: Hammer },
     { href: `/projects/${projectId}/pages`, label: "Pages", icon: Files },
+    { href: `/projects/${projectId}/blocks`, label: "Building Blocks", icon: Blocks },
     { href: `/projects/${projectId}/media`, label: "Media", icon: Images },
     { href: `/projects/${projectId}/brand`, label: "Brand / Theme", icon: Palette },
     { href: `/projects/${projectId}/collaborators`, label: "Collaborators", icon: UsersRound },

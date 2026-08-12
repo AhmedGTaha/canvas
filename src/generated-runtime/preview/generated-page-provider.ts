@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { pageNodes, pageVersions } from "@/server/db/schema";
 import { compileGeneratedPage } from "@/domain/page-generation/validator";
+import { resolvePageBlockModules } from "@/domain/blocks/usages";
 
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 50;
@@ -11,8 +12,16 @@ export class GeneratedPageContentProvider {
   async get(projectId: string, pageId: string, versionId: string) {
     const [row] = await this.database.select({ version: pageVersions }).from(pageNodes).innerJoin(pageVersions, and(eq(pageVersions.id, pageNodes.currentVersionId), eq(pageVersions.pageId, pageNodes.id), eq(pageVersions.projectId, pageNodes.projectId))).where(and(eq(pageNodes.id, pageId), eq(pageNodes.projectId, projectId), eq(pageNodes.currentVersionId, versionId))).limit(1);
     if (!row) return null;
-    let bundle = cache.get(row.version.id);
-    if (!bundle) { bundle = await compileGeneratedPage(row.version.sourceCode); if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!); cache.set(row.version.id, bundle); }
-    return { version: row.version, bundle };
+    // Block resolution comes from current project state, so a global Block Version
+    // change is reflected without rewriting page source or adding a Page Version.
+    const modules = await resolvePageBlockModules(this.database, projectId, pageId);
+    const key = [row.version.id, ...modules.map((module) => `${module.blockId}@${module.versionId}`).sort()].join("|");
+    let bundle = cache.get(key);
+    if (!bundle) {
+      bundle = await compileGeneratedPage(row.version.sourceCode, modules.map(({ blockId, sourceCode }) => ({ blockId, sourceCode })));
+      if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+      cache.set(key, bundle);
+    }
+    return { version: row.version, bundle, blocks: modules.map(({ blockId, versionId, isGlobal }) => ({ blockId, versionId, isGlobal })) };
   }
 }

@@ -22,7 +22,7 @@ export const pageNodeType = pgEnum("page_node_type", ["page", "folder"]);
 export const aiMessageRole = pgEnum("ai_message_role", ["user", "assistant", "system_internal"]);
 export const generationTargetType = pgEnum("generation_target_type", ["project", "page", "building_block"]);
 export const generationJobStatus = pgEnum("generation_job_status", ["queued", "preparing_context", "generating", "validating", "applying", "completed", "failed", "cancelled"]);
-export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify"]);
+export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify", "block_generate", "block_modify"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -246,6 +246,8 @@ export const generationJobs = pgTable("generation_jobs", {
   operation: generationOperation("operation").notNull().default("assistant"),
   basePageVersionId: uuid("base_page_version_id"),
   resultPageVersionId: uuid("result_page_version_id"),
+  baseBlockVersionId: uuid("base_block_version_id"),
+  resultBlockVersionId: uuid("result_block_version_id"),
   promptMessageId: uuid("prompt_message_id"),
   status: generationJobStatus("status").notNull().default("queued"),
   progressStage: varchar("progress_stage", { length: 80 }).notNull().default("Queued"),
@@ -291,6 +293,53 @@ export const generationJobMedia = pgTable("generation_job_media", {
   position: integer("position").notNull(),
 }, (table) => [primaryKey({ columns: [table.generationJobId, table.mediaAssetId] }), unique("generation_job_media_job_position_unique").on(table.generationJobId, table.position), index("generation_job_media_project_idx").on(table.projectId, table.mediaAssetId)]);
 
+export const buildingBlocks = pgTable("building_blocks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 120 }).notNull(),
+  kind: varchar("kind", { length: 40 }).notNull().default("custom"),
+  isGlobal: boolean("is_global").notNull().default(false),
+  currentVersionId: uuid("current_version_id"),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+}, (table) => [unique("building_blocks_id_project_unique").on(table.id, table.projectId), index("building_blocks_project_updated_idx").on(table.projectId, table.updatedAt)]);
+
+export const buildingBlockVersions = pgTable("building_block_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  buildingBlockId: uuid("building_block_id").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  sourceCode: text("source_code").notNull(),
+  manifest: jsonb("manifest").notNull(),
+  changeSummary: jsonb("change_summary").notNull().default({}),
+  sourceHash: char("source_hash", { length: 64 }).notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  generationJobId: uuid("generation_job_id"),
+  changeSetId: uuid("change_set_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  unique("building_block_versions_block_number_unique").on(table.buildingBlockId, table.versionNumber),
+  unique("building_block_versions_generation_job_unique").on(table.generationJobId),
+  unique("building_block_versions_id_block_project_unique").on(table.id, table.buildingBlockId, table.projectId),
+  index("building_block_versions_block_created_idx").on(table.projectId, table.buildingBlockId, table.createdAt),
+]);
+
+export const buildingBlockUsages = pgTable("building_block_usages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  pageId: uuid("page_id").notNull(),
+  buildingBlockId: uuid("building_block_id").notNull(),
+  buildingBlockVersionId: uuid("building_block_version_id"),
+  usageKey: varchar("usage_key", { length: 100 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  unique("building_block_usages_page_key_unique").on(table.pageId, table.usageKey),
+  index("building_block_usages_block_idx").on(table.projectId, table.buildingBlockId),
+  index("building_block_usages_page_idx").on(table.pageId),
+]);
+
 export const aiJobRateLimits = pgTable("ai_job_rate_limits", {
   scope: varchar("scope", { length: 16 }).notNull(),
   subjectId: uuid("subject_id").notNull(),
@@ -314,3 +363,6 @@ export type AIConversation = typeof aiConversations.$inferSelect;
 export type AIMessage = typeof aiMessages.$inferSelect;
 export type GenerationJob = typeof generationJobs.$inferSelect;
 export type PageVersion = typeof pageVersions.$inferSelect;
+export type BuildingBlock = typeof buildingBlocks.$inferSelect;
+export type BuildingBlockVersion = typeof buildingBlockVersions.$inferSelect;
+export type BuildingBlockUsage = typeof buildingBlockUsages.$inferSelect;
