@@ -5,6 +5,7 @@ import {
   pgEnum,
   pgTable,
   primaryKey,
+  jsonb,
   text,
   timestamp,
   unique,
@@ -13,6 +14,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const projectStatus = pgEnum("project_status", ["active", "archived", "deleted"]);
+export const projectRole = pgEnum("project_role", ["owner", "collaborator"]);
+export const leaseTargetType = pgEnum("lease_target_type", ["page", "building_block"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -67,6 +70,52 @@ export const projects = pgTable("projects", {
   deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
 }, (table) => [index("projects_workspace_status_idx").on(table.workspaceId, table.status), index("projects_owner_user_id_idx").on(table.ownerUserId)]);
 
+export const projectMembers = pgTable("project_members", {
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: projectRole("role").notNull().default("collaborator"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.projectId, table.userId] }), index("project_members_user_id_idx").on(table.userId)]);
+
+export const projectInvites = pgTable("project_invites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  tokenHash: char("token_hash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [index("project_invites_project_id_idx").on(table.projectId)]);
+
+export const editingLeases = pgTable("editing_leases", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  targetType: leaseTargetType("target_type").notNull(),
+  targetId: uuid("target_id").notNull(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  unique("editing_leases_target_unique").on(table.projectId, table.targetType, table.targetId),
+  index("editing_leases_expires_at_idx").on(table.expiresAt),
+  index("editing_leases_user_id_idx").on(table.userId),
+]);
+
+export const auditEvents = pgTable("audit_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  action: varchar("action", { length: 80 }).notNull(),
+  entityType: varchar("entity_type", { length: 40 }).notNull(),
+  entityId: uuid("entity_id"),
+  metadata: jsonb("metadata").notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [index("audit_events_project_created_idx").on(table.projectId, table.createdAt)]);
+
 export type User = typeof users.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Project = typeof projects.$inferSelect;
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type ProjectInvite = typeof projectInvites.$inferSelect;
+export type EditingLease = typeof editingLeases.$inferSelect;

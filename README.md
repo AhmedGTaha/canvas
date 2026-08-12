@@ -1,6 +1,6 @@
 # Canvas
 
-Canvas is an AI-assisted website-building SaaS. This repository currently implements Phase 1: secure authentication, user-owned workspaces, isolated projects, and the reusable application foundation required by later phases.
+Canvas is an AI-assisted website-building SaaS. The current foundation includes secure authentication, user-owned workspaces, isolated projects, project-level collaboration, expiring invitation links, access revocation, and editing leases for later content domains.
 
 ## Prerequisites
 
@@ -36,7 +36,7 @@ Canvas is an AI-assisted website-building SaaS. This repository currently implem
    npm run dev
    ```
 
-Open [http://localhost:3000](http://localhost:3000), create an account, then create a workspace and project.
+Open [http://localhost:3000](http://localhost:3000), create an account, then create a workspace and project. Project owners can manage invitation links and members from a project’s Collaborators screen. Shared projects appear separately on a collaborator’s dashboard.
 
 ## Quality checks
 
@@ -53,13 +53,15 @@ Integration tests use `DATABASE_URL` and clear records from the Phase 1 tables. 
 
 - `src/app` contains routes and thin server actions.
 - `src/components` contains reusable UI and feature presentation components with no database access.
-- `src/domain` contains validation, repositories, and independently testable workspace/project/auth services.
+- `src/domain` contains validation, repositories, and independently testable workspace, project, authentication, invitation, membership, and lease services.
 - `src/server/auth` owns cookie/session integration.
 - `src/server/permissions` centralizes authorization checks.
 - `src/server/db` owns the PostgreSQL client, schema mapping, and migration runner.
 - `migrations` contains deterministic SQL migrations and database integrity constraints.
 
-Sessions are opaque random tokens stored only in HTTP-only, same-site cookies; only token hashes are persisted. Credentials use Argon2id. Every workspace/project operation derives the user ID from the server session and rechecks ownership server-side.
+Sessions are opaque random tokens stored only in HTTP-only, same-site cookies; only token hashes are persisted. Credentials use Argon2id. Invitation tokens follow the same plaintext-once/hash-at-rest model and expire after seven days by default. Every workspace/project operation derives the user ID from the server session and rechecks the effective owner/collaborator role server-side.
+
+Editing leases use a 60-second default timeout. The unique `(project_id, target_type, target_id)` key and conditional PostgreSQL upsert prevent two users from acquiring the same active target. Pages and building blocks do not exist yet; their project-ownership validation will be added with those later domains before lease APIs are exposed to a builder UI.
 
 ## Environment variables
 
@@ -68,5 +70,7 @@ Sessions are opaque random tokens stored only in HTTP-only, same-site cookies; o
 | `DATABASE_URL` | Yes | PostgreSQL connection string for application data, sessions, and auth throttling. |
 | `APP_URL` | Yes | Public Canvas origin, reserved for redirects and links as later phases expand. |
 | `NODE_ENV` | Set by runtime | Enables production-only secure cookie behavior. |
+| `INVITE_TTL_DAYS` | No | Invitation lifetime; defaults to `7`. |
+| `LEASE_DURATION_SECONDS` | No | Active editing lease lifetime; defaults to `60`. |
 
-No AI, object-storage, worker, or generated-runtime configuration is required in Phase 1.
+No AI, object-storage, worker, or generated-runtime configuration is required yet.
