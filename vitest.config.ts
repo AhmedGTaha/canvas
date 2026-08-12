@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: "node",
       include: ["src/**/*.test.ts"],
+      fileParallelism: false,
       coverage: { reporter: ["text", "html"] },
     },
   };

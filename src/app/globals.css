@@ -325,6 +325,9 @@ p { color: var(--muted); line-height: 1.55; }
 .auth-switch { margin: 2px 0 0; text-align: center; font-size: .82rem; }
 .auth-switch a { color: var(--text); font-weight: 650; }
 .auth-footer { margin: auto 0 0; padding-top: 48px; font-size: .76rem; }
+.settings-page-stack { width: min(760px, 100%); }
+.settings-card { display: grid; gap: 16px; }
+.settings-description { margin: -5px 0 0; color: var(--muted); font-size: .8rem; }
 
 @media (max-width: 900px) {
   .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

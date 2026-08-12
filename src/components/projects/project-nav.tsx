@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Files, Hammer, Images, LayoutDashboard, Palette, UsersRound } from "lucide-react";
+import { Files, Hammer, Images, LayoutDashboard, Palette, Settings, UsersRound } from "lucide-react";
 
 export function ProjectNav({ projectId }: { projectId: string }) {
   const pathname = usePathname();
@@ -13,6 +13,7 @@ export function ProjectNav({ projectId }: { projectId: string }) {
     { href: `/projects/${projectId}/media`, label: "Media", icon: Images },
     { href: `/projects/${projectId}/brand`, label: "Brand / Theme", icon: Palette },
     { href: `/projects/${projectId}/collaborators`, label: "Collaborators", icon: UsersRound },
+    { href: `/projects/${projectId}/settings`, label: "Project Settings", icon: Settings },
   ];
   return <nav className="project-nav" aria-label="Project navigation">{links.map(({ href, label, icon: Icon, exact }) => {
     const active = exact ? pathname === href : pathname.startsWith(href);

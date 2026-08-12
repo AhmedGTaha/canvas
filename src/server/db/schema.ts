@@ -19,6 +19,9 @@ export const projectStatus = pgEnum("project_status", ["active", "archived", "de
 export const projectRole = pgEnum("project_role", ["owner", "collaborator"]);
 export const leaseTargetType = pgEnum("lease_target_type", ["page", "building_block"]);
 export const pageNodeType = pgEnum("page_node_type", ["page", "folder"]);
+export const aiMessageRole = pgEnum("ai_message_role", ["user", "assistant", "system_internal"]);
+export const generationTargetType = pgEnum("generation_target_type", ["project", "page", "building_block"]);
+export const generationJobStatus = pgEnum("generation_job_status", ["queued", "preparing_context", "generating", "validating", "applying", "completed", "failed", "cancelled"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -71,6 +74,7 @@ export const projects = pgTable("projects", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+  currentInstructionId: uuid("current_instruction_id"),
 }, (table) => [index("projects_workspace_status_idx").on(table.workspaceId, table.status), index("projects_owner_user_id_idx").on(table.ownerUserId)]);
 
 export const projectMembers = pgTable("project_members", {
@@ -200,6 +204,73 @@ export const projectThemeSettings = pgTable("project_theme_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });
 
+export const projectInstructions = pgTable("project_instructions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  revisionNumber: integer("revision_number").notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [unique("project_instructions_project_revision_unique").on(table.projectId, table.revisionNumber)]);
+
+export const aiConversations = pgTable("ai_conversations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  pageId: uuid("page_id"),
+  buildingBlockId: uuid("building_block_id"),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+}, (table) => [unique("ai_conversations_id_project_unique").on(table.id, table.projectId), index("ai_conversations_project_updated_idx").on(table.projectId, table.updatedAt)]);
+
+export const aiMessages = pgTable("ai_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversationId: uuid("conversation_id").notNull().references(() => aiConversations.id, { onDelete: "cascade" }),
+  role: aiMessageRole("role").notNull(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "restrict" }),
+  content: text("content").notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [index("ai_messages_conversation_created_idx").on(table.conversationId, table.createdAt)]);
+
+export const generationJobs = pgTable("generation_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  conversationId: uuid("conversation_id"),
+  actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  targetType: generationTargetType("target_type").notNull(),
+  targetId: uuid("target_id"),
+  promptMessageId: uuid("prompt_message_id"),
+  status: generationJobStatus("status").notNull().default("queued"),
+  progressStage: varchar("progress_stage", { length: 80 }).notNull().default("Queued"),
+  provider: varchar("provider", { length: 40 }).notNull(),
+  providerModel: varchar("provider_model", { length: 120 }),
+  providerRequestId: varchar("provider_request_id", { length: 255 }),
+  errorCode: varchar("error_code", { length: 80 }),
+  errorMessage: varchar("error_message", { length: 500 }),
+  resultMessageId: uuid("result_message_id"),
+  resultChangeSetId: uuid("result_change_set_id"),
+  usageMetadata: jsonb("usage_metadata"),
+  contextFingerprint: char("context_fingerprint", { length: 64 }),
+  contextMetadata: jsonb("context_metadata"),
+  cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true, mode: "date" }),
+  claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
+  workerId: varchar("worker_id", { length: 120 }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  availableAt: timestamp("available_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
+}, (table) => [index("generation_jobs_project_created_idx").on(table.projectId, table.createdAt), index("generation_jobs_claim_idx").on(table.status, table.availableAt, table.createdAt)]);
+
+export const aiJobRateLimits = pgTable("ai_job_rate_limits", {
+  scope: varchar("scope", { length: 16 }).notNull(),
+  subjectId: uuid("subject_id").notNull(),
+  attemptCount: integer("attempt_count").notNull().default(1),
+  windowStartedAt: timestamp("window_started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.scope, table.subjectId] })]);
+
 export type User = typeof users.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -211,3 +282,7 @@ export type ProjectBrandSettings = typeof projectBrandSettings.$inferSelect;
 export type ProjectThemeSettings = typeof projectThemeSettings.$inferSelect;
 export type MediaFolder = typeof mediaFolders.$inferSelect;
 export type MediaAsset = typeof mediaAssets.$inferSelect;
+export type ProjectInstruction = typeof projectInstructions.$inferSelect;
+export type AIConversation = typeof aiConversations.$inferSelect;
+export type AIMessage = typeof aiMessages.$inferSelect;
+export type GenerationJob = typeof generationJobs.$inferSelect;

@@ -36,6 +36,12 @@ Canvas is an AI-assisted website-building SaaS. The current foundation includes 
    npm run dev
    ```
 
+6. In another terminal, start the durable PostgreSQL-backed AI worker:
+
+   ```bash
+   npm run worker
+   ```
+
 Open [http://localhost:3000](http://localhost:3000), create an account, then create a workspace and project. The Pages screen manages site structure and URLs. Media provides a private, project-scoped image library. Brand / Theme manages company identity, logos selected from Media, semantic colors, controlled design scales, and a live light/dark preview. Project owners manage invitation links and members from Collaborators.
 
 Builder renders the controlled project runtime in an iframe sandbox with an opaque origin. Preview sessions and asset URLs use short-lived HMAC tokens, so set `PREVIEW_TOKEN_SECRET` to a private random value of at least 32 characters. The local same-origin route is a development compromise: `allow-same-origin` is deliberately omitted, embedded resource requests are credentialless, preview responses have a restrictive CSP, and preview code cannot read Canvas cookies or browser storage. Production can move the same token-backed routes to a dedicated preview origin for stronger process/origin isolation. Light mode uses the primary logo; Dark mode uses the alternate logo when available and otherwise falls back to primary. Membership is rechecked for token-protected requests. A removed collaborator may retain already-rendered, non-sensitive manifest text until the isolated frame refreshes, but cannot load protected media or create a new session; tokens expire after five minutes by default.
@@ -87,5 +93,11 @@ Media metadata and hierarchy live in PostgreSQL while image bytes live behind th
 | `MEDIA_MAX_BYTES` | No | Maximum bytes per uploaded image; defaults to `10485760` (10 MB). |
 | `PREVIEW_TOKEN_SECRET` | Yes | Private HMAC secret of at least 32 characters for preview sessions. |
 | `PREVIEW_TOKEN_TTL_SECONDS` | No | Preview session lifetime, constrained to 30–900 seconds; defaults to `300`. |
+| `AI_PROVIDER` | No | Server-side provider selection; Phase 7 supports `gemini` (default). |
+| `GEMINI_API_KEY` | For AI only | Server-only Gemini credential. Normal Canvas features work without it. |
+| `AI_MODEL` | No | Gemini model name; defaults to `gemini-2.5-flash`. |
+| `AI_PROVIDER_TIMEOUT_MS` | No | Provider request timeout; defaults to `120000`. |
 
-No AI, worker, or generated-runtime configuration is required yet.
+AI credentials are optional. Without them, Canvas and Project Settings continue to work; an AI job fails safely with “AI is not configured for this environment.” For AI operations, set `AI_PROVIDER=gemini`, a server-only `GEMINI_API_KEY`, and optionally `AI_MODEL` and `AI_PROVIDER_TIMEOUT_MS`. Run `npm run worker` beside the application. Jobs are claimed using PostgreSQL row locking, survive browser navigation, retry transient failures at most three times, and honor cancellation between stages. Gemini client-side abort stops local response handling but may not stop provider billing after submission, so cancelled responses are discarded. Run the optional paid smoke check with `npm run test:ai-provider` only when credentials are configured.
+
+The provider adapter never reads Canvas persistence. Project-owned data is authorized and assembled by the Project Context Builder, prompt semantics are applied by a provider-neutral assembler, and only the orchestration service persists normalized results and usage. Context includes bounded project identity, brand/theme, current instruction revision, active page structure, selected media metadata, recent conversation history, and canonical frontend-only constraints. Every lookup carries the current project ID; foreign page, conversation, media, and job IDs are rejected.
