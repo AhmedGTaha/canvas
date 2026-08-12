@@ -36,7 +36,7 @@ Canvas is an AI-assisted website-building SaaS. The current foundation includes 
    npm run dev
    ```
 
-Open [http://localhost:3000](http://localhost:3000), create an account, then create a workspace and project. The Pages screen manages site structure and URLs. Brand / Theme manages company identity, semantic colors, controlled design scales, and a live light/dark preview. Project owners manage invitation links and members from Collaborators.
+Open [http://localhost:3000](http://localhost:3000), create an account, then create a workspace and project. The Pages screen manages site structure and URLs. Media provides a private, project-scoped image library. Brand / Theme manages company identity, logos selected from Media, semantic colors, controlled design scales, and a live light/dark preview. Project owners manage invitation links and members from Collaborators.
 
 ## Quality checks
 
@@ -57,6 +57,7 @@ Integration tests use `DATABASE_URL` and clear records from the Phase 1 tables. 
 - `src/server/auth` owns cookie/session integration.
 - `src/server/permissions` centralizes authorization checks.
 - `src/server/db` owns the PostgreSQL client, schema mapping, and migration runner.
+- `src/server/storage` defines object storage and its local development adapter.
 - `migrations` contains deterministic SQL migrations and database integrity constraints.
 
 Sessions are opaque random tokens stored only in HTTP-only, same-site cookies; only token hashes are persisted. Credentials use Argon2id. Invitation tokens follow the same plaintext-once/hash-at-rest model and expire after seven days by default. Every workspace/project operation derives the user ID from the server session and rechecks the effective owner/collaborator role server-side.
@@ -65,7 +66,9 @@ Page routes are stored as canonical current metadata and uniquely constrained pe
 
 Editing leases use a 60-second default timeout. The unique `(project_id, target_type, target_id)` key and conditional PostgreSQL upsert prevent two users from acquiring the same active target. Page targets are now verified against active pages in the same project; building-block verification will arrive with that domain.
 
-Project themes use strict semantic `#RRGGBB` light/dark color sets and normalized `0–100` design scales. The shared resolver converts these into serializable radius, spacing, shadow, typography, border, and `--project-*` CSS tokens. Revision-checked autosave prevents stale writes. Brand rows include nullable future media UUIDs, but logo selection and same-project media foreign keys are intentionally deferred until Phase 5 introduces `media_assets`; arbitrary logo URLs are not supported.
+Project themes use strict semantic `#RRGGBB` light/dark color sets and normalized `0–100` design scales. The shared resolver converts these into serializable radius, spacing, shadow, typography, border, and `--project-*` CSS tokens. Revision-checked autosave prevents stale writes. Brand logos reference stable, same-project media UUIDs; arbitrary logo URLs are not supported.
+
+Media metadata and hierarchy live in PostgreSQL while image bytes live behind the `ObjectStorage` interface. Local development stores private objects under `.canvas-storage` by default; this directory is gitignored and must remain writable by the Canvas server. Files are only returned through the authenticated `/api/media/{assetId}` route. Moving or renaming library items never moves object keys, and soft deletion intentionally retains binaries for future version history.
 
 ## Environment variables
 
@@ -76,5 +79,8 @@ Project themes use strict semantic `#RRGGBB` light/dark color sets and normalize
 | `NODE_ENV` | Set by runtime | Enables production-only secure cookie behavior. |
 | `INVITE_TTL_DAYS` | No | Invitation lifetime; defaults to `7`. |
 | `LEASE_DURATION_SECONDS` | No | Active editing lease lifetime; defaults to `60`. |
+| `STORAGE_DRIVER` | No | Object storage adapter; Phase 5 supports `local` (default). |
+| `LOCAL_STORAGE_PATH` | No | Local private object root; defaults to `.canvas-storage`. |
+| `MEDIA_MAX_BYTES` | No | Maximum bytes per uploaded image; defaults to `10485760` (10 MB). |
 
-No AI, object-storage, worker, or generated-runtime configuration is required yet.
+No AI, worker, or generated-runtime configuration is required yet.

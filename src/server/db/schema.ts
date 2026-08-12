@@ -1,5 +1,6 @@
 import {
   boolean,
+  bigint,
   char,
   index,
   integer,
@@ -149,6 +150,42 @@ export const projectBrandSettings = pgTable("project_brand_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });
 
+export const mediaFolders = pgTable("media_folders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  parentId: uuid("parent_id"),
+  name: varchar("name", { length: 120 }).notNull(),
+  position: integer("position").notNull(),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  unique("media_folders_id_project_unique").on(table.id, table.projectId),
+  index("media_folders_project_parent_position_idx").on(table.projectId, table.parentId, table.position),
+]);
+
+export const mediaAssets = pgTable("media_assets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  folderId: uuid("folder_id"),
+  originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+  displayName: varchar("display_name", { length: 160 }).notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  mimeType: varchar("mime_type", { length: 32 }).notNull(),
+  sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  altText: varchar("alt_text", { length: 500 }),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  unique("media_assets_id_project_unique").on(table.id, table.projectId),
+  index("media_assets_project_folder_created_idx").on(table.projectId, table.folderId, table.createdAt),
+]);
+
 export const projectThemeSettings = pgTable("project_theme_settings", {
   projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
   lightTokens: jsonb("light_tokens").notNull(),
@@ -172,3 +209,5 @@ export type EditingLease = typeof editingLeases.$inferSelect;
 export type PageNode = typeof pageNodes.$inferSelect;
 export type ProjectBrandSettings = typeof projectBrandSettings.$inferSelect;
 export type ProjectThemeSettings = typeof projectThemeSettings.$inferSelect;
+export type MediaFolder = typeof mediaFolders.$inferSelect;
+export type MediaAsset = typeof mediaAssets.$inferSelect;

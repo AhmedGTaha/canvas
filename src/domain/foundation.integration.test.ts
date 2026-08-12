@@ -6,7 +6,7 @@ import { authenticate, createSession, readSession, register, revokeSession } fro
 import { ProjectService } from "@/domain/projects/service";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { db, sql } from "@/server/db/client";
-import { pageNodes, projectBrandSettings, projects, projectThemeSettings, users } from "@/server/db/schema";
+import { mediaAssets, pageNodes, projectBrandSettings, projects, projectThemeSettings, users } from "@/server/db/schema";
 import { editingLeases, projectInvites, projectMembers } from "@/server/db/schema";
 import { InvitationService } from "@/domain/collaboration/invitation-service";
 import { MembershipService } from "@/domain/collaboration/membership-service";
@@ -16,6 +16,8 @@ import { sha256 } from "@/domain/shared/crypto";
 import { PageTreeService } from "@/domain/pages/service";
 import { BrandService, ThemeService, getProjectDesignSystem } from "@/domain/theme/services";
 import { DEFAULT_DARK_TOKENS, DEFAULT_LIGHT_TOKENS, DEFAULT_THEME } from "@/domain/theme/defaults";
+import { MediaService, getProjectMediaContext } from "@/domain/media/service";
+import type { ObjectStorage } from "@/server/storage";
 
 async function createUser(label: string) {
   const id = randomUUID();
@@ -26,7 +28,7 @@ async function createUser(label: string) {
 
 describe.sequential("Phase 1 persistence and tenant isolation", () => {
   beforeEach(async () => {
-    await sql`TRUNCATE TABLE page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`;
+    await sql`TRUNCATE TABLE media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`;
   });
 
   afterAll(async () => { await sql.end(); });
@@ -443,5 +445,57 @@ describe.sequential("Phase 1 persistence and tenant isolation", () => {
     await new MembershipService().remove(owner.id, { projectId: projectA.id, userId: collaborator.id });
     await expect(themes.read(collaborator.id, projectA.id)).rejects.toThrowError(/do not have access/);
     await expect(brands.update(collaborator.id, { projectId: projectA.id, expectedRevision: 1, brand: { companyName: "No", companyDescription: "", brandNotes: "" } })).rejects.toThrowError(/do not have access/);
+  });
+
+  it("uploads, organizes, edits, references, and soft-deletes media", async () => {
+    const owner = await createUser("owner");
+    const collaborator = await createUser("collaborator");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
+    const objects = new Map<string, Uint8Array>();
+    const storage: ObjectStorage = { put: async (key, value) => { objects.set(key, value); }, get: async (key) => { const value = objects.get(key); if (!value) throw new Error("missing"); return value; }, exists: async (key) => objects.has(key), delete: async (key) => { objects.delete(key); } };
+    const media = new MediaService(undefined, undefined, storage);
+    const parent = await media.createFolder(owner.id, { projectId: project.id, name: "Brand" });
+    const child = await media.createFolder(collaborator.id, { projectId: project.id, parentId: parent?.id, name: "Logos" });
+    const png = new Uint8Array(45); png.set([137, 80, 78, 71, 13, 10, 26, 10]); const view = new DataView(png.buffer); view.setUint32(8, 13); png.set(new TextEncoder().encode("IHDR"), 12); view.setUint32(16, 640); view.setUint32(20, 320); png.set(new TextEncoder().encode("IEND"), 37);
+    const previousLimit = process.env.MEDIA_MAX_BYTES; process.env.MEDIA_MAX_BYTES = "10";
+    await expect(media.upload(collaborator.id, { projectId: project.id, folderId: child?.id, filename: "large.png", bytes: png })).rejects.toThrowError(/0 MB or smaller/);
+    if (previousLimit === undefined) delete process.env.MEDIA_MAX_BYTES; else process.env.MEDIA_MAX_BYTES = previousLimit;
+    const asset = await media.upload(collaborator.id, { projectId: project.id, folderId: child?.id, filename: "acme/logo.png", bytes: png });
+    expect(asset).toMatchObject({ originalFilename: "acme-logo.png", displayName: "acme-logo", width: 640, height: 320, mimeType: "image/png" });
+    expect(objects.get(asset.storageKey)).toEqual(png);
+    await media.updateAsset(owner.id, { projectId: project.id, assetId: asset.id, displayName: "Acme primary", altText: "Acme wordmark" });
+    await media.setBrandLogo(owner.id, { projectId: project.id, kind: "primary", assetId: asset.id });
+    await expect(getProjectMediaContext(owner.id, project.id)).resolves.toEqual([expect.objectContaining({ id: asset.id, folderPath: "Brand/Logos", altText: "Acme wordmark" })]);
+    await expect(media.readBinary(collaborator.id, asset.id)).resolves.toMatchObject({ asset: { id: asset.id }, bytes: png });
+    await media.deleteFolder(owner.id, { projectId: project.id, folderId: parent?.id });
+    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, asset.id)))[0]?.deletedAt).toBeInstanceOf(Date);
+    expect((await db.select().from(projectBrandSettings).where(eq(projectBrandSettings.projectId, project.id)))[0]?.primaryLogoMediaId).toBeNull();
+    expect(objects.has(asset.storageKey)).toBe(true);
+    await expect(media.readBinary(owner.id, asset.id)).rejects.toThrowError(/not found/);
+  });
+
+  it("enforces media tenant boundaries, revocation, cycles, and database project constraints", async () => {
+    const owner = await createUser("owner"); const collaborator = await createUser("collaborator"); const stranger = await createUser("stranger");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const a = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "A" });
+    const b = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "B" });
+    await db.insert(projectMembers).values({ projectId: a.id, userId: collaborator.id });
+    const storage: ObjectStorage = { put: async () => {}, get: async () => new Uint8Array([1]), exists: async () => true, delete: async () => {} };
+    const media = new MediaService(undefined, undefined, storage);
+    const root = await media.createFolder(owner.id, { projectId: a.id, name: "Root" });
+    const child = await media.createFolder(owner.id, { projectId: a.id, parentId: root?.id, name: "Child" });
+    const foreign = await media.createFolder(owner.id, { projectId: b.id, name: "Foreign" });
+    const png = new Uint8Array(45); png.set([137, 80, 78, 71, 13, 10, 26, 10]); const imageView = new DataView(png.buffer); imageView.setUint32(8, 13); png.set(new TextEncoder().encode("IHDR"), 12); imageView.setUint32(16, 10); imageView.setUint32(20, 10); png.set(new TextEncoder().encode("IEND"), 37);
+    const foreignAsset = await media.upload(owner.id, { projectId: b.id, filename: "foreign.png", bytes: png });
+    await expect(media.moveFolder(owner.id, { projectId: a.id, folderId: root?.id, parentId: child?.id })).rejects.toThrowError(/children/);
+    await expect(media.moveFolder(owner.id, { projectId: a.id, folderId: root?.id, parentId: foreign?.id })).rejects.toThrowError(/not found/);
+    await expect(media.list(stranger.id, { projectId: a.id })).rejects.toThrowError(/do not have access/);
+    await expect(media.setBrandLogo(owner.id, { projectId: a.id, kind: "primary", assetId: foreignAsset.id })).rejects.toThrowError(/not found/);
+    await expect(db.update(projectBrandSettings).set({ primaryLogoMediaId: foreignAsset.id }).where(eq(projectBrandSettings.projectId, a.id))).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(db.insert(mediaAssets).values({ projectId: a.id, folderId: foreign?.id, originalFilename: "x.png", displayName: "x", storageKey: "unique/x.png", mimeType: "image/png", sizeBytes: 1, width: 1, height: 1, createdByUserId: owner.id })).rejects.toMatchObject({ cause: { code: "23503" } });
+    await new MembershipService().remove(owner.id, { projectId: a.id, userId: collaborator.id });
+    await expect(media.createFolder(collaborator.id, { projectId: a.id, name: "Revoked" })).rejects.toThrowError(/do not have access/);
   });
 });
