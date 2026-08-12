@@ -6,13 +6,14 @@ import { authenticate, createSession, readSession, register, revokeSession } fro
 import { ProjectService } from "@/domain/projects/service";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { db, sql } from "@/server/db/client";
-import { projects, users } from "@/server/db/schema";
+import { pageNodes, projects, users } from "@/server/db/schema";
 import { editingLeases, projectInvites, projectMembers } from "@/server/db/schema";
 import { InvitationService } from "@/domain/collaboration/invitation-service";
 import { MembershipService } from "@/domain/collaboration/membership-service";
 import { EditingLeaseService } from "@/domain/collaboration/lease-service";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { sha256 } from "@/domain/shared/crypto";
+import { PageTreeService } from "@/domain/pages/service";
 
 async function createUser(label: string) {
   const id = randomUUID();
@@ -23,7 +24,7 @@ async function createUser(label: string) {
 
 describe.sequential("Phase 1 persistence and tenant isolation", () => {
   beforeEach(async () => {
-    await sql`TRUNCATE TABLE audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`;
+    await sql`TRUNCATE TABLE page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`;
   });
 
   afterAll(async () => { await sql.end(); });
@@ -178,7 +179,12 @@ describe.sequential("Phase 1 persistence and tenant isolation", () => {
     const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Shared" });
     await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
     const leases = new EditingLeaseService();
-    const target = { projectId: project.id, targetType: "page" as const, targetId: randomUUID() };
+    const pages = new PageTreeService();
+    const leasePage = await pages.create(owner.id, { projectId: project.id, type: "page", name: "Lease page" });
+    const racePage = await pages.create(owner.id, { projectId: project.id, type: "page", name: "Race page" });
+    const target = { projectId: project.id, targetType: "page" as const, targetId: leasePage.id };
+    const otherProject = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Other" });
+    const otherPage = await pages.create(owner.id, { projectId: otherProject.id, type: "page", name: "Other page" });
 
     const first = await leases.acquire(owner.id, target);
     await expect(leases.acquire(collaborator.id, target)).rejects.toThrowError(/currently editing/);
@@ -186,16 +192,180 @@ describe.sequential("Phase 1 persistence and tenant isolation", () => {
     expect(renewed.id).toBe(first.id);
     await expect(leases.renew(owner.id, target)).resolves.toMatchObject({ userId: owner.id });
     await expect(leases.acquire(stranger.id, target)).rejects.toThrowError(/do not have access/);
+    await expect(leases.acquire(owner.id, { ...target, targetId: otherPage.id })).rejects.toThrowError(/target not found/i);
 
     await db.update(editingLeases).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(editingLeases.id, first.id));
     await expect(leases.acquire(collaborator.id, target)).resolves.toMatchObject({ userId: collaborator.id });
     await expect(leases.release(collaborator.id, target)).resolves.toMatchObject({ userId: collaborator.id });
     await expect(leases.getActiveLease(owner.id, target)).resolves.toBeNull();
 
-    const raceTarget = { ...target, targetId: randomUUID() };
+    const raceTarget = { ...target, targetId: racePage.id };
     const results = await Promise.allSettled([leases.acquire(owner.id, raceTarget), leases.acquire(collaborator.id, raceTarget)]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const [storedLease] = await db.select().from(editingLeases).where(and(eq(editingLeases.projectId, project.id), eq(editingLeases.targetId, raceTarget.targetId)));
     expect(storedLease).toBeDefined();
+  });
+
+  it("lets owners and collaborators build nested page/folder routes with SEO", async () => {
+    const owner = await createUser("owner");
+    const collaborator = await createUser("collaborator");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
+    const tree = new PageTreeService();
+    const home = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const company = await tree.create(collaborator.id, { projectId: project.id, type: "folder", name: "Company" });
+    const services = await tree.create(collaborator.id, { projectId: project.id, parentId: company.id, type: "page", name: "Services" });
+    const web = await tree.create(owner.id, { projectId: project.id, parentId: services.id, type: "page", name: "Web Development" });
+
+    expect(home).toMatchObject({ isHomepage: true, routePath: "/" });
+    expect(company).toMatchObject({ slug: null, routePath: null, isHomepage: false });
+    expect(services.routePath).toBe("/services");
+    expect(web.routePath).toBe("/services/web-development");
+    await tree.updateSeo(collaborator.id, { projectId: project.id, nodeId: web.id, pageTitle: "Web Development Services", metaDescription: "Custom websites for growing companies." });
+    const nodes = await tree.listTree(collaborator.id, project.id);
+    expect(nodes.find((node) => node.id === web.id)).toMatchObject({ pageTitle: "Web Development Services", metaDescription: "Custom websites for growing companies." });
+  });
+
+  it("rejects root, nested, slug-edit, and move route collisions atomically", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    const tree = new PageTreeService();
+    await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const contact = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Contact" });
+    await expect(tree.create(owner.id, { projectId: project.id, type: "page", name: "Contact Again", slug: "contact" })).rejects.toThrowError(/already used/);
+    const products = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Products" });
+    await tree.create(owner.id, { projectId: project.id, parentId: products.id, type: "page", name: "Details" });
+    const services = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Services" });
+    const serviceDetails = await tree.create(owner.id, { projectId: project.id, parentId: services.id, type: "page", name: "Details" });
+    await expect(tree.create(owner.id, { projectId: project.id, parentId: products.id, type: "page", name: "Other details", slug: "details" })).rejects.toThrowError(/already used/);
+    await expect(tree.updateSlug(owner.id, { projectId: project.id, nodeId: contact.id, slug: "products" })).rejects.toThrowError(/already used/);
+    await expect(tree.move(owner.id, { projectId: project.id, nodeId: serviceDetails.id, newParentId: products.id, newPosition: 0 })).rejects.toThrowError(/already used/);
+    await expect(tree.listTree(owner.id, project.id)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: serviceDetails.id, parentId: services.id, routePath: "/services/details" })]));
+    const concurrent = await Promise.allSettled([
+      tree.create(owner.id, { projectId: project.id, type: "page", name: "Race one", slug: "race-route" }),
+      tree.create(owner.id, { projectId: project.id, type: "page", name: "Race two", slug: "race-route" }),
+    ]);
+    expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  });
+
+  it("prevents cycles, self-parenting, cross-project parents, and deleted parents", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const projectA = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "A" });
+    const projectB = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "B" });
+    const tree = new PageTreeService();
+    const a = await tree.create(owner.id, { projectId: projectA.id, type: "folder", name: "A" });
+    const b = await tree.create(owner.id, { projectId: projectA.id, parentId: a.id, type: "folder", name: "B" });
+    const c = await tree.create(owner.id, { projectId: projectA.id, parentId: b.id, type: "folder", name: "C" });
+    const foreign = await tree.create(owner.id, { projectId: projectB.id, type: "folder", name: "Foreign" });
+    await expect(tree.move(owner.id, { projectId: projectA.id, nodeId: a.id, newParentId: c.id, newPosition: 0 })).rejects.toThrowError(/children/);
+    await expect(tree.move(owner.id, { projectId: projectA.id, nodeId: b.id, newParentId: b.id, newPosition: 0 })).rejects.toThrowError(/inside itself/);
+    await expect(tree.move(owner.id, { projectId: projectA.id, nodeId: a.id, newParentId: foreign.id, newPosition: 0 })).rejects.toThrowError(/not found/);
+    await expect(tree.duplicatePage(owner.id, { projectId: projectA.id, nodeId: foreign.id })).rejects.toThrowError(/not found/);
+    await expect(tree.setHomepage(owner.id, { projectId: projectA.id, nodeId: foreign.id })).rejects.toThrowError(/not found/);
+    await tree.deleteSubtree(owner.id, { projectId: projectB.id, nodeId: foreign.id });
+    await expect(tree.create(owner.id, { projectId: projectA.id, parentId: foreign.id, type: "page", name: "Injected" })).rejects.toThrowError(/not found/);
+  });
+
+  it("manages the homepage atomically and protects it from subtree deletion", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    const tree = new PageTreeService();
+    const first = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const second = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Landing" });
+    const folder = await tree.create(owner.id, { projectId: project.id, type: "folder", name: "Folder" });
+    expect(second.isHomepage).toBe(false);
+    await expect(tree.setHomepage(owner.id, { projectId: project.id, nodeId: folder.id })).rejects.toThrowError(/folder/);
+    await tree.setHomepage(owner.id, { projectId: project.id, nodeId: second.id });
+    const nodes = await tree.listTree(owner.id, project.id);
+    expect(nodes.find((node) => node.id === first.id)).toMatchObject({ isHomepage: false, routePath: "/home" });
+    expect(nodes.find((node) => node.id === second.id)).toMatchObject({ isHomepage: true, routePath: "/" });
+    expect(nodes.filter((node) => node.isHomepage)).toHaveLength(1);
+    await expect(tree.deleteSubtree(owner.id, { projectId: project.id, nodeId: second.id })).rejects.toThrowError(/another homepage/);
+    await db.update(pageNodes).set({ deletedAt: new Date() }).where(eq(pageNodes.id, first.id));
+    await expect(tree.setHomepage(owner.id, { projectId: project.id, nodeId: first.id })).rejects.toThrowError(/not found/);
+  });
+
+  it("duplicates pages with SEO, stable identity, parent, route, and position", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    const tree = new PageTreeService();
+    await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const folder = await tree.create(owner.id, { projectId: project.id, type: "folder", name: "Offers" });
+    const services = await tree.create(owner.id, { projectId: project.id, parentId: folder.id, type: "page", name: "Services" });
+    await tree.updateSeo(owner.id, { projectId: project.id, nodeId: services.id, pageTitle: "Our Services", metaDescription: "Everything we offer." });
+    const firstCopy = await tree.duplicatePage(owner.id, { projectId: project.id, nodeId: services.id });
+    const secondCopy = await tree.duplicatePage(owner.id, { projectId: project.id, nodeId: services.id });
+    expect(firstCopy).toMatchObject({ name: "Services Copy", slug: "services-copy", routePath: "/services-copy", parentId: folder.id, pageTitle: "Our Services", metaDescription: "Everything we offer." });
+    expect(secondCopy).toMatchObject({ name: "Services Copy 2", slug: "services-copy-2", routePath: "/services-copy-2", parentId: folder.id });
+    expect(new Set([services.id, firstCopy.id, secondCopy.id]).size).toBe(3);
+  });
+
+  it("reorders, moves, and soft-deletes complete subtrees with compact positions", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    const tree = new PageTreeService();
+    const home = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const folder = await tree.create(owner.id, { projectId: project.id, type: "folder", name: "Folder" });
+    const about = await tree.create(owner.id, { projectId: project.id, type: "page", name: "About" });
+    const child = await tree.create(owner.id, { projectId: project.id, parentId: folder.id, type: "page", name: "Child" });
+    await tree.reorder(owner.id, { projectId: project.id, nodeId: about.id, direction: "up" });
+    await tree.move(owner.id, { projectId: project.id, nodeId: about.id, newParentId: folder.id, newPosition: 0 });
+    const moved = await tree.listTree(owner.id, project.id);
+    expect(moved.filter((node) => node.parentId === folder.id).sort((a, b) => a.position - b.position).map((node) => node.id)).toEqual([about.id, child.id]);
+    await tree.deleteSubtree(owner.id, { projectId: project.id, nodeId: folder.id });
+    const visible = await tree.listTree(owner.id, project.id);
+    expect(visible.map((node) => node.id)).toEqual([home.id]);
+    const deleted = await db.select().from(pageNodes).where(and(eq(pageNodes.projectId, project.id), eq(pageNodes.id, child.id)));
+    expect(deleted[0]?.deletedAt).toBeInstanceOf(Date);
+  });
+
+  it("enforces page-tree authorization and revocation for every mutation boundary", async () => {
+    const owner = await createUser("owner");
+    const collaborator = await createUser("collaborator");
+    const stranger = await createUser("stranger");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
+    const tree = new PageTreeService();
+    const home = await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const page = await tree.create(collaborator.id, { projectId: project.id, type: "page", name: "Page" });
+    await expect(tree.listTree(stranger.id, project.id)).rejects.toThrowError(/do not have access/);
+    await expect(tree.create(stranger.id, { projectId: project.id, type: "page", name: "No" })).rejects.toThrowError(/do not have access/);
+    await expect(tree.rename(stranger.id, { projectId: project.id, nodeId: page.id, name: "No" })).rejects.toThrowError(/do not have access/);
+    await expect(tree.move(stranger.id, { projectId: project.id, nodeId: page.id, newParentId: null, newPosition: 0 })).rejects.toThrowError(/do not have access/);
+    await expect(tree.deleteSubtree(stranger.id, { projectId: project.id, nodeId: page.id })).rejects.toThrowError(/do not have access/);
+    await expect(tree.updateSlug(stranger.id, { projectId: project.id, nodeId: page.id, slug: "no" })).rejects.toThrowError(/do not have access/);
+    await expect(tree.setHomepage(stranger.id, { projectId: project.id, nodeId: page.id })).rejects.toThrowError(/do not have access/);
+    await expect(tree.updateSeo(stranger.id, { projectId: project.id, nodeId: page.id, pageTitle: "No", metaDescription: "" })).rejects.toThrowError(/do not have access/);
+    await expect(tree.duplicatePage(stranger.id, { projectId: project.id, nodeId: page.id })).rejects.toThrowError(/do not have access/);
+    await new MembershipService().remove(owner.id, { projectId: project.id, userId: collaborator.id });
+    await expect(tree.rename(collaborator.id, { projectId: project.id, nodeId: home.id, name: "No access" })).rejects.toThrowError(/do not have access/);
+  });
+
+  it("allows collaborators to perform the complete normal tree-editing workflow", async () => {
+    const owner = await createUser("owner");
+    const collaborator = await createUser("collaborator");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
+    const tree = new PageTreeService();
+    await tree.create(owner.id, { projectId: project.id, type: "page", name: "Home" });
+    const folder = await tree.create(collaborator.id, { projectId: project.id, type: "folder", name: "Folder" });
+    const page = await tree.create(collaborator.id, { projectId: project.id, type: "page", name: "Draft" });
+    await tree.rename(collaborator.id, { projectId: project.id, nodeId: page.id, name: "About" });
+    await tree.updateSlug(collaborator.id, { projectId: project.id, nodeId: page.id, slug: "about-us" });
+    await tree.updateSeo(collaborator.id, { projectId: project.id, nodeId: page.id, pageTitle: "About us", metaDescription: "Meet our team." });
+    await tree.move(collaborator.id, { projectId: project.id, nodeId: page.id, newParentId: folder.id, newPosition: 0 });
+    await tree.reorder(collaborator.id, { projectId: project.id, nodeId: folder.id, direction: "up" });
+    const duplicate = await tree.duplicatePage(collaborator.id, { projectId: project.id, nodeId: page.id });
+    await tree.setHomepage(collaborator.id, { projectId: project.id, nodeId: page.id });
+    await tree.deleteSubtree(collaborator.id, { projectId: project.id, nodeId: duplicate.id });
+    await expect(tree.listTree(collaborator.id, project.id)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: page.id, name: "About", slug: "about-us", routePath: "/", isHomepage: true })]));
   });
 });

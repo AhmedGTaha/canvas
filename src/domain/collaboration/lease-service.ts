@@ -1,7 +1,7 @@
-import { and, eq, gt, lte, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { DomainError } from "@/domain/shared/errors";
-import { editingLeases } from "@/server/db/schema";
+import { editingLeases, pageNodes } from "@/server/db/schema";
 import { collaborationConfig } from "@/server/config/collaboration";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { leaseTargetSchema } from "./schemas";
@@ -16,9 +16,16 @@ export class EditingLeaseService {
     return new Date(Date.now() + collaborationConfig.leaseDurationSeconds * 1000);
   }
 
+  private async validateTarget(projectId: string, targetType: "page" | "building_block", targetId: string) {
+    if (targetType === "building_block") return; // Building-block ownership is added when that domain exists.
+    const [page] = await this.database.select({ id: pageNodes.id }).from(pageNodes).where(and(eq(pageNodes.id, targetId), eq(pageNodes.projectId, projectId), eq(pageNodes.type, "page"), isNull(pageNodes.deletedAt))).limit(1);
+    if (!page) throw new DomainError("NOT_FOUND", "Lease target not found.");
+  }
+
   async acquire(userId: string, input: unknown) {
     const target = leaseTargetSchema.parse(input);
     await this.access.requireProjectAccess(userId, target.projectId);
+    await this.validateTarget(target.projectId, target.targetType, target.targetId);
 
     // The unique target key plus conditional upsert makes concurrent acquisition atomic.
     // Phase 3/9 will add entity ownership checks once page/block tables exist.
@@ -35,6 +42,7 @@ export class EditingLeaseService {
   async renew(userId: string, input: unknown) {
     const target = leaseTargetSchema.parse(input);
     await this.access.requireProjectAccess(userId, target.projectId);
+    await this.validateTarget(target.projectId, target.targetType, target.targetId);
     const [lease] = await this.database.update(editingLeases).set({ expiresAt: this.expiration(), updatedAt: new Date() }).where(and(
       eq(editingLeases.projectId, target.projectId),
       eq(editingLeases.targetType, target.targetType),
@@ -49,6 +57,7 @@ export class EditingLeaseService {
   async release(userId: string, input: unknown) {
     const target = leaseTargetSchema.parse(input);
     await this.access.requireProjectAccess(userId, target.projectId);
+    await this.validateTarget(target.projectId, target.targetType, target.targetId);
     const [lease] = await this.database.delete(editingLeases).where(and(
       eq(editingLeases.projectId, target.projectId),
       eq(editingLeases.targetType, target.targetType),
@@ -61,6 +70,7 @@ export class EditingLeaseService {
   async getActiveLease(userId: string, input: unknown) {
     const target = leaseTargetSchema.parse(input);
     await this.access.requireProjectAccess(userId, target.projectId);
+    await this.validateTarget(target.projectId, target.targetType, target.targetId);
     const [lease] = await this.database.select().from(editingLeases).where(and(
       eq(editingLeases.projectId, target.projectId),
       eq(editingLeases.targetType, target.targetType),

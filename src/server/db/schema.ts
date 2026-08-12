@@ -1,4 +1,5 @@
 import {
+  boolean,
   char,
   index,
   integer,
@@ -16,6 +17,7 @@ import {
 export const projectStatus = pgEnum("project_status", ["active", "archived", "deleted"]);
 export const projectRole = pgEnum("project_role", ["owner", "collaborator"]);
 export const leaseTargetType = pgEnum("lease_target_type", ["page", "building_block"]);
+export const pageNodeType = pgEnum("page_node_type", ["page", "folder"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -113,9 +115,32 @@ export const auditEvents = pgTable("audit_events", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (table) => [index("audit_events_project_created_idx").on(table.projectId, table.createdAt)]);
 
+export const pageNodes = pgTable("page_nodes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  parentId: uuid("parent_id"),
+  type: pageNodeType("type").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  slug: varchar("slug", { length: 100 }),
+  routePath: varchar("route_path", { length: 1000 }),
+  position: integer("position").notNull(),
+  isHomepage: boolean("is_homepage").notNull().default(false),
+  pageTitle: varchar("page_title", { length: 100 }),
+  metaDescription: varchar("meta_description", { length: 300 }),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  unique("page_nodes_id_project_unique").on(table.id, table.projectId),
+  index("page_nodes_project_parent_position_idx").on(table.projectId, table.parentId, table.position),
+  index("page_nodes_parent_id_idx").on(table.parentId),
+]);
+
 export type User = typeof users.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type ProjectMember = typeof projectMembers.$inferSelect;
 export type ProjectInvite = typeof projectInvites.$inferSelect;
 export type EditingLease = typeof editingLeases.$inferSelect;
+export type PageNode = typeof pageNodes.$inferSelect;
