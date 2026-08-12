@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Files, LayoutDashboard, UsersRound } from "lucide-react";
+import { Files, LayoutDashboard, Palette, UsersRound } from "lucide-react";
 
 export function ProjectNav({ projectId }: { projectId: string }) {
   const pathname = usePathname();
   const links = [
     { href: `/projects/${projectId}`, label: "Overview", icon: LayoutDashboard, exact: true },
     { href: `/projects/${projectId}/pages`, label: "Pages", icon: Files },
+    { href: `/projects/${projectId}/brand`, label: "Brand / Theme", icon: Palette },
     { href: `/projects/${projectId}/collaborators`, label: "Collaborators", icon: UsersRound },
   ];
   return <nav className="project-nav" aria-label="Project navigation">{links.map(({ href, label, icon: Icon, exact }) => {

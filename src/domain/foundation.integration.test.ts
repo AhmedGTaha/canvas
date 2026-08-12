@@ -6,7 +6,7 @@ import { authenticate, createSession, readSession, register, revokeSession } fro
 import { ProjectService } from "@/domain/projects/service";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { db, sql } from "@/server/db/client";
-import { pageNodes, projects, users } from "@/server/db/schema";
+import { pageNodes, projectBrandSettings, projects, projectThemeSettings, users } from "@/server/db/schema";
 import { editingLeases, projectInvites, projectMembers } from "@/server/db/schema";
 import { InvitationService } from "@/domain/collaboration/invitation-service";
 import { MembershipService } from "@/domain/collaboration/membership-service";
@@ -14,6 +14,8 @@ import { EditingLeaseService } from "@/domain/collaboration/lease-service";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { sha256 } from "@/domain/shared/crypto";
 import { PageTreeService } from "@/domain/pages/service";
+import { BrandService, ThemeService, getProjectDesignSystem } from "@/domain/theme/services";
+import { DEFAULT_DARK_TOKENS, DEFAULT_LIGHT_TOKENS, DEFAULT_THEME } from "@/domain/theme/defaults";
 
 async function createUser(label: string) {
   const id = randomUUID();
@@ -367,5 +369,79 @@ describe.sequential("Phase 1 persistence and tenant isolation", () => {
     await tree.setHomepage(collaborator.id, { projectId: project.id, nodeId: page.id });
     await tree.deleteSubtree(collaborator.id, { projectId: project.id, nodeId: duplicate.id });
     await expect(tree.listTree(collaborator.id, project.id)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: page.id, name: "About", slug: "about-us", routePath: "/", isHomepage: true })]));
+  });
+
+  it("transactionally initializes default brand and theme settings for new projects", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Acme Website" });
+    const [brand] = await db.select().from(projectBrandSettings).where(eq(projectBrandSettings.projectId, project.id));
+    const [theme] = await db.select().from(projectThemeSettings).where(eq(projectThemeSettings.projectId, project.id));
+    expect(brand).toMatchObject({ companyName: "Acme Website", companyDescription: null, brandNotes: null, primaryLogoMediaId: null, alternateLogoMediaId: null, revision: 1 });
+    expect(theme).toMatchObject({ lightTokens: DEFAULT_LIGHT_TOKENS, darkTokens: DEFAULT_DARK_TOKENS, radiusScale: 50, spacingScale: 50, shadowScale: 50, fontScale: 50, borderScale: 50, revision: 1 });
+  });
+
+  it("lets owners and collaborators edit identity and independent light/dark themes", async () => {
+    const owner = await createUser("owner");
+    const collaborator = await createUser("collaborator");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    await db.insert(projectMembers).values({ projectId: project.id, userId: collaborator.id });
+    const brands = new BrandService(); const themes = new ThemeService();
+    const brand = await brands.read(owner.id, project.id);
+    await brands.update(owner.id, { projectId: project.id, expectedRevision: brand.revision, brand: { companyName: "Acme", companyDescription: "Useful products.", brandNotes: "Minimal and precise." } });
+    const initial = await themes.read(collaborator.id, project.id);
+    const lightUpdate = await themes.update(collaborator.id, { projectId: project.id, expectedRevision: initial.revision, theme: { ...DEFAULT_THEME, lightTokens: { ...DEFAULT_LIGHT_TOKENS, primary: "#123456" } } });
+    expect(lightUpdate.lightTokens.primary).toBe("#123456");
+    expect(lightUpdate.darkTokens.primary).toBe(DEFAULT_DARK_TOKENS.primary);
+    const darkUpdate = await themes.update(owner.id, { projectId: project.id, expectedRevision: lightUpdate.revision, theme: { ...DEFAULT_THEME, lightTokens: lightUpdate.lightTokens, darkTokens: { ...lightUpdate.darkTokens, primary: "#ABCDEF" } } });
+    expect(darkUpdate.lightTokens.primary).toBe("#123456");
+    expect(darkUpdate.darkTokens.primary).toBe("#ABCDEF");
+    await expect(getProjectDesignSystem(collaborator.id, project.id)).resolves.toMatchObject({ brand: { companyName: "Acme" }, theme: { darkTokens: { primary: "#ABCDEF" } } });
+  });
+
+  it("resets visual settings without changing company identity", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    const brands = new BrandService(); const themes = new ThemeService();
+    const brand = await brands.read(owner.id, project.id);
+    await brands.update(owner.id, { projectId: project.id, expectedRevision: brand.revision, brand: { companyName: "Kept Company", companyDescription: "Keep this.", brandNotes: "Keep notes." } });
+    const theme = await themes.read(owner.id, project.id);
+    const changed = await themes.update(owner.id, { projectId: project.id, expectedRevision: theme.revision, theme: { ...DEFAULT_THEME, radiusScale: 100, lightTokens: { ...DEFAULT_LIGHT_TOKENS, accent: "#FF0000" } } });
+    const reset = await themes.reset(owner.id, { projectId: project.id, expectedRevision: changed.revision });
+    expect(reset).toMatchObject(DEFAULT_THEME);
+    await expect(brands.read(owner.id, project.id)).resolves.toMatchObject({ companyName: "Kept Company", companyDescription: "Keep this.", brandNotes: "Keep notes." });
+  });
+
+  it("prevents stale autosaves from overwriting newer theme state", async () => {
+    const owner = await createUser("owner");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const project = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "Website" });
+    const themes = new ThemeService();
+    const original = await themes.read(owner.id, project.id);
+    const newer = await themes.update(owner.id, { projectId: project.id, expectedRevision: original.revision, theme: { ...DEFAULT_THEME, radiusScale: 80 } });
+    await expect(themes.update(owner.id, { projectId: project.id, expectedRevision: original.revision, theme: { ...DEFAULT_THEME, radiusScale: 40 } })).rejects.toThrowError(/changed elsewhere/);
+    await expect(themes.read(owner.id, project.id)).resolves.toMatchObject({ radiusScale: 80, revision: newer.revision });
+  });
+
+  it("enforces theme isolation for unrelated and removed collaborators", async () => {
+    const owner = await createUser("owner");
+    const collaborator = await createUser("collaborator");
+    const unrelated = await createUser("unrelated");
+    const workspace = await new WorkspaceService().create(owner.id, { name: "Workspace" });
+    const projectA = await new ProjectService().create(owner.id, { workspaceId: workspace.id, name: "A" });
+    const unrelatedWorkspace = await new WorkspaceService().create(unrelated.id, { name: "Other workspace" });
+    const projectB = await new ProjectService().create(unrelated.id, { workspaceId: unrelatedWorkspace.id, name: "B" });
+    await db.insert(projectMembers).values({ projectId: projectA.id, userId: collaborator.id });
+    const brands = new BrandService(); const themes = new ThemeService();
+    await expect(themes.read(owner.id, projectB.id)).rejects.toThrowError(/do not have access/);
+    await expect(brands.read(owner.id, projectB.id)).rejects.toThrowError(/do not have access/);
+    await expect(themes.update(owner.id, { projectId: projectB.id, expectedRevision: 1, theme: DEFAULT_THEME })).rejects.toThrowError(/do not have access/);
+    await expect(brands.update(owner.id, { projectId: projectB.id, expectedRevision: 1, brand: { companyName: "Injected", companyDescription: "", brandNotes: "" } })).rejects.toThrowError(/do not have access/);
+    await expect(themes.reset(owner.id, { projectId: projectB.id, expectedRevision: 1 })).rejects.toThrowError(/do not have access/);
+    await new MembershipService().remove(owner.id, { projectId: projectA.id, userId: collaborator.id });
+    await expect(themes.read(collaborator.id, projectA.id)).rejects.toThrowError(/do not have access/);
+    await expect(brands.update(collaborator.id, { projectId: projectA.id, expectedRevision: 1, brand: { companyName: "No", companyDescription: "", brandNotes: "" } })).rejects.toThrowError(/do not have access/);
   });
 });

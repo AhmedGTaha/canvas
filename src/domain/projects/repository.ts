@@ -1,6 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
-import { projectMembers, projects, users } from "@/server/db/schema";
+import { projectBrandSettings, projectMembers, projects, projectThemeSettings, users } from "@/server/db/schema";
+import { DEFAULT_THEME } from "@/domain/theme/defaults";
 
 export class ProjectRepository {
   constructor(private readonly database: Database = db) {}
@@ -38,9 +39,13 @@ export class ProjectRepository {
   }
 
   async create(workspaceId: string, ownerUserId: string, name: string, description: string | null) {
-    const [project] = await this.database.insert(projects).values({ workspaceId, ownerUserId, name, description }).returning();
-    if (!project) throw new Error("Project insert did not return a record.");
-    return project;
+    return this.database.transaction(async (transaction) => {
+      const [project] = await transaction.insert(projects).values({ workspaceId, ownerUserId, name, description }).returning();
+      if (!project) throw new Error("Project insert did not return a record.");
+      await transaction.insert(projectBrandSettings).values({ projectId: project.id, companyName: project.name });
+      await transaction.insert(projectThemeSettings).values({ projectId: project.id, ...DEFAULT_THEME });
+      return project;
+    });
   }
 
   async rename(id: string, ownerUserId: string, name: string) {

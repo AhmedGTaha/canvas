@@ -137,6 +137,32 @@ export const pageNodes = pgTable("page_nodes", {
   index("page_nodes_parent_id_idx").on(table.parentId),
 ]);
 
+export const projectBrandSettings = pgTable("project_brand_settings", {
+  projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  companyName: varchar("company_name", { length: 120 }).notNull(),
+  companyDescription: varchar("company_description", { length: 2000 }),
+  brandNotes: varchar("brand_notes", { length: 4000 }),
+  primaryLogoMediaId: uuid("primary_logo_media_id"),
+  alternateLogoMediaId: uuid("alternate_logo_media_id"),
+  revision: integer("revision").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+export const projectThemeSettings = pgTable("project_theme_settings", {
+  projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  lightTokens: jsonb("light_tokens").notNull(),
+  darkTokens: jsonb("dark_tokens").notNull(),
+  radiusScale: integer("radius_scale").notNull().default(50),
+  spacingScale: integer("spacing_scale").notNull().default(50),
+  shadowScale: integer("shadow_scale").notNull().default(50),
+  fontScale: integer("font_scale").notNull().default(50),
+  borderScale: integer("border_scale").notNull().default(50),
+  revision: integer("revision").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Project = typeof projects.$inferSelect;
@@ -144,3 +170,5 @@ export type ProjectMember = typeof projectMembers.$inferSelect;
 export type ProjectInvite = typeof projectInvites.$inferSelect;
 export type EditingLease = typeof editingLeases.$inferSelect;
 export type PageNode = typeof pageNodes.$inferSelect;
+export type ProjectBrandSettings = typeof projectBrandSettings.$inferSelect;
+export type ProjectThemeSettings = typeof projectThemeSettings.$inferSelect;
