@@ -1,13 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { Blocks, Check, CircleAlert, Copy, Globe, LoaderCircle, Moon, Plus, RefreshCw, Search, Send, Sparkles, Sun, Trash2, X } from "lucide-react";
+import { Blocks, Check, CircleAlert, Copy, Globe, LoaderCircle, Moon, MousePointerClick, Plus, RefreshCw, Search, Send, Sparkles, Sun, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MultiMediaPicker } from "@/components/media/media-picker";
 import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
-import { parsePreviewParentMessage } from "@/generated-runtime/runtime/messages";
+import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
+import { SelectedElementChip } from "@/components/builder/builder-workspace";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import { AI_LIMITS } from "@/domain/ai/limits";
 import { BLOCK_MEDIA_ATTACHMENT_LIMIT } from "@/domain/generated-source/limits";
@@ -25,6 +26,8 @@ type BlockAIState = {
   messages: Array<{ id: string; role: "user" | "assistant" | "system_internal"; content: string; createdAt: string }>;
   job: null | { id: string; status: string; progressStage: string; errorMessage: string | null; resultBlockVersionId: string | null };
 };
+type ElementSelection = Omit<PreviewElementSelection, "type" | "sessionId" | "instanceId">;
+type ParentPreviewCommand = ParentPreviewMessage extends infer Message ? Message extends { sessionId: string; instanceId: string } ? Omit<Message, "sessionId" | "instanceId"> : never : never;
 const ACTIVE_JOB_STATUSES = new Set(["queued", "preparing_context", "generating", "validating", "applying"]);
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -52,7 +55,10 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
   const [aiError, setAIError] = useState<string>();
   const [prompt, setPrompt] = useState("");
   const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selection, setSelection] = useState<ElementSelection | null>(null);
   const completedRefresh = useRef<string | null>(null);
+  const pendingSelection = useRef<ElementSelection | null>(null);
 
   const selected = blocks.find((block) => block.id === selectedId) ?? null;
   const visible = useMemo(() => {
@@ -61,17 +67,27 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
   }, [blocks, search]);
   const frameSrc = session && selectedId ? `/preview/${encodeURIComponent(session.token)}?block=${selectedId}&mode=${theme}&instance=${instanceId}` : null;
 
+  const post = useCallback((message: ParentPreviewCommand, sessionId: string, instance: string) => { frame.current?.contentWindow?.postMessage({ ...message, sessionId, instanceId: instance }, "*"); }, []);
   useEffect(() => {
     const listener = (event: MessageEvent) => {
       if (!session) return;
       const message = parsePreviewParentMessage(event.data, event.origin, event.source === frame.current?.contentWindow, session.manifest.previewSessionId, instanceId);
       if (!message) return;
-      if (message.type === "CANVAS_PREVIEW_READY") setPreviewStatus("ready");
+      if (message.type === "CANVAS_PREVIEW_READY") {
+        setPreviewStatus("ready");
+        post({ type: "CANVAS_SET_SELECT_MODE", enabled: selectMode }, session.manifest.previewSessionId, instanceId);
+        const restore = pendingSelection.current;
+        if (restore) post({ type: "CANVAS_SELECT_ELEMENT", canvasId: restore.canvasId, blockId: restore.blockId }, session.manifest.previewSessionId, instanceId);
+      }
       else if (message.type === "CANVAS_PREVIEW_ERROR") setPreviewStatus("error");
+      else if (message.type === "CANVAS_ELEMENT_SELECTED") { const { type, sessionId, instanceId: _instance, ...value } = message; void type; void sessionId; void _instance; pendingSelection.current = value; setSelection(value); }
+      else if (message.type === "CANVAS_ELEMENT_CLEARED") { pendingSelection.current = null; setSelection(null); }
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, [instanceId, session]);
+  }, [instanceId, post, selectMode, session]);
+  function clearSelection() { pendingSelection.current = null; setSelection(null); if (session) post({ type: "CANVAS_CLEAR_SELECTION" }, session.manifest.previewSessionId, instanceId); }
+  function toggleSelectMode() { const next = !selectMode; setSelectMode(next); if (session) post({ type: "CANVAS_SET_SELECT_MODE", enabled: next }, session.manifest.previewSessionId, instanceId); if (!next) clearSelection(); }
 
   const reloadBlocks = useCallback(async () => {
     const value = await request<{ blocks: BlockSummary[] }>(`/api/projects/${projectId}/blocks`);
@@ -101,7 +117,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
     let active = true;
     const timer = window.setTimeout(() => {
       if (!active) return;
-      setAIState(null); setUsages([]); setAIError(undefined); setPrompt(""); setSelectedMediaIds([]);
+      setAIState(null); setUsages([]); setAIError(undefined); setPrompt(""); setSelectedMediaIds([]); pendingSelection.current = null; setSelection(null);
       if (!selectedId) return;
       setAILoading(true); setPreviewStatus("loading");
       void loadBlockDetail(selectedId)
@@ -146,7 +162,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
     if (!selectedId || !prompt.trim() || activeJob) return;
     setAILoading(true); setAIError(undefined);
     try {
-      await request(`/api/projects/${projectId}/blocks/${selectedId}/ai`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: prompt, selectedMediaIds }) });
+      await request(`/api/projects/${projectId}/blocks/${selectedId}/ai`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: prompt, selectedMediaIds, selection: selection ? { canvasId: selection.canvasId, blockId: selection.blockId, usageKey: selection.usageKey } : null }) });
       await loadBlockDetail(selectedId);
     } catch (cause) { setAIError(cause instanceof Error ? cause.message : "Canvas could not start this update."); }
     finally { setAILoading(false); }
@@ -185,7 +201,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
         </li>)}
         {visible.length === 0 ? <li><p className="inline-empty">No blocks match this search.</p></li> : null}
         </ul>}
-      {selected ? <BlockComposer block={selected} state={aiState} loading={aiLoading} error={aiError} prompt={prompt} selectedMediaIds={selectedMediaIds} assets={mediaAssets} folders={mediaFolders} activeJob={activeJob} summary={latestSummary?.content} onPrompt={setPrompt} onMedia={setSelectedMediaIds} onSubmit={() => void submitPrompt()} onCancel={() => void cancelJob()} /> : null}
+      {selected ? <BlockComposer block={selected} state={aiState} loading={aiLoading} error={aiError} prompt={prompt} selectedMediaIds={selectedMediaIds} assets={mediaAssets} folders={mediaFolders} activeJob={activeJob} summary={latestSummary?.content} selection={selection} selectMode={selectMode} onClearSelection={clearSelection} onPrompt={setPrompt} onMedia={setSelectedMediaIds} onSubmit={() => void submitPrompt()} onCancel={() => void cancelJob()} /> : null}
     </aside>
 
     <section className="builder-stage">
@@ -195,6 +211,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
           {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · Version ${selected.currentVersionNumber}` : " · Not created yet"}</span> : <span>Select a block to preview it.</span>}
         </div>
         <div className="builder-toolbar-right">
+          <Button type="button" variant={selectMode ? "secondary" : "ghost"} aria-pressed={selectMode} disabled={!selected} onClick={toggleSelectMode}><MousePointerClick size={15} />{selectMode ? "Selecting" : "Select element"}</Button>
           <div className="segmented compact" role="group" aria-label="Preview theme">
             <button type="button" className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><Sun size={14} />Light</button>
             <button type="button" className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}><Moon size={14} />Dark</button>
@@ -248,7 +265,7 @@ function BlockDetails({ block, usages, busy, onRename, onToggleGlobal, onDuplica
   </div>;
 }
 
-function BlockComposer({ block, state, loading, error, prompt, selectedMediaIds, assets, folders, activeJob, summary, onPrompt, onMedia, onSubmit, onCancel }: { block: BlockSummary; state: BlockAIState | null; loading: boolean; error?: string; prompt: string; selectedMediaIds: string[]; assets: MediaAsset[]; folders: MediaFolder[]; activeJob: BlockAIState["job"]; summary?: string; onPrompt: (value: string) => void; onMedia: (ids: string[]) => void; onSubmit: () => void; onCancel: () => void }) {
+function BlockComposer({ block, state, loading, error, prompt, selectedMediaIds, assets, folders, activeJob, summary, selection, selectMode, onPrompt, onMedia, onClearSelection, onSubmit, onCancel }: { block: BlockSummary; state: BlockAIState | null; loading: boolean; error?: string; prompt: string; selectedMediaIds: string[]; assets: MediaAsset[]; folders: MediaFolder[]; activeJob: BlockAIState["job"]; summary?: string; selection: ElementSelection | null; selectMode: boolean; onPrompt: (value: string) => void; onMedia: (ids: string[]) => void; onClearSelection: () => void; onSubmit: () => void; onCancel: () => void }) {
   const created = block.contentStatus === "generated";
   return <section className="builder-ai" aria-label="Canvas AI">
     <div className="builder-ai-title"><Sparkles size={15} /><strong>Canvas</strong></div>
@@ -257,11 +274,12 @@ function BlockComposer({ block, state, loading, error, prompt, selectedMediaIds,
       {loading && !state ? <p className="inline-empty"><LoaderCircle className="spin" size={13} /> Loading history…</p> : null}
     </div>
     {summary && state?.job?.status === "completed" ? <div className="builder-ai-summary"><strong>Canvas updated this block</strong><p>{summary}</p></div> : null}
+    {selection ? <SelectedElementChip selection={selection} onClear={onClearSelection} /> : selectMode ? <p className="builder-selection-hint">Click any highlighted region in the preview to select it.</p> : null}
     {activeJob ? <div className="builder-ai-progress" role="status" aria-live="polite"><span><LoaderCircle className="spin" size={14} />{activeJob.progressStage}</span><Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>Cancel</Button></div> : null}
     {state?.job?.status === "failed" ? <p className="builder-ai-error" role="alert"><CircleAlert size={14} />{state.job.errorMessage || "Canvas could not update this block. Try again."}</p> : null}
     {error ? <p className="builder-ai-error" role="alert"><CircleAlert size={14} />{error}</p> : null}
     <label className="field">
-      <span className="field-label">{created ? "Ask Canvas to change this block" : "Describe the block you want Canvas to create"}</span>
+      <span className="field-label">{selection ? "Ask Canvas to change the selected element" : created ? "Ask Canvas to change this block" : "Describe the block you want Canvas to create"}</span>
       <textarea className="textarea builder-ai-textarea" value={prompt} maxLength={AI_LIMITS.userMessageCharacters} rows={4} disabled={Boolean(activeJob)}
         placeholder={created ? "Add a Contact link and tighten the mobile spacing…" : "A sticky navbar with the company logo and links to every page…"}
         onChange={(event) => onPrompt(event.target.value)} />
@@ -270,7 +288,7 @@ function BlockComposer({ block, state, loading, error, prompt, selectedMediaIds,
     <div className="builder-ai-attachments">{selectedMediaIds.map((id) => { const asset = assets.find((item) => item.id === id); return asset ? <span key={id}><Image src={`/api/media/${id}`} width={24} height={24} alt="" unoptimized /><span>{asset.displayName}</span><button type="button" aria-label={`Remove ${asset.displayName}`} onClick={() => onMedia(selectedMediaIds.filter((item) => item !== id))}><X size={12} /></button></span> : null; })}</div>
     <div className="builder-ai-actions">
       <MultiMediaPicker assets={assets} folders={folders} value={selectedMediaIds} limit={BLOCK_MEDIA_ATTACHMENT_LIMIT} onSelect={onMedia} />
-      <Button type="button" onClick={onSubmit} disabled={!prompt.trim() || Boolean(activeJob) || loading}><Send size={14} />{created ? "Update block" : "Create block"}</Button>
+      <Button type="button" onClick={onSubmit} disabled={!prompt.trim() || Boolean(activeJob) || loading}><Send size={14} />{selection ? "Update element" : created ? "Update block" : "Create block"}</Button>
     </div>
   </section>;
 }

@@ -21,6 +21,8 @@ export const generatedPageResponseSchema = z.object({
   sourceCode: z.string().min(1).refine((value) => Buffer.byteLength(value, "utf8") <= PAGE_SOURCE_MAX_BYTES, "Generated page source exceeds 100 KB."),
   referencedMediaIds: z.array(z.uuid()).max(20),
   blockUsages: z.array(generatedBlockUsageSchema).max(PAGE_BLOCK_USAGE_LIMIT).default([]),
+  targetCanvasId: z.string().max(64).nullish().transform((value) => value ?? null),
+  targetRemoved: z.boolean().nullish().transform((value) => value ?? false),
   summary: pageChangeSummarySchema,
 }).strict();
 
@@ -33,6 +35,8 @@ export const generatedPageResponseJsonSchema = {
     schemaVersion: { type: "integer", const: 1 }, sourceCode: { type: "string", maxLength: PAGE_SOURCE_MAX_BYTES },
     referencedMediaIds: { type: "array", maxItems: 20, items: { type: "string", format: "uuid" } },
     blockUsages: { type: "array", maxItems: PAGE_BLOCK_USAGE_LIMIT, items: { type: "object", additionalProperties: false, required: ["blockId", "usageKey"], properties: { blockId: { type: "string", format: "uuid" }, usageKey: { type: "string", maxLength: 64 } } } },
+    targetCanvasId: { type: "string", maxLength: 64, nullable: true },
+    targetRemoved: { type: "boolean" },
     summary: { type: "object", additionalProperties: false, required: ["headline", "changes", "limitations"], properties: {
       headline: { type: "string", maxLength: 120 }, changes: { type: "array", maxItems: 6, items: { type: "string", maxLength: 200 } }, limitations: { type: "array", maxItems: 4, items: { type: "string", maxLength: 200 } },
     } },

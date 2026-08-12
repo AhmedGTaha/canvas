@@ -12,6 +12,7 @@ import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
 import { loadActiveBlockSources, reconcilePageBlockUsages } from "@/domain/blocks/usages";
 import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
+import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedPageResponseSchema, type PageChangeSummary } from "./contract";
 import { assemblePageGenerationRequest } from "./prompt";
 import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
@@ -42,11 +43,17 @@ export class PageGenerationOrchestrationService {
       const selected = selectedRows.map(({ asset }) => asset);
       const expectedMediaCount = (await this.database.select().from(generationJobMedia).where(eq(generationJobMedia.generationJobId, jobId))).length;
       if (selected.length !== expectedMediaCount) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "One or more attached Media items are no longer available.");
+      // The selection was resolved against the version that was active when the job was
+      // created; it must still exist in the baseline this job is actually modifying.
+      const selectedElement = readResolvedSelection(initial.contextMetadata);
+      if (selectedElement) {
+        if (!base || !findEditableElement(base.manifest, selectedElement.canvasId)) elementStale();
+      }
       const existingIds = base && base.manifest && typeof base.manifest === "object" && "referencedMediaIds" in base.manifest && Array.isArray(base.manifest.referencedMediaIds) ? base.manifest.referencedMediaIds.filter((id): id is string => typeof id === "string") : [];
       const contextMediaIds = [...new Set([...selected.map(({ id }) => id), ...existingIds])];
       const context = await this.contextBuilder.build({ projectId: initial.projectId, actorUserId: initial.actorUserId, target: { type: "page", id: initial.targetId }, selectedMediaIds: contextMediaIds, conversationId: initial.conversationId, operation: initial.operation });
       const fingerprint = createHash("sha256").update(`${context.fingerprint}:${initial.basePageVersionId ?? "unbuilt"}`).digest("hex");
-      await this.database.update(generationJobs).set({ contextFingerprint: fingerprint, contextMetadata: { ...context.composition, basePageVersionId: initial.basePageVersionId, selectedMediaCount: selected.length } }).where(eq(generationJobs.id, jobId));
+      await this.database.update(generationJobs).set({ contextFingerprint: fingerprint, contextMetadata: { ...context.composition, basePageVersionId: initial.basePageVersionId, selectedMediaCount: selected.length, selectedElement } }).where(eq(generationJobs.id, jobId));
       console.info(JSON.stringify({ event: "ai.page_context.prepared", jobId, pageId: initial.targetId, ...context.composition }));
       if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -54,7 +61,7 @@ export class PageGenerationOrchestrationService {
       const imageParts = await Promise.all(selected.map(async (asset) => { const binary = await new MediaService().readBinary(initial.actorUserId, asset.id); if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable."); return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName }; }));
       const provider = this.providerResolver();
       console.info(JSON.stringify({ event: "ai.provider.request_started", jobId, provider: provider.name, model: provider.model, operation: initial.operation }));
-      const response = await provider.generateStructured(assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, imageParts, signal: providerAbort.signal }), generatedPageResponseSchema);
+      const response = await provider.generateStructured(assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal }), generatedPageResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
       console.info(JSON.stringify({ event: "ai.provider.request_completed", jobId, provider: response.provider, model: response.model, operation: initial.operation }));
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -68,6 +75,11 @@ export class PageGenerationOrchestrationService {
       const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(declaredBlockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
       const manifest = await validateGeneratedPageSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages, blockSources });
       console.info(JSON.stringify({ event: "ai.source_validation.completed", jobId, sourceHash: manifest.sourceHash }));
+      if (selectedElement) {
+        const { targetCanvasId, targetRemoved } = response.structuredData;
+        if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
+        if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
+      }
       if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "applying", "Applying page update");

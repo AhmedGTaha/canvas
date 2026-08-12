@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { DomainError } from "@/domain/shared/errors";
 import { BlockError } from "@/domain/blocks/errors";
+import { AIError } from "@/domain/ai/provider";
 
 const STATUS: Record<string, number> = {
   AUTHENTICATION_REQUIRED: 401, ACCESS_DENIED: 403, NOT_FOUND: 404,
@@ -13,6 +14,7 @@ const STATUS: Record<string, number> = {
  */
 export function blockErrorResponse(error: unknown, fallback: string) {
   if (error instanceof ZodError) return Response.json({ error: error.issues[0]?.message ?? "Check your request.", code: "BLOCK_VALIDATION_FAILED" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+  if (error instanceof AIError) return Response.json({ error: error.message, code: error.code }, { status: 400, headers: { "Cache-Control": "no-store" } });
   if (error instanceof BlockError) return Response.json({ error: error.message, code: error.blockCode }, { status: STATUS[error.code] ?? 400, headers: { "Cache-Control": "no-store" } });
   if (error instanceof DomainError) return Response.json({ error: error.message, code: error.code }, { status: STATUS[error.code] ?? 400, headers: { "Cache-Control": "no-store" } });
   return Response.json({ error: fallback }, { status: 400, headers: { "Cache-Control": "no-store" } });

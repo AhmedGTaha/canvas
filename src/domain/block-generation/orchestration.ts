@@ -11,6 +11,7 @@ import { AIError, type AIProvider } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
 import { validateGeneratedBlockSource, type GeneratedBlockManifest } from "@/domain/blocks/validation";
+import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
 import { assembleBlockGenerationRequest } from "./prompt";
 
@@ -71,13 +72,17 @@ export class BlockGenerationOrchestrationService {
       const selected = selectedRows.map(({ asset }) => asset);
       const expectedMediaCount = (await this.database.select().from(generationJobMedia).where(eq(generationJobMedia.generationJobId, jobId))).length;
       if (selected.length !== expectedMediaCount) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "One or more attached Media items are no longer available.");
+      const selectedElement = readResolvedSelection(initial.contextMetadata);
+      if (selectedElement) {
+        if (!base || !findEditableElement(base.manifest, selectedElement.canvasId)) elementStale();
+      }
       const existingIds = base && base.manifest && typeof base.manifest === "object" && "referencedMediaIds" in base.manifest && Array.isArray(base.manifest.referencedMediaIds)
         ? base.manifest.referencedMediaIds.filter((id): id is string => typeof id === "string") : [];
       const contextMediaIds = [...new Set([...selected.map(({ id }) => id), ...existingIds])];
 
       const context = await this.contextBuilder.build({ projectId: initial.projectId, actorUserId: initial.actorUserId, target: { type: "building_block", id: initial.targetId }, selectedMediaIds: contextMediaIds, conversationId: initial.conversationId, operation: initial.operation });
       const fingerprint = createHash("sha256").update(`${context.fingerprint}:${initial.baseBlockVersionId ?? "unbuilt"}`).digest("hex");
-      await this.database.update(generationJobs).set({ contextFingerprint: fingerprint, contextMetadata: { ...context.composition, baseBlockVersionId: initial.baseBlockVersionId, selectedMediaCount: selected.length } }).where(eq(generationJobs.id, jobId));
+      await this.database.update(generationJobs).set({ contextFingerprint: fingerprint, contextMetadata: { ...context.composition, baseBlockVersionId: initial.baseBlockVersionId, selectedMediaCount: selected.length, selectedElement } }).where(eq(generationJobs.id, jobId));
       console.info(JSON.stringify({ event: "ai.block_context.prepared", jobId, blockId: initial.targetId, ...context.composition }));
       if (leaseLost) throw new AIError("AI_BLOCK_CONFLICT", "This Building Block is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -90,7 +95,7 @@ export class BlockGenerationOrchestrationService {
       }));
       const provider = this.providerResolver();
       console.info(JSON.stringify({ event: "ai.provider.request_started", jobId, provider: provider.name, model: provider.model, operation: initial.operation }));
-      const response = await provider.generateStructured(assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal }), generatedBlockResponseSchema);
+      const response = await provider.generateStructured(assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal }), generatedBlockResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
       console.info(JSON.stringify({ event: "ai.provider.request_completed", jobId, provider: response.provider, model: response.model, operation: initial.operation }));
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -100,6 +105,11 @@ export class BlockGenerationOrchestrationService {
       const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
       const manifest = await validateGeneratedBlockSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
       console.info(JSON.stringify({ event: "ai.block_source_validation.completed", jobId, sourceHash: manifest.sourceHash }));
+      if (selectedElement) {
+        const { targetCanvasId, targetRemoved } = response.structuredData;
+        if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
+        if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
+      }
       if (leaseLost) throw new AIError("AI_BLOCK_CONFLICT", "This Building Block is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
 

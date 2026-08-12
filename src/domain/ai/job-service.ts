@@ -1,10 +1,11 @@
 import { and, desc, eq, inArray, sql as drizzleSql } from "drizzle-orm";
 import { db, sql, type Database } from "@/server/db/client";
-import { aiConversations, aiJobRateLimits, aiMessages, auditEvents, buildingBlocks, generationJobMedia, generationJobs, mediaAssets, pageNodes } from "@/server/db/schema";
+import { aiConversations, aiJobRateLimits, aiMessages, auditEvents, buildingBlockVersions, buildingBlocks, generationJobMedia, generationJobs, mediaAssets, pageNodes, pageVersions } from "@/server/db/schema";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DomainError } from "@/domain/shared/errors";
 import { AIError } from "./provider";
 import { createBlockJobSchema } from "@/domain/blocks/schemas";
+import { elementNotFound, findEditableElement, type ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 
 export type GenerationJobStatus = typeof generationJobs.$inferSelect.status;
@@ -59,17 +60,28 @@ export class GenerationJobService {
         const selectedIds = [...new Set(parsed.selectedMediaIds)];
         const selected = selectedIds.length ? await transaction.select({ id: mediaAssets.id }).from(mediaAssets).where(and(eq(mediaAssets.projectId, parsed.projectId), inArray(mediaAssets.id, selectedIds), drizzleSql`${mediaAssets.deletedAt} IS NULL`)) : [];
         if (selected.length !== selectedIds.length) throw new DomainError("NOT_FOUND", "One or more selected Media items are not active in this project.");
+        // A selected element is only ever a lookup key: the real target is resolved from
+        // the manifest of the version that is active right now.
+        let selectedElement: ResolvedElementSelection | null = null;
+        if (parsed.selection) {
+          if (parsed.selection.blockId) throw new AIError("AI_ELEMENT_INVALID", "That element belongs to a shared Building Block. Canvas updates it from the Building Block instead.");
+          if (!page.currentVersionId) elementNotFound();
+          const [version] = await transaction.select().from(pageVersions).where(and(eq(pageVersions.id, page.currentVersionId), eq(pageVersions.pageId, page.id), eq(pageVersions.projectId, parsed.projectId))).limit(1);
+          const element = version ? findEditableElement(version.manifest, parsed.selection.canvasId) : null;
+          if (!element) elementNotFound();
+          selectedElement = { ...element, ownerType: "page", ownerId: page.id };
+        }
         let [conversation] = await transaction.select().from(aiConversations).where(and(eq(aiConversations.projectId, parsed.projectId), eq(aiConversations.pageId, parsed.pageId), drizzleSql`${aiConversations.archivedAt} IS NULL`)).orderBy(desc(aiConversations.updatedAt)).limit(1);
         if (!conversation) [conversation] = await transaction.insert(aiConversations).values({ projectId: parsed.projectId, pageId: parsed.pageId, createdByUserId: userId }).returning();
         if (!conversation) throw new Error("Page conversation insert failed.");
-        const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
+        const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = page.currentVersionId ? "page_modify" as const : "page_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash" }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash", contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
-        await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.page_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, pageId: page.id, mediaCount: selectedIds.length } });
+        await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.page_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, pageId: page.id, mediaCount: selectedIds.length, selectedCanvasId: selectedElement?.canvasId ?? null } });
         console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId, pageId: page.id, operation }));
         return { job, message, conversation };
       });
@@ -96,17 +108,26 @@ export class GenerationJobService {
         const selectedIds = [...new Set(parsed.selectedMediaIds)];
         const selected = selectedIds.length ? await transaction.select({ id: mediaAssets.id }).from(mediaAssets).where(and(eq(mediaAssets.projectId, parsed.projectId), inArray(mediaAssets.id, selectedIds), drizzleSql`${mediaAssets.deletedAt} IS NULL`)) : [];
         if (selected.length !== selectedIds.length) throw new DomainError("NOT_FOUND", "One or more selected Media items are not active in this project.");
+        let selectedElement: ResolvedElementSelection | null = null;
+        if (parsed.selection) {
+          if (parsed.selection.blockId && parsed.selection.blockId !== block.id) throw new AIError("AI_ELEMENT_INVALID", "That element belongs to a different Building Block.");
+          if (!block.currentVersionId) elementNotFound();
+          const [version] = await transaction.select().from(buildingBlockVersions).where(and(eq(buildingBlockVersions.id, block.currentVersionId), eq(buildingBlockVersions.buildingBlockId, block.id), eq(buildingBlockVersions.projectId, parsed.projectId))).limit(1);
+          const element = version ? findEditableElement(version.manifest, parsed.selection.canvasId) : null;
+          if (!element) elementNotFound();
+          selectedElement = { ...element, ownerType: "building_block", ownerId: block.id };
+        }
         let [conversation] = await transaction.select().from(aiConversations).where(and(eq(aiConversations.projectId, parsed.projectId), eq(aiConversations.buildingBlockId, parsed.blockId), drizzleSql`${aiConversations.archivedAt} IS NULL`)).orderBy(desc(aiConversations.updatedAt)).limit(1);
         if (!conversation) [conversation] = await transaction.insert(aiConversations).values({ projectId: parsed.projectId, buildingBlockId: parsed.blockId, createdByUserId: userId }).returning();
         if (!conversation) throw new Error("Block conversation insert failed.");
-        const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
+        const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = block.currentVersionId ? "block_modify" as const : "block_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash" }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash", contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
-        await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.block_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, blockId: block.id, mediaCount: selectedIds.length } });
+        await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.block_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, blockId: block.id, mediaCount: selectedIds.length, selectedCanvasId: selectedElement?.canvasId ?? null } });
         console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId, blockId: block.id, operation }));
         return { job, message, conversation };
       });

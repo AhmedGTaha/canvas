@@ -101,8 +101,62 @@ describe("page block references", () => {
       .rejects.toMatchObject({ diagnostic: expect.stringContaining("invalid block usage key") });
   });
 
+  it("rejects a Canvas element ID on a Building Block reference", async () => {
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: page(`<CanvasBlock blockId="${blockId}" usageKey="nav" data-canvas-id="nav-region" />`), ...withBlocks, declaredMediaIds: [], declaredBlockUsages: [{ blockId, usageKey: "nav" }] }))
+      .rejects.toMatchObject({ diagnostic: expect.stringContaining("cannot carry a Canvas element ID") });
+  });
+
   it("rejects a reference whose block has no compiled source available", async () => {
     await expect(validateGeneratedSource({ kind: "page", sourceCode: page(`<CanvasBlock blockId="${blockId}" usageKey="nav" />`), ...base, availableBlockIds: new Set([blockId]), blockSources: new Map(), declaredMediaIds: [], declaredBlockUsages: [{ blockId, usageKey: "nav" }] }))
       .rejects.toMatchObject({ diagnostic: expect.stringContaining("has no active version") });
+  });
+});
+
+describe("Canvas element IDs", () => {
+  const wrap = (body: string) => `export default function Page(){return <main className="c-page">${body}</main>}`;
+
+  it("collects stable editable elements with their type and label", async () => {
+    const sourceCode = wrap(`<section data-canvas-id="hero-main" data-canvas-label="Hero"><h1 data-canvas-id="hero-title">Welcome</h1></section><article data-canvas-id="pricing-card-pro">Pro</article>`);
+    const manifest = await validateGeneratedSource({ kind: "page", sourceCode, ...base, declaredMediaIds: [] });
+    expect(manifest.editableElements).toEqual([
+      { canvasId: "hero-main", elementType: "section", label: "Hero" },
+      { canvasId: "hero-title", elementType: "h1", label: null },
+      { canvasId: "pricing-card-pro", elementType: "article", label: null },
+    ]);
+  });
+
+  it("collects editable elements inside Building Block source too", async () => {
+    const manifest = await validateGeneratedBlockSource({ sourceCode: `export default function Block(){return <nav data-canvas-id="navbar-root"><a href="/contact" data-canvas-id="navbar-contact-link">Contact</a></nav>}`, ...base, declaredMediaIds: [] });
+    expect(manifest.editableElements.map((element) => element.canvasId)).toEqual(["navbar-root", "navbar-contact-link"]);
+  });
+
+  it("rejects duplicate IDs within one generated entity", async () => {
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(`<section data-canvas-id="hero-main"/><section data-canvas-id="hero-main"/>`), ...base, declaredMediaIds: [] }))
+      .rejects.toMatchObject({ diagnostic: expect.stringContaining("duplicate Canvas element ID") });
+  });
+
+  it.each([
+    ["uppercase", `<section data-canvas-id="HeroMain"/>`, "invalid Canvas element ID"],
+    ["spaces", `<section data-canvas-id="hero main"/>`, "invalid Canvas element ID"],
+    ["path traversal", `<section data-canvas-id="../secret"/>`, "invalid Canvas element ID"],
+    ["dynamic value", `<section data-canvas-id={id}/>`, "data-canvas-id must be a static value"],
+    ["dynamic label", `<section data-canvas-id="hero-main" data-canvas-label={name}/>`, "data-canvas-label must be a static string"],
+  ])("rejects %s", async (_name, body, diagnostic) => {
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(body), ...base, declaredMediaIds: [] })).rejects.toMatchObject({ diagnostic: expect.stringContaining(diagnostic) });
+  });
+
+  it("rejects over-long labels and more selectable elements than the limit", async () => {
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(`<section data-canvas-id="hero-main" data-canvas-label="${"x".repeat(81)}"/>`), ...base, declaredMediaIds: [] }))
+      .rejects.toMatchObject({ diagnostic: "data-canvas-label is too long" });
+    const many = Array.from({ length: 81 }, (_value, index) => `<section data-canvas-id="region-${index}"/>`).join("");
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(many), ...base, declaredMediaIds: [] }))
+      .rejects.toMatchObject({ diagnostic: "too many selectable Canvas elements" });
+  });
+
+  it("keeps IDs stable across a modification that preserves the region", async () => {
+    const first = await validateGeneratedSource({ kind: "page", sourceCode: wrap(`<section data-canvas-id="hero-main"><h1>Welcome</h1></section>`), ...base, declaredMediaIds: [] });
+    const second = await validateGeneratedSource({ kind: "page", sourceCode: wrap(`<section data-canvas-id="hero-main"><h1>Welcome back</h1></section>`), ...base, declaredMediaIds: [] });
+    expect(second.editableElements).toEqual(first.editableElements);
+    expect(second.sourceHash).not.toBe(first.sourceHash);
   });
 });

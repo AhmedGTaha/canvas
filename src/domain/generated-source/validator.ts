@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import ts from "typescript";
 import { AIError } from "@/domain/ai/provider";
 import { compileGeneratedSource, type GeneratedBlockModule } from "./compiler";
-import { GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN } from "./limits";
+import { CANVAS_ID_PATTERN, CANVAS_LABEL_MAX_LENGTH, EDITABLE_ELEMENT_LIMIT, GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN } from "./limits";
+import type { EditableElement } from "./selection";
 
 export { GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN };
 
@@ -21,6 +22,8 @@ export type GeneratedSourceManifest = {
   usesClientInteractivity: boolean;
   runtimeVersion: 1;
   blockUsages: GeneratedBlockUsage[];
+  /** Stable Canvas element IDs a user can select in the Preview and target with AI. */
+  editableElements: EditableElement[];
 };
 
 export type GeneratedSourceValidationInput = {
@@ -62,6 +65,7 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
   if (parseDiagnostics.length) fail(`TSX syntax: ${parseDiagnostics[0]?.messageText}`);
   const media = new Set<string>(); const routes = new Set<string>(); const external = new Set<string>();
   const usages: GeneratedBlockUsage[] = []; const usageKeys = new Set<string>();
+  const editableElements: EditableElement[] = []; const canvasIds = new Set<string>();
   let defaultExport = false; let interactive = false;
 
   const visit = (node: ts.Node) => {
@@ -89,6 +93,22 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
         if (!input.availableBlockIds?.has(blockId)) fail(`invalid block reference: ${blockId}`);
         if (usageKeys.has(usageKey)) fail(`duplicate block usage key: ${usageKey}`);
         usageKeys.add(usageKey); usages.push({ blockId, usageKey });
+      }
+      if (node.attributes.properties.some((item) => ts.isJsxAttribute(item) && item.name.getText() === "data-canvas-id")) {
+        const canvasId = jsxAttribute(node.attributes, "data-canvas-id");
+        if (!canvasId) fail("data-canvas-id must be a static value");
+        if (!CANVAS_ID_PATTERN.test(canvasId)) fail(`invalid Canvas element ID: ${canvasId}`);
+        if (tag === "CanvasBlock") fail("Building Block references cannot carry a Canvas element ID");
+        if (canvasIds.has(canvasId)) fail(`duplicate Canvas element ID: ${canvasId}`);
+        canvasIds.add(canvasId);
+        let label: string | null = null;
+        if (node.attributes.properties.some((item) => ts.isJsxAttribute(item) && item.name.getText() === "data-canvas-label")) {
+          label = jsxAttribute(node.attributes, "data-canvas-label");
+          if (!label) fail("data-canvas-label must be a static string");
+          if (label.length > CANVAS_LABEL_MAX_LENGTH) fail("data-canvas-label is too long");
+        }
+        editableElements.push({ canvasId, elementType: tag, label });
+        if (editableElements.length > EDITABLE_ELEMENT_LIMIT) fail("too many selectable Canvas elements");
       }
       if (lower === "form" && node.attributes.properties.some((item) => ts.isJsxAttribute(item) && ["action", "method"].includes(item.name.getText()))) fail("generated forms cannot submit to an endpoint");
       if (lower === "a") {
@@ -125,5 +145,6 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
     schemaVersion: 1, sourceHash, referencedMediaIds: [...media].sort(), internalRoutes: [...routes].sort(),
     externalLinks: [...external].sort(), usesClientInteractivity: interactive, runtimeVersion: 1,
     blockUsages: [...usages].sort((a, b) => a.usageKey.localeCompare(b.usageKey)),
+    editableElements,
   };
 }

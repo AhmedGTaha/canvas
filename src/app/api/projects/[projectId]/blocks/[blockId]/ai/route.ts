@@ -18,7 +18,7 @@ export async function POST(request: Request, { params }: Context) {
   if (!user) return Response.json({ error: "Authentication required." }, { status: 401, headers: { "Cache-Control": "no-store" } });
   try {
     const { projectId, blockId } = await params;
-    const body = await request.json() as { content?: unknown; selectedMediaIds?: unknown };
-    return Response.json(await new GenerationJobService().createBlockJob(user.id, { projectId, blockId, content: body.content, selectedMediaIds: body.selectedMediaIds }), { status: 201, headers: blockJsonHeaders });
+    const body = await request.json() as { content?: unknown; selectedMediaIds?: unknown; selection?: unknown };
+    return Response.json(await new GenerationJobService().createBlockJob(user.id, { projectId, blockId, content: body.content, selectedMediaIds: body.selectedMediaIds, selection: body.selection ?? null }), { status: 201, headers: blockJsonHeaders });
   } catch (error) { return blockErrorResponse(error, "Canvas could not start this Building Block update."); }
 }

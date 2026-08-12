@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { projectIdSchema } from "@/domain/projects/schemas";
 import { AI_LIMITS } from "@/domain/ai/limits";
+import { elementSelectionSchema } from "@/domain/generated-source/selection";
 
 /**
  * Suggested semantic categories. The stored `kind` is an open slug so new categories
@@ -38,4 +39,5 @@ export const createBlockJobSchema = z.object({
   blockId: blockIdSchema,
   content: z.string().trim().min(1, "Describe what you want Canvas to build.").max(AI_LIMITS.userMessageCharacters),
   selectedMediaIds: z.array(z.uuid()).max(5).default([]),
+  selection: elementSelectionSchema.nullish().transform((value) => value ?? null),
 });

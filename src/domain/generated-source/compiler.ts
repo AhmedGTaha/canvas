@@ -12,7 +12,7 @@ function fail(detail: string): never {
 const siteRuntimeSource = `import React from "react";
 import { blocks } from "canvas-block-registry";
 export function CanvasImage({mediaId,alt="",...props}){const item=globalThis.__CANVAS_PREVIEW__?.media?.[mediaId];if(!item)return null;return React.createElement("img",{...props,src:item.previewUrl,alt:alt||item.altText||"",width:props.width||item.width,height:props.height||item.height});}
-export function CanvasBlock({blockId}){const Block=blocks[blockId];if(!Block)return null;return React.createElement(Block);}`;
+export function CanvasBlock({blockId,usageKey}){const Block=blocks[blockId];if(!Block)return null;return React.createElement("div",{className:"canvas-block-host","data-canvas-block":blockId,"data-canvas-usage":usageKey||""},React.createElement(Block));}`;
 
 function registrySource(modules: GeneratedBlockModule[]) {
   const imports = modules.map((_entry, index) => `import Block${index} from "canvas-block:${index}";`).join("");
