@@ -1,0 +1,21 @@
+import { CalendarDays, UserRound, WandSparkles } from "lucide-react";
+import { notFound } from "next/navigation";
+import { RenameProjectDialog } from "@/components/projects/project-forms";
+import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { ProjectService } from "@/domain/projects/service";
+import { requireAuthenticatedUser } from "@/server/auth/session";
+
+export default async function ProjectPage({ params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = await params;
+  const user = await requireAuthenticatedUser();
+  let project;
+  try {
+    project = await new ProjectService().read(user.id, projectId);
+  } catch { notFound(); }
+  return <><PageHeader eyebrow="Project overview" title={project.name} description={project.description || "Add a description as this project takes shape."} actions={<RenameProjectDialog id={project.id} name={project.name} />} />
+    <div className="project-layout"><Card><div className="section-heading"><div><p className="eyebrow">Overview</p><h2>Project details</h2></div><StatusBadge status={project.status} /></div><dl className="detail-list"><div><dt><UserRound size={16} />Owner</dt><dd>{user.displayName}</dd></div><div><dt><CalendarDays size={16} />Created</dt><dd>{project.createdAt.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}</dd></div></dl></Card>
+    <Card className="builder-placeholder"><span className="state-icon"><WandSparkles size={22} /></span><div><p className="eyebrow">Builder</p><h2>Your builder workspace is next</h2><p>Page structure, preview, and AI-assisted building will arrive in later implementation phases. This project is ready for that foundation.</p></div></Card></div>
+  </>;
+}
