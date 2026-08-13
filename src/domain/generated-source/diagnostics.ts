@@ -23,7 +23,7 @@ export function generatedSourceValidationMessage(detail: string) {
   if (/Canvas element ID|data-canvas-|duplicate Canvas element/i.test(detail)) {
     return "Canvas generated invalid editable-region identifiers. Try the request again.";
   }
-  if (/inline style|className|prohibited|forbidden|custom component|unsafe link/i.test(detail)) {
+  if (/inline style|className|unsupported runtime classes|prohibited|forbidden|custom component|unsafe link/i.test(detail)) {
     return "Canvas generated code that uses an unsupported or unsafe website feature. Try a simpler request.";
   }
   return "Canvas generated website code that did not meet Canvas validation rules. Try a simpler request.";

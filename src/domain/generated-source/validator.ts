@@ -5,6 +5,7 @@ import { compileGeneratedSource, type GeneratedBlockModule } from "./compiler";
 import { CANVAS_ID_PATTERN, CANVAS_LABEL_MAX_LENGTH, EDITABLE_ELEMENT_LIMIT, GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN } from "./limits";
 import type { EditableElement } from "./selection";
 import { generatedSourceValidationMessage } from "./diagnostics";
+import { GENERATED_RUNTIME_CLASS_SET } from "./runtime-classes";
 
 export { GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN };
 
@@ -86,6 +87,11 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
       if (node.attributes.properties.some((item) => ts.isJsxAttribute(item) && item.name.getText() === "style")) fail("inline style attributes are not allowed");
       const classAttribute = node.attributes.properties.find((item): item is ts.JsxAttribute => ts.isJsxAttribute(item) && item.name.getText() === "className");
       if (classAttribute && jsxAttribute(node.attributes, "className") === null) fail("className must be a static string");
+      if (classAttribute) {
+        const className = jsxAttribute(node.attributes, "className") ?? "";
+        const unsupported = className.split(/\s+/).filter(Boolean).filter((value) => !GENERATED_RUNTIME_CLASS_SET.has(value));
+        if (unsupported.length) fail(`unsupported runtime classes: ${[...new Set(unsupported)].join(", ")}`);
+      }
       if (tag === "CanvasImage") { const id = jsxAttribute(node.attributes, "mediaId"); if (!id) fail("CanvasImage mediaId must be a static UUID"); if (!input.approvedMediaIds.has(id)) fail(`invalid media ID: ${id}`); media.add(id); }
       if (tag === "CanvasBlock") {
         const blockId = jsxAttribute(node.attributes, "blockId"); const usageKey = jsxAttribute(node.attributes, "usageKey");

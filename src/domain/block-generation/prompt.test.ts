@@ -19,11 +19,28 @@ describe("Building Block generation prompt", () => {
       block: { name: "Global Navbar", kind: "navbar", isGlobal: true },
       imageParts: [],
     });
-    expect(request.systemInstructions).toContain("Never reference CSS variables directly, write CSS, or add a JSX style attribute.");
+    expect(request.systemInstructions).toContain("Never reference CSS variables directly");
+    expect(request.systemInstructions).toContain("write CSS, or add a JSX style attribute");
     expect(request.systemInstructions).toContain("Never use style={{...}}");
     expect(request.systemInstructions).toContain("remove every style= attribute");
     const schema = request.responseSchema as { properties: { sourceCode: { description: string } } };
     expect(schema.properties.sourceCode.description).toContain("JSX style attributes");
     expect(schema.properties.sourceCode.description).toContain("forbidden");
+  });
+
+  it("requires the shared token-backed navbar and logo vocabulary", () => {
+    const request = assembleBlockGenerationRequest({
+      context,
+      userRequest: "Create a navbar",
+      currentSource: null,
+      block: { name: "Global Navbar", kind: "navbar", isGlobal: true },
+      imageParts: [],
+    });
+    expect(request.structuredContext).toMatchObject({ theme: context.theme });
+    expect(request.systemInstructions).toContain("c-navbar");
+    expect(request.systemInstructions).toContain("c-nav-brand with a c-logo CanvasImage");
+    expect(request.systemInstructions).toContain("browser defaults never determine its appearance");
+    expect(request.systemInstructions).toContain("update automatically when that theme changes");
+    expect(request.systemInstructions).toContain("Do not invent utility classes");
   });
 });

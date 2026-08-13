@@ -22,6 +22,24 @@ export const themeSettingsSchema = z.object({
   fontScale: designScaleSchema,
   borderScale: designScaleSchema,
 }).strict();
+
+type StoredThemeSettings = {
+  lightTokens?: unknown; darkTokens?: unknown; radiusScale?: unknown; spacingScale?: unknown;
+  shadowScale?: unknown; fontScale?: unknown; borderScale?: unknown;
+};
+
+/** Parse only theme fields from a database record; persistence metadata is not theme input. */
+export function parseStoredThemeSettings(record: StoredThemeSettings) {
+  return themeSettingsSchema.safeParse({
+    lightTokens: record.lightTokens,
+    darkTokens: record.darkTokens,
+    radiusScale: record.radiusScale,
+    spacingScale: record.spacingScale,
+    shadowScale: record.shadowScale,
+    fontScale: record.fontScale,
+    borderScale: record.borderScale,
+  });
+}
 export const brandSettingsSchema = z.object({
   companyName: z.string().trim().min(1, "Enter a company name.").max(120),
   companyDescription: z.string().trim().max(2000).transform((value) => value || null),

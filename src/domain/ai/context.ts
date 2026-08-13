@@ -5,7 +5,7 @@ import { aiConversations, aiMessages, buildingBlockVersions, buildingBlocks, med
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DomainError } from "@/domain/shared/errors";
 import { resolveProjectDesignTokens } from "@/domain/theme/resolver";
-import { themeSettingsSchema } from "@/domain/theme/schemas";
+import { parseStoredThemeSettings } from "@/domain/theme/schemas";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
 import { AI_LIMITS } from "./limits";
 
@@ -57,7 +57,7 @@ export class ProjectContextBuilder {
     ]);
     const brand = brandRows[0];
     const rawTheme = themeRows[0];
-    const parsedTheme = rawTheme ? themeSettingsSchema.safeParse(rawTheme) : null;
+    const parsedTheme = rawTheme ? parseStoredThemeSettings(rawTheme) : null;
     const theme = parsedTheme?.success ? parsedTheme.data : DEFAULT_THEME;
     const currentInstruction = instructionRows[0];
     if (currentInstruction && currentInstruction.content.length > AI_LIMITS.projectInstructionsCharacters) throw new DomainError("VALIDATION", "Project instructions exceed the AI context limit.");

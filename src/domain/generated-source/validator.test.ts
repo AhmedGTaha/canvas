@@ -16,6 +16,14 @@ export default function GeneratedBlock(){return <nav className="c-container" ari
     await expect(validateGeneratedBlockSource({ sourceCode, ...base, declaredMediaIds: [mediaId] })).resolves.toMatchObject({ referencedMediaIds: [mediaId], internalRoutes: ["/contact"], blockUsages: [] });
   });
 
+  it("accepts a realistic semantic navbar and rejects classes outside the shared runtime contract", async () => {
+    const sourceCode = `import { CanvasImage } from "@canvas/site-runtime";
+export default function GeneratedNavbar(){return <nav className="c-navbar"><div className="c-container c-cluster"><a href="/" className="c-nav-brand"><CanvasImage mediaId="${mediaId}" alt="Logo" className="c-logo" /></a><div className="c-nav-links"><a href="/" className="c-link">Home</a><a href="/contact" className="c-button">Contact</a></div></div></nav>}`;
+    await expect(validateGeneratedBlockSource({ sourceCode, ...base, declaredMediaIds: [mediaId] })).resolves.toMatchObject({ referencedMediaIds: [mediaId], internalRoutes: ["/", "/contact"] });
+    await expect(validateGeneratedBlockSource({ sourceCode: `export default function B(){return <nav className="flex text-blue-500"/>}`, ...base, declaredMediaIds: [] }))
+      .rejects.toMatchObject({ diagnostic: "unsupported runtime classes: flex, text-blue-500" });
+  });
+
   it("rejects routes that are not part of the project page tree", async () => {
     await expect(validateGeneratedBlockSource({ sourceCode: `export default function B(){return <nav><a href="/careers">Careers</a><a href="/about">About</a></nav>}`, ...base, declaredMediaIds: [] }))
       .rejects.toMatchObject({

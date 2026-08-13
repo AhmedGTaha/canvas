@@ -15,6 +15,8 @@ import { AIOrchestrationService } from "@/domain/ai/orchestration-service";
 import type { AIProvider, AIRequest, AIResponse, StructuredValidator } from "@/domain/ai/provider";
 import { getObjectStorage } from "@/server/storage";
 import { ExportService } from "@/domain/export/export-service";
+import { ThemeService } from "@/domain/theme/services";
+import { DEFAULT_THEME } from "@/domain/theme/defaults";
 
 // A 1x1 PNG: enough for storage round-tripping and format checks.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -135,6 +137,41 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     const [componentPath] = [...files.keys()].filter((name) => name.startsWith("components/pages/"));
     expect(asText(files, componentPath!)).toContain("Welcome to Acme");
     expect(asText(files, componentPath!)).not.toContain("data-canvas-id");
+  });
+
+  it("exports generated Pages and Blocks with the same token-backed theme and logo behavior as Preview", async () => {
+    const { owner, project, home } = await setup();
+    const asset = await addMedia(project.id, owner.id, "Company Logo");
+    const themes = new ThemeService();
+    const current = await themes.read(owner.id, project.id);
+    await themes.update(owner.id, {
+      projectId: project.id,
+      expectedRevision: current.revision,
+      theme: {
+        ...DEFAULT_THEME,
+        lightTokens: { ...DEFAULT_THEME.lightTokens, primary: "#135790", text: "#246801", surface: "#357912" },
+        darkTokens: { ...DEFAULT_THEME.darkTokens, primary: "#FDB975", text: "#ECA864", surface: "#102030" },
+        radiusScale: 75, spacingScale: 65, shadowScale: 55, fontScale: 45, borderScale: 35,
+      },
+    });
+    const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global Navbar", kind: "navbar", isGlobal: true });
+    const blockSource = `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Navbar(){return <nav className="c-navbar"><div className="c-container c-cluster"><a href="/" className="c-nav-brand"><CanvasImage mediaId="${asset.id}" alt="Acme" className="c-logo" /></a><div className="c-nav-links"><a href="/" className="c-link">Home</a></div></div></nav>}`;
+    await runBlockJob(owner.id, project.id, block.id, blockSource, { referencedMediaIds: [asset.id] });
+    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${block.id}" usageKey="site-navbar" /><section className="c-section c-surface"><h1>Home</h1></section></main>}`, { blockUsages: [{ blockId: block.id, usageKey: "site-navbar" }] });
+
+    const { files } = await exportedFiles(owner.id, project.id);
+    const css = asText(files, "styles/globals.css");
+    expect(css).toContain("--color-primary:#135790");
+    expect(css).toContain("--color-text:#246801");
+    expect(css).toContain("--color-surface:#357912");
+    expect(css).toContain("@media (prefers-color-scheme: dark){:root{--color-primary:#FDB975");
+    for (const variable of ["--radius-md", "--space-md", "--shadow-md", "--body-size", "--border-width"]) expect(css).toContain(variable);
+    expect(css).toContain(".c-navbar,nav.c-section");
+    expect(css).toContain("a{color:var(--color-accent)");
+    expect(css).toContain("img.c-logo{display:block;width:auto;height:calc(var(--body-size)*2.5)");
+    const exportedBlock = asText(files, [...files.keys()].find((name) => name.startsWith("components/blocks/"))!);
+    expect(exportedBlock).toContain(`className="canvas-image c-logo"`);
+    expect(exportedBlock).toContain(`src="/assets/company-logo-`);
   });
 
   it("exports nested routes, SEO metadata, and a 404 page", async () => {

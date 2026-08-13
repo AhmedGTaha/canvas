@@ -2,7 +2,7 @@ import { DomainError } from "@/domain/shared/errors";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DEFAULT_THEME } from "./defaults";
 import { resolveProjectDesignTokens } from "./resolver";
-import { brandSettingsSchema, resetThemeSchema, themeSettingsSchema, updateBrandSchema, updateThemeSchema } from "./schemas";
+import { brandSettingsSchema, parseStoredThemeSettings, resetThemeSchema, themeSettingsSchema, updateBrandSchema, updateThemeSchema } from "./schemas";
 import { BrandRepository, ThemeRepository } from "./repositories";
 
 export class BrandService {
@@ -36,10 +36,7 @@ export class ThemeService {
     await this.access.requireProjectAccess(userId, projectId);
     const record = await this.repository.find(projectId) ?? await this.repository.ensure(projectId);
     if (!record) throw new DomainError("NOT_FOUND", "Theme settings could not be initialized.");
-    const theme = themeSettingsSchema.safeParse({
-      lightTokens: record.lightTokens, darkTokens: record.darkTokens, radiusScale: record.radiusScale,
-      spacingScale: record.spacingScale, shadowScale: record.shadowScale, fontScale: record.fontScale, borderScale: record.borderScale,
-    });
+    const theme = parseStoredThemeSettings(record);
     if (!theme.success) {
       console.error("Invalid project theme settings; using safe theme fallback.", { projectId, issues: theme.error.issues.map((issue) => issue.path.join(".")) });
       return { projectId, ...DEFAULT_THEME, revision: record.revision, resolvedDesignTokens: resolveProjectDesignTokens(DEFAULT_THEME), recoveredFromInvalidState: true as const };

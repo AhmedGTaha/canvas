@@ -12,7 +12,7 @@ function fail(detail: string): never {
 // block registry is assembled by Canvas so a page can never resolve foreign block code.
 const siteRuntimeSource = `import React from "react";
 import { blocks } from "canvas-block-registry";
-export function CanvasImage({mediaId,alt="",...props}){const item=globalThis.__CANVAS_PREVIEW__?.media?.[mediaId];if(!item)return null;return React.createElement("img",{...props,src:item.previewUrl,alt:alt||item.altText||"",width:props.width||item.width,height:props.height||item.height});}
+export function CanvasImage({mediaId,alt="",className="",...props}){const item=globalThis.__CANVAS_PREVIEW__?.media?.[mediaId];if(!item)return null;return React.createElement("img",{...props,className:("canvas-image "+className).trim(),src:item.previewUrl,alt:alt||item.altText||"",width:props.width||item.width,height:props.height||item.height});}
 export function CanvasBlock({blockId,usageKey}){const Block=blocks[blockId];if(!Block)return null;return React.createElement("div",{className:"canvas-block-host","data-canvas-block":blockId,"data-canvas-usage":usageKey||""},React.createElement(Block));}`;
 
 function registrySource(modules: GeneratedBlockModule[]) {

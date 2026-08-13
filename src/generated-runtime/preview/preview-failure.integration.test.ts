@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { db, sql } from "@/server/db/client";
-import { buildingBlockVersions, buildingBlocks, mediaAssets, pageNodes, projectBrandSettings, users } from "@/server/db/schema";
+import { buildingBlockVersions, buildingBlocks, mediaAssets, pageNodes, pageVersions, projectBrandSettings, users } from "@/server/db/schema";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { ProjectService } from "@/domain/projects/service";
 import { PageTreeService } from "@/domain/pages/service";
@@ -23,6 +23,10 @@ import { renderBlockPreviewDocument, renderPreviewDocument, renderPreviewErrorDo
 import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
 import { PreviewError } from "@/generated-runtime/preview/errors";
 import { setTelemetrySink } from "@/server/observability/telemetry";
+import { ThemeService } from "@/domain/theme/services";
+import { DEFAULT_THEME } from "@/domain/theme/defaults";
+import { ProjectContextBuilder } from "@/domain/ai/context";
+import { generatedThemeCss } from "./runtime-css";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const PREVIEW_SECRET = "preview-failure-suite-secret-value-long-enough";
@@ -186,6 +190,81 @@ describe.sequential("Preview failure handling", () => {
     expect(document).toContain("Get Started");
     expectPreviewScriptsToParse(document);
     await expectPreviewScriptsToRender(document, "Get Started");
+  });
+
+  it("uses current theme tokens in Block and Page Preview without regenerating existing versions", async () => {
+    const { owner, project, home, mediaId } = await setup();
+    await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "About" });
+    await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "Contact" });
+    const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
+    const themes = new ThemeService();
+    const initial = await themes.read(owner.id, project.id);
+    const firstTheme = await themes.update(owner.id, {
+      projectId: project.id,
+      expectedRevision: initial.revision,
+      theme: {
+        ...DEFAULT_THEME,
+        lightTokens: { ...DEFAULT_THEME.lightTokens, primary: "#123456", text: "#234567", surface: "#345678" },
+        darkTokens: { ...DEFAULT_THEME.darkTokens, primary: "#ABCDEF", text: "#BCDEF0", surface: "#0A1B2C" },
+        radiusScale: 20, spacingScale: 30, shadowScale: 40, fontScale: 45, borderScale: 55,
+      },
+    });
+    const contextBuilder = new ProjectContextBuilder();
+    const [blockContext, pageContext] = await Promise.all([
+      contextBuilder.build({ projectId: project.id, actorUserId: owner.id, target: { type: "building_block", id: navbar.id }, selectedMediaIds: [mediaId], operation: "block_generate" }),
+      contextBuilder.build({ projectId: project.id, actorUserId: owner.id, target: { type: "page", id: home.id }, operation: "page_generate" }),
+    ]);
+    expect(blockContext.theme).toMatchObject({ light: { primary: "#123456", text: "#234567", surface: "#345678" }, dark: { primary: "#ABCDEF" }, radius: 20, spacing: 30, revision: firstTheme.revision });
+    expect(pageContext.theme).toMatchObject(blockContext.theme);
+    expect(blockContext.theme.resolved.colors.light.primary).toBe("#123456");
+
+    const source = `import { CanvasImage } from "@canvas/site-runtime";
+export default function GlobalNavbar(){return <nav className="c-navbar" data-canvas-id="navbar-root"><div className="c-container c-cluster"><a href="/" className="c-nav-brand"><CanvasImage mediaId="${mediaId}" alt="Logo" className="c-logo" /></a><div className="c-nav-links"><a href="/" className="c-link">Home</a><a href="/about" className="c-link">About</a><a href="/contact" className="c-button c-button-secondary">Contact Us</a></div></div></nav>}`;
+    await runBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
+    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${navbar.id}" usageKey="site-navbar" /><section className="c-section c-surface"><h1>Home</h1></section></main>}`, [{ blockId: navbar.id, usageKey: "site-navbar" }]);
+    const [storedBlock] = await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id));
+    const [storedPage] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
+    const blockVersionId = storedBlock!.currentVersionId;
+    const pageVersionId = storedPage!.currentVersionId;
+    const compiledBlock = await new BuildingBlockContentProvider().getActive(project.id, navbar.id);
+    const compiledPage = await new GeneratedPageContentProvider().get(project.id, home.id, pageVersionId!);
+
+    const firstSession = await new PreviewManifestService().createSession(owner.id, project.id);
+    const firstCss = generatedThemeCss(firstSession.manifest.theme);
+    const firstBlockDocument = renderBlockPreviewDocument({ manifest: firstSession.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, blockBundle: compiledBlock!.bundle });
+    const firstPageDocument = renderPreviewDocument({ manifest: firstSession.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "dark", generatedBundle: compiledPage!.bundle });
+    expect(firstBlockDocument).toContain(firstCss);
+    expect(firstPageDocument).toContain(firstCss);
+    expect(firstBlockDocument).toContain("data-theme=light");
+    expect(firstPageDocument).toContain("data-theme=dark");
+    expect(firstCss).toContain(":root[data-theme=light]{--color-primary:#123456");
+    expect(firstCss).toContain(":root[data-theme=dark]{--color-primary:#ABCDEF");
+    await expectPreviewScriptsToRender(firstBlockDocument, "Contact Us");
+    await expectPreviewScriptsToRender(firstPageDocument, "Contact Us");
+
+    await themes.update(owner.id, {
+      projectId: project.id,
+      expectedRevision: firstTheme.revision,
+      theme: {
+        ...DEFAULT_THEME,
+        lightTokens: { ...DEFAULT_THEME.lightTokens, primary: "#654321", text: "#765432", surface: "#876543" },
+        darkTokens: { ...DEFAULT_THEME.darkTokens, primary: "#FEDCBA", text: "#EDCBA9", surface: "#1C2B3A" },
+        radiusScale: 90, spacingScale: 85, shadowScale: 80, fontScale: 75, borderScale: 70,
+      },
+    });
+    const refreshed = await new PreviewManifestService().createSession(owner.id, project.id);
+    const refreshedCss = generatedThemeCss(refreshed.manifest.theme);
+    expect(refreshedCss).toContain(":root[data-theme=light]{--color-primary:#654321");
+    expect(refreshedCss).toContain(":root[data-theme=dark]{--color-primary:#FEDCBA");
+    expect(refreshedCss).not.toContain("#123456");
+    const refreshedBlockDocument = renderBlockPreviewDocument({ manifest: refreshed.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, blockBundle: compiledBlock!.bundle });
+    const refreshedPageDocument = renderPreviewDocument({ manifest: refreshed.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generatedBundle: compiledPage!.bundle });
+    expect(refreshedBlockDocument).toContain(refreshedCss);
+    expect(refreshedPageDocument).toContain(refreshedCss);
+    expect((await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.buildingBlockId, navbar.id))).map((version) => version.id)).toEqual([blockVersionId]);
+    expect((await db.select().from(pageVersions).where(eq(pageVersions.pageId, home.id))).map((version) => version.id)).toEqual([pageVersionId]);
+    await expectPreviewScriptsToRender(refreshedBlockDocument, "Contact Us");
+    await expectPreviewScriptsToRender(refreshedPageDocument, "Contact Us");
   });
 
   it("compiles Preview through the same authority that validates a generated version", async () => {

@@ -67,6 +67,7 @@ export default function GeneratedPage(){return <main className="c-page" data-can
     expect(result.code).toContain("<GlobalNavbarAB12CD />");
     expect(result.code).toContain(`src="/assets/logo-abcd1234.png"`);
     expect(result.code).toContain(`alt="Acme"`);
+    expect(result.code).toContain(`className="canvas-image c-media"`);
     expect(result.code).toContain("width={320}");
     expect(result.code).toContain("height={120}");
     expect(result.code).toContain(`className="c-page"`);
@@ -81,7 +82,7 @@ export default function GeneratedPage(){return <main className="c-page" data-can
     const sourceCode = `import { CanvasImage } from "@canvas/site-runtime";\nexport default function P(){return <CanvasImage mediaId="${mediaId}" className="c-media" />}`;
     const result = transformGeneratedSource({ sourceCode, media, blocks, componentName: "P", forceClient: false });
     expect(result.code).toContain(`alt="Fallback"`);
-    expect(result.code).toContain(`className="c-media"`);
+    expect(result.code).toContain(`className="canvas-image c-media"`);
   });
 
   it("adds the client directive when needed and keeps an existing one first", () => {

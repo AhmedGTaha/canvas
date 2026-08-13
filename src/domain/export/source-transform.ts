@@ -58,10 +58,12 @@ export function transformGeneratedSource(input: TransformInput) {
           if (!mediaId || !target) { missing ??= `media ${mediaId ?? "reference"}`; return node; }
           usedMedia.add(mediaId);
           const alt = staticAttribute(node.attributes, "alt") ?? target.altText ?? "";
+          const className = staticAttribute(node.attributes, "className");
           const attributes = factory.createJsxAttributes([
-            ...keptAttributes(node.attributes, new Set(["mediaId", "alt", "width", "height", "src"])) as ts.JsxAttributeLike[],
+            ...keptAttributes(node.attributes, new Set(["mediaId", "alt", "width", "height", "src", "className"])) as ts.JsxAttributeLike[],
             stringAttribute("src", target.assetPath), stringAttribute("alt", alt),
             numberAttribute("width", target.width), numberAttribute("height", target.height),
+            stringAttribute("className", ["canvas-image", className].filter(Boolean).join(" ")),
             stringAttribute("loading", "lazy"), stringAttribute("decoding", "async"),
           ]);
           return factory.createJsxSelfClosingElement(factory.createIdentifier("img"), undefined, attributes);

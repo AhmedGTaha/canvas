@@ -3,7 +3,7 @@ import { db, type Database } from "@/server/db/client";
 import { buildingBlockUsages, buildingBlockVersions, buildingBlocks, mediaAssets, pageNodes, pageVersions, projectBrandSettings, projectThemeSettings, projects } from "@/server/db/schema";
 import { DomainError } from "@/domain/shared/errors";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
-import { themeSettingsSchema } from "@/domain/theme/schemas";
+import { parseStoredThemeSettings } from "@/domain/theme/schemas";
 import { resolveProjectDesignTokens } from "@/domain/theme/resolver";
 
 export type ResolvedUsage = { blockId: string; usageKey: string; versionId: string; isGlobal: boolean };
@@ -56,7 +56,7 @@ export async function loadExportState(projectId: string, database: Database = db
     .filter((node) => node.type === "page" && node.routePath)
     .map((node) => ({ node, route: node.routePath!, version: node.currentVersionId ? pageVersionById.get(node.currentVersionId) ?? null : null, usages: usagesByPage.get(node.id) ?? [] }));
 
-  const parsedTheme = themeRows[0] ? themeSettingsSchema.safeParse(themeRows[0]) : null;
+  const parsedTheme = themeRows[0] ? parseStoredThemeSettings(themeRows[0]) : null;
   const theme = resolveProjectDesignTokens(parsedTheme?.success ? parsedTheme.data : DEFAULT_THEME);
 
   return {

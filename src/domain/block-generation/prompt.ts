@@ -4,13 +4,15 @@ import { PLATFORM_AI_INSTRUCTIONS } from "@/domain/ai/prompt-assembler";
 import { targetedElementInstructions } from "@/domain/generated-source/prompt";
 import type { ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { generatedBlockResponseJsonSchema } from "./contract";
+import { GENERATED_RUNTIME_CLASS_GUIDE } from "@/domain/generated-source/runtime-classes";
 
 const BLOCK_RULES = `Return one complete TypeScript React Building Block component as structured JSON. The source must default-export exactly one component.
 A Building Block is a reusable website section such as a navbar, footer, hero, card, pricing table, testimonial, contact section, or services grid. It is reused inside pages, so it must render correctly on its own and never assume page-specific surroundings.
 Allowed imports: react and @canvas/site-runtime only. Use CanvasImage with stable approved Media UUIDs; never use remote images or signed URLs.
 A Building Block may not embed another Building Block. Do not use CanvasBlock inside block source.
-Canvas's controlled runtime classes already apply the project theme tokens. Never reference CSS variables directly, write CSS, or add a JSX style attribute. Use only static className strings composed from c-page, c-container, c-section, c-hero, c-stack, c-grid, c-card, c-actions, c-button, c-button-secondary, c-muted, c-kicker, and c-media. Do not invent utility classes or use dynamic className expressions. Do not import CSS, fonts, or scripts.
-For a navbar, use c-container for its bounded content, c-actions for a horizontal wrapping row of links/actions, c-stack only where a vertical stack is intended, and c-media for the logo. Never use style={{...}} to create flex, grid, spacing, sizing, positioning, colors, or responsive behavior.
+Canvas's controlled runtime classes already apply the current project theme tokens. Never reference CSS variables directly, bake the supplied theme's hex values into source, write CSS, or add a JSX style attribute. Do not invent utility classes or use dynamic className expressions. Do not import CSS, fonts, or scripts.
+${GENERATED_RUNTIME_CLASS_GUIDE}
+Every visible text link must use c-link or c-button, and every button must use c-button so browser defaults never determine its appearance. For a navbar, use c-navbar, then c-container c-cluster for its bounded layout, c-nav-brand with a c-logo CanvasImage, and c-nav-links with c-link or c-button anchors. Never put c-media on an anchor. Never use style={{...}} to create flex, grid, spacing, sizing, positioning, colors, or responsive behavior.
 Generate semantic, accessible, keyboard-usable, responsive HTML. Use proper landmarks (nav for navigation blocks, footer for footer blocks), headings, labels, alt text, visible focus behavior, mobile stacking, and usable touch targets.
 Navigation blocks must use only routes present in the supplied project structure, which is the sole authority for internal links. Never infer or invent a route from a requested page name. If the user requests a page that is absent, do not emit a link to it; use only existing routes and disclose the missing page in summary.limitations. Folders in the page tree are groupings, not links. Safe http, https, mailto, tel, and local hash links are allowed.
 Never use fetch, network APIs, eval, Function, require, dynamic imports, server APIs, browser storage/cookies, parent-window access, HTML injection, iframe/script/object/embed, or raw img elements.

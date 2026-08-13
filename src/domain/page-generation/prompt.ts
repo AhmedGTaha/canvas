@@ -4,10 +4,13 @@ import { PLATFORM_AI_INSTRUCTIONS } from "@/domain/ai/prompt-assembler";
 import { targetedElementInstructions } from "@/domain/generated-source/prompt";
 import type { ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { generatedPageResponseJsonSchema } from "./contract";
+import { GENERATED_RUNTIME_CLASS_GUIDE } from "@/domain/generated-source/runtime-classes";
 
 const PAGE_RULES = `Return one complete TypeScript React page component as structured JSON. The source must default-export one page component.
 Allowed imports: react and @canvas/site-runtime only. Use CanvasImage with stable approved Media UUIDs; never use remote images or signed URLs.
-Canvas's controlled runtime classes already apply the project theme tokens. Never reference CSS variables directly, write CSS, or add a JSX style attribute. Use only static className strings composed from c-page, c-container, c-section, c-hero, c-stack, c-grid, c-card, c-actions, c-button, c-button-secondary, c-muted, c-kicker, and c-media. Do not invent utility classes or use dynamic className expressions. Do not import CSS, fonts, or scripts.
+Canvas's controlled runtime classes already apply the current project theme tokens. Never reference CSS variables directly, bake the supplied theme's hex values into source, write CSS, or add a JSX style attribute. Do not invent utility classes or use dynamic className expressions. Do not import CSS, fonts, or scripts.
+${GENERATED_RUNTIME_CLASS_GUIDE}
+Every visible text link must use c-link or c-button, and every button must use c-button so browser defaults never determine its appearance. Use c-logo for a brand mark and c-media for a content image; never rely on the asset's intrinsic dimensions for semantic sizing.
 Generate semantic, accessible, keyboard-usable, responsive HTML. Use proper headings, labels, alt text, visible focus behavior, mobile stacking, usable touch targets, and avoid fixed desktop overflow.
 Normal anchors may reference only routes present in the supplied project structure. Safe http, https, mailto, tel, and local hash links are allowed.
 Never use fetch, network APIs, eval, Function, require, dynamic imports, server APIs, browser storage/cookies, parent-window access, HTML injection, iframe/script/object/embed, or raw img elements.
