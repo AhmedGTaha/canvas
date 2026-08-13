@@ -12,7 +12,6 @@
 
 .ws-shell {
   --ws-menubar-h: 38px;
-  --ws-statusbar-h: 27px;
   --ws-toolbar-h: 40px;
   --ws-row-h: 26px;
   --ws-explorer-w: 262px;
@@ -730,6 +729,13 @@
 .ws-panel-bd .blocks-workspace { min-height: 520px; }
 .ws-panel-bd .theme-preview-column,
 .ws-panel-bd .media-details { top: 0; }
+/* These columns cap themselves at a pixel height chosen for a full page. Inside
+   a panel the body is already the scroll container, and a cap taller than it
+   hides the column's own scrollbar below the fold — two scrolls to reach the
+   composer at the bottom of the list. Let the column grow and the panel body
+   scroll it. */
+.ws-panel-bd .blocks-list-panel,
+.ws-panel-bd .builder-pages { max-height: none; }
 .ws-panel-bd .settings-page-stack,
 .ws-panel-bd .collaboration-layout,
 .ws-panel-bd .account-card { width: 100%; max-width: none; }

@@ -296,6 +296,64 @@ describe("workspace responsive strategy", () => {
     expect(css).toMatch(/\.ws-panel-bd \{[^}]*min-height: 0[^}]*overflow: auto/);
   });
 
+  /*
+   * Panels are fixed-position siblings of .ws-shell, so anything they size
+   * themselves from has to be visible from outside the shell. A var() they
+   * cannot resolve is invalid at computed-value time: the inset silently
+   * becomes auto, the panel grows to fit its content, and Brand and Reusable
+   * Sections run off the bottom of the screen with nothing left to scroll.
+   */
+  it("sizes panels only from custom properties declared outside the shell", () => {
+    const sheets = css + readFileSync("src/app/globals.css", "utf8");
+    const used = new Set([...sheets.matchAll(/[^{}]*\.ws-panel[^{}]*\{([^{}]*)\}/g)]
+      .flatMap(([, body]) => [...body!.matchAll(/var\((--[\w-]+)/g)].map(([, name]) => name!)));
+    // Guards the parse itself: these two are what the insets are built from.
+    for (const name of ["--ws-title-h", "--ws-statusbar-h"]) expect(used.has(name)).toBe(true);
+
+    for (const name of used) {
+      expect(sheets, `${name} styles a panel but is never declared at :root, so a panel cannot resolve it`)
+        .toMatch(new RegExp(String.raw`:root\s*\{[^{}]*${name}\s*:`));
+      // A second declaration on .ws-shell would let the shell and its panels
+      // disagree about where the chrome ends.
+      expect(sheets, `${name} is also declared on .ws-shell, which shadows the :root value only for the shell`)
+        .not.toMatch(new RegExp(String.raw`\.ws-shell\s*\{[^{}]*${name}\s*:`));
+    }
+  });
+
+  it("gives every panel a top and a bottom wherever it sets an inset", () => {
+    // With either end unset the panel falls back to its content height, grows
+    // past the viewport, and leaves its body nothing to scroll.
+    const insets = ["top", "right", "bottom", "left", "inset"];
+    for (const [name, sheet] of [
+      ["desktop", css.slice(0, css.indexOf("@media (max-width:1279px)"))],
+      ["phone", css.slice(css.lastIndexOf("@media (max-width:767px)"))],
+    ] as const) {
+      const found = [...sheet.matchAll(/\.ws-panel-(wide|drawer)[^{]*\{([^}]*)\}/g)];
+      expect(found.length, `${name} defines no panel geometry`).toBeGreaterThan(0);
+      let checked = 0;
+      for (const [, variant, body] of found) {
+        const properties = new Set(body!.split(";").map((declaration) => declaration.split(":")[0]!.trim()));
+        if (!insets.some((inset) => properties.has(inset))) continue;
+        checked += 1;
+        for (const inset of ["top", "bottom"]) {
+          expect(properties.has(inset) || properties.has("inset"), `${name} .ws-panel-${variant} sets some insets but leaves ${inset} unset`).toBe(true);
+        }
+      }
+      expect(checked, `${name} sets no panel insets at all`).toBeGreaterThan(0);
+    }
+  });
+
+  it("caps no column inside a panel at a pixel height the panel may be shorter than", () => {
+    // A nested scroll region taller than the panel body puts its own scrollbar
+    // below the fold, so reaching the bottom of it takes two scrolls.
+    const capped = [...css.matchAll(/\.ws-panel-bd [^{]*\{([^}]*)\}/g)]
+      .filter(([, body]) => /max-height:\s*\d+px/.test(body!))
+      .map(([rule]) => rule);
+    expect(capped).toEqual([]);
+    // And the caps the reused page components declare are lifted in a panel.
+    expect(css).toMatch(/\.ws-panel-bd \.blocks-list-panel,\s+\.ws-panel-bd \.builder-pages \{ max-height: none; \}/);
+  });
+
   it("honours reduced motion", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).toMatch(/\.ws-panel, \.ws-panel::backdrop \{ animation: none; \}/);
