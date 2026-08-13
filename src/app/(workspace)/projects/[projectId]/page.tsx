@@ -1,29 +1,82 @@
-import { CalendarDays, Monitor, UserRound, UsersRound } from "lucide-react";
+import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { RenameProjectDialog } from "@/components/projects/project-forms";
-import { Card } from "@/components/ui/card";
-import { PageHeader } from "@/components/ui/page-header";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { buttonClass } from "@/components/ui/button";
+import { MonitorOff } from "lucide-react";
+import { WorkspaceShell } from "@/components/workspace/workspace-shell";
+import { MediaService } from "@/domain/media/service";
+import { PageTreeService } from "@/domain/pages/service";
 import { ProjectService } from "@/domain/projects/service";
+import { PreviewManifestService } from "@/generated-runtime/manifest/service";
+import { previewUnavailableMessage } from "@/generated-runtime/preview/errors";
 import { requireAuthenticatedUser } from "@/server/auth/session";
-import { ProjectNav } from "@/components/projects/project-nav";
 
-export default async function ProjectPage({ params }: { params: Promise<{ projectId: string }> }) {
+export async function generateMetadata({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
-  const user = await requireAuthenticatedUser();
-  let project;
-  let role: "owner" | "collaborator";
-  let ownerName: string;
   try {
-    const access = await new ProjectService().readWithRole(user.id, projectId);
-    project = access.project;
-    role = access.role;
-    ownerName = access.owner.displayName;
+    const user = await requireAuthenticatedUser();
+    const project = await new ProjectService().read(user.id, projectId);
+    return { title: project.name };
+  } catch { return { title: "Project" }; }
+}
+
+/**
+ * Opening a project lands here: the unified workspace, not an overview screen.
+ */
+export default async function ProjectWorkspacePage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ page?: string }> }) {
+  const { projectId } = await params;
+  const { page } = await searchParams;
+  const user = await requireAuthenticatedUser();
+
+  let access;
+  let nodes;
+  try {
+    [access, nodes] = await Promise.all([
+      new ProjectService().readWithRole(user.id, projectId),
+      new PageTreeService().listTree(user.id, projectId),
+    ]);
   } catch { notFound(); }
-  return <><PageHeader eyebrow="Project overview" title={project.name} description={project.description || "Add a description as this project takes shape."} actions={<><Link href={`/projects/${project.id}/pages`} className={buttonClass("secondary")}>Pages</Link><Link href={`/projects/${project.id}/collaborators`} className={buttonClass("secondary")}><UsersRound size={16} />Collaborators</Link>{role === "owner" ? <RenameProjectDialog id={project.id} name={project.name} /> : null}</>} /><ProjectNav projectId={project.id} />
-    <div className="project-layout"><Card><div className="section-heading"><div><p className="eyebrow">Overview</p><h2>Project details</h2></div><StatusBadge status={project.status} /></div><dl className="detail-list"><div><dt><UserRound size={16} />Owner</dt><dd>{ownerName}</dd></div><div><dt><CalendarDays size={16} />Created</dt><dd>{project.createdAt.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}</dd></div></dl></Card>
-    <Card className="builder-placeholder"><span className="state-icon"><Monitor size={22} /></span><div><p className="eyebrow">Builder</p><h2>Preview your website</h2><p>Review project pages, routes, themes, and logos across desktop, tablet, and mobile viewports.</p><Link href={`/projects/${project.id}/builder`} className={buttonClass()}>Open Builder</Link></div></Card></div>
-  </>;
+
+  let session;
+  let media;
+  let previewError: string | undefined;
+  try {
+    [session, media] = await Promise.all([
+      new PreviewManifestService().createSession(user.id, projectId),
+      new MediaService().list(user.id, { projectId }),
+    ]);
+  } catch (error) {
+    session = null;
+    media = null;
+    previewError = previewUnavailableMessage(error);
+  }
+
+  // Without a preview session there is no website to show, so the workspace
+  // cannot be assembled. This is the one case that falls back to a plain screen.
+  if (!session || !media) {
+    return <div className="standalone-state">
+      <div className="empty-state error-state">
+        <span className="state-icon"><MonitorOff size={22} /></span>
+        <h2>This website could not be opened.</h2>
+        <p>{previewError ?? "Check the preview configuration, then try again."}</p>
+        <div className="inline-actions">
+          <Link href={`/projects/${projectId}`} className="button button-primary">Try again</Link>
+          <Link href="/dashboard" className="button button-secondary">All projects</Link>
+        </div>
+      </div>
+    </div>;
+  }
+
+  return <WorkspaceShell
+    projectId={access.project.id}
+    projectName={access.project.name}
+    projectStatus={access.project.status}
+    userName={user.displayName}
+    canManageProject={access.role === "owner"}
+    initialSession={session}
+    initialPageId={page}
+    initialInstanceId={randomUUID()}
+    nodes={nodes}
+    mediaAssets={media.assets}
+    mediaFolders={media.folders}
+  />;
 }

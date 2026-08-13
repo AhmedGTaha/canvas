@@ -4,11 +4,11 @@ import { X } from "lucide-react";
 import { useId, useRef, type ReactNode } from "react";
 import { Button } from "./button";
 
-export function Dialog({ title, description, triggerLabel, children }: { title: string; description?: string; triggerLabel: string; children: ReactNode }) {
+export function Dialog({ title, description, triggerLabel, triggerVariant = "primary", children }: { title: string; description?: string; triggerLabel: string; triggerVariant?: "primary" | "secondary" | "ghost"; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   const headingId = useId();
   return <>
-    <Button onClick={() => ref.current?.showModal()}>{triggerLabel}</Button>
+    <Button variant={triggerVariant} onClick={() => ref.current?.showModal()}>{triggerLabel}</Button>
     <dialog className="dialog" ref={ref} aria-labelledby={headingId} onClick={(event) => { if (event.target === ref.current) ref.current?.close(); }}>
       <div className="dialog-panel">
         <div className="dialog-header">

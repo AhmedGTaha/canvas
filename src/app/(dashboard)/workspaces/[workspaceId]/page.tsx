@@ -17,5 +17,5 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
     workspace = await new WorkspaceService().read(user.id, workspaceId);
     projects = await new ProjectService().listInWorkspace(user.id, workspace.id);
   } catch { notFound(); }
-  return <><PageHeader eyebrow="Workspace" title={workspace.name} description="Projects in this workspace." actions={<><RenameWorkspaceDialog id={workspace.id} name={workspace.name} /><CreateProjectDialog workspaceId={workspace.id} /></>} />{projects.length === 0 ? <EmptyState title="No projects yet" description="Create your first Canvas project." action={<CreateProjectDialog workspaceId={workspace.id} />} /> : <div className="card-grid">{projects.map((project) => <ProjectCard key={project.id} project={project} />)}</div>}</>;
+  return <><PageHeader eyebrow="Workspace" title={workspace.name} description="Websites in this workspace." actions={<><RenameWorkspaceDialog id={workspace.id} name={workspace.name} /><CreateProjectDialog workspaceId={workspace.id} /></>} />{projects.length === 0 ? <EmptyState title="No websites here yet" description="Create the first website in this workspace." action={<CreateProjectDialog workspaceId={workspace.id} />} /> : <div className="card-grid">{projects.map((project) => <ProjectCard key={project.id} project={project} />)}</div>}</>;
 }

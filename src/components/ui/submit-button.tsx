@@ -6,5 +6,5 @@ import { Button } from "./button";
 
 export function SubmitButton({ children, pendingLabel = "Saving…" }: { children: React.ReactNode; pendingLabel?: string }) {
   const { pending } = useFormStatus();
-  return <Button type="submit" disabled={pending}>{pending ? <><LoaderCircle className="spin" size={16} />{pendingLabel}</> : children}</Button>;
+  return <Button type="submit" disabled={pending} data-pending={pending || undefined}>{pending ? <><LoaderCircle className="spin" size={15} />{pendingLabel}</> : children}</Button>;
 }

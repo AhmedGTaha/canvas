@@ -22,7 +22,23 @@ function when(value: string) { return new Date(value).toLocaleString(undefined, 
  * Undo/Redo plus progressively disclosed Version History and checkpoints. All history
  * logic lives in the domain services; this component only calls them and reports state.
  */
-export function HistoryControls({ projectId, target, onChanged, showCheckpoints = false }: { projectId: string; target: HistoryTarget; onChanged: () => void; showCheckpoints?: boolean }) {
+/**
+ * Exposed so a host can drive Undo/Redo and History from its own chrome (the
+ * workspace status bar and History menu) without a second copy of this logic.
+ */
+export type HistoryApi = {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string;
+  redoLabel: string;
+  busy: boolean;
+  undo: () => void;
+  redo: () => void;
+  openVersions: () => void;
+  openCheckpoints: () => void;
+};
+
+export function HistoryControls({ projectId, target, onChanged, showCheckpoints = false, hideTrigger = false, onApi }: { projectId: string; target: HistoryTarget; onChanged: () => void; showCheckpoints?: boolean; hideTrigger?: boolean; onApi?: (api: HistoryApi) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [state, setState] = useState<HistoryState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,34 +64,52 @@ export function HistoryControls({ projectId, target, onChanged, showCheckpoints 
     try { setCheckpoints((await request<{ checkpoints: Checkpoint[] }>(`/api/projects/${projectId}/checkpoints`)).checkpoints); } catch { setCheckpoints([]); }
   }, [projectId]);
 
-  async function run(operation: () => Promise<string>) {
+  // Read through a ref so an inline `onChanged` from the caller cannot change
+  // the identity of `run` — and therefore of the whole published API.
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+
+  const run = useCallback(async function run(operation: () => Promise<string>) {
     setBusy(true); setError(undefined); setNotice(undefined);
     try {
       setNotice(await operation());
       await Promise.all([loadState(), loadVersions(), showCheckpoints ? loadCheckpoints() : Promise.resolve()]);
-      onChanged();
+      onChangedRef.current();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Canvas could not complete this request."); }
     finally { setBusy(false); }
-  }
+  }, [loadCheckpoints, loadState, loadVersions, showCheckpoints]);
 
-  function openHistory(next: "versions" | "checkpoints") {
+  const openHistory = useCallback((next: "versions" | "checkpoints") => {
     setTab(next); setError(undefined); setNotice(undefined);
     void loadVersions(); if (showCheckpoints) void loadCheckpoints();
-    dialog.current?.showModal();
-  }
+    if (!dialog.current?.open) dialog.current?.showModal();
+  }, [loadCheckpoints, loadVersions, showCheckpoints]);
 
   const undoLabel = state?.undo ? `Undo: ${state.undo.summary}` : "Nothing to undo";
   const redoLabel = state?.redo ? `Redo: ${state.redo.summary}` : "Nothing to redo";
+
+  const doUndo = useCallback(() => void run(async () => `Undid ${(await request<{ source: { summary: string } }>(`/api/projects/${projectId}/history/undo`, { method: "POST" })).source.summary}`), [projectId, run]);
+  const doRedo = useCallback(() => void run(async () => `Redid ${(await request<{ source: { summary: string } }>(`/api/projects/${projectId}/history/redo`, { method: "POST" })).source.summary}`), [projectId, run]);
+  const openVersions = useCallback(() => openHistory("versions"), [openHistory]);
+  const openCheckpointsTab = useCallback(() => openHistory("checkpoints"), [openHistory]);
+
+  // Declared before the publish effect so the first publish reaches the caller.
+  const onApiRef = useRef(onApi);
+  useEffect(() => { onApiRef.current = onApi; }, [onApi]);
+  useEffect(() => {
+    onApiRef.current?.({ canUndo: Boolean(state?.undo) && !busy, canRedo: Boolean(state?.redo) && !busy, undoLabel, redoLabel, busy, undo: doUndo, redo: doRedo, openVersions, openCheckpoints: openCheckpointsTab });
+  }, [busy, doRedo, doUndo, openCheckpointsTab, openVersions, redoLabel, state?.redo, state?.undo, undoLabel]);
+
   return <>
-    <div className="history-controls" role="group" aria-label="History">
+    {hideTrigger ? null : <div className="history-controls" role="group" aria-label="History">
       <Button type="button" variant="ghost" title={undoLabel} aria-label={undoLabel} disabled={busy || !state?.undo}
-        onClick={() => void run(async () => `Undid ${(await request<{ source: { summary: string } }>(`/api/projects/${projectId}/history/undo`, { method: "POST" })).source.summary}`)}><Undo2 size={15} />Undo</Button>
+        onClick={doUndo}><Undo2 size={15} />Undo</Button>
       <Button type="button" variant="ghost" title={redoLabel} aria-label={redoLabel} disabled={busy || !state?.redo}
-        onClick={() => void run(async () => `Redid ${(await request<{ source: { summary: string } }>(`/api/projects/${projectId}/history/redo`, { method: "POST" })).source.summary}`)}><Redo2 size={15} />Redo</Button>
-      <Button type="button" variant="ghost" onClick={() => openHistory("versions")}><Clock size={15} />History</Button>
-    </div>
-    {error ? <p className="history-inline-error" role="alert"><CircleAlert size={13} />{error}</p> : null}
-    {notice && !error ? <p className="history-inline-notice" role="status">{notice}</p> : null}
+        onClick={doRedo}><Redo2 size={15} />Redo</Button>
+      <Button type="button" variant="ghost" onClick={openVersions}><Clock size={15} />History</Button>
+    </div>}
+    {!hideTrigger && error ? <p className="history-inline-error" role="alert"><CircleAlert size={13} />{error}</p> : null}
+    {!hideTrigger && notice && !error ? <p className="history-inline-notice" role="status">{notice}</p> : null}
 
     <dialog className="dialog" ref={dialog} onClick={(event) => { if (event.target === dialog.current) dialog.current?.close(); }}>
       <div className="dialog-panel history-panel">

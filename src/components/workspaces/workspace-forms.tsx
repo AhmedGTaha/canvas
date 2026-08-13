@@ -21,7 +21,7 @@ export function CreateWorkspaceDialog() {
 
 export function RenameWorkspaceDialog({ id, name }: { id: string; name: string }) {
   const [state, action] = useActionState(renameWorkspaceAction, initialState);
-  return <Dialog title="Rename workspace" triggerLabel="Rename">
+  return <Dialog title="Rename workspace" triggerLabel="Rename" triggerVariant="secondary">
     <form action={action} className="stack">
       <input type="hidden" name="id" value={id} />
       <Input name="name" label="Workspace name" defaultValue={name} required maxLength={100} error={state.fieldErrors?.name?.[0]} />

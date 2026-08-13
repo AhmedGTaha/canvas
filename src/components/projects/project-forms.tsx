@@ -4,27 +4,40 @@ import { useActionState } from "react";
 import { createProjectAction, renameProjectAction } from "@/app/actions/projects";
 import type { MutationState } from "@/app/actions/workspaces";
 import { Dialog } from "@/components/ui/dialog";
-import { Input, Textarea } from "@/components/ui/form-controls";
+import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { SubmitButton } from "@/components/ui/submit-button";
 
 const initialState: MutationState = {};
 
-export function CreateProjectDialog({ workspaceId }: { workspaceId: string }) {
+/**
+ * Creates a website.
+ *
+ * Pass `workspaceId` when the workspace is already the context (inside a
+ * workspace). Pass `workspaces` to let the person choose — that is what makes
+ * "New website" work straight from the projects list, instead of making them
+ * walk through Workspaces first.
+ */
+export function CreateProjectDialog({ workspaceId, workspaces, triggerLabel = "New website" }: { workspaceId?: string; workspaces?: Array<{ id: string; name: string }>; triggerLabel?: string }) {
   const [state, action] = useActionState(createProjectAction, initialState);
-  return <Dialog title="Create project" description="Start with the basics. Brand and AI setup come later." triggerLabel="Create project">
+  const choices = workspaces ?? [];
+  const needsChoice = !workspaceId && choices.length > 0;
+  return <Dialog title="New website" description="Just a name to begin. Brand, pages and content all come next." triggerLabel={triggerLabel}>
     <form action={action} className="stack">
-      <input type="hidden" name="workspaceId" value={workspaceId} />
-      <Input name="name" label="Project name" placeholder="Company website" required maxLength={100} autoFocus error={state.fieldErrors?.name?.[0]} />
-      <Textarea name="description" label="Description (optional)" placeholder="A short description of this website" maxLength={500} rows={4} error={state.fieldErrors?.description?.[0]} />
+      {workspaceId ? <input type="hidden" name="workspaceId" value={workspaceId} /> : null}
+      <Input name="name" label="Website name" placeholder="Acme company website" required maxLength={100} autoFocus error={state.fieldErrors?.name?.[0]} />
+      <Textarea name="description" label="Description (optional)" placeholder="What this website is for" maxLength={500} rows={3} error={state.fieldErrors?.description?.[0]} />
+      {needsChoice ? <Select name="workspaceId" label="Workspace" defaultValue={choices[0]?.id} hint="Workspaces group related websites together." error={state.fieldErrors?.workspaceId?.[0]}>
+        {choices.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+      </Select> : null}
       {state.error ? <p className="form-error" role="alert">{state.error}</p> : null}
-      <SubmitButton pendingLabel="Creating…">Create project</SubmitButton>
+      <SubmitButton pendingLabel="Creating…">Create website</SubmitButton>
     </form>
   </Dialog>;
 }
 
 export function RenameProjectDialog({ id, name }: { id: string; name: string }) {
   const [state, action] = useActionState(renameProjectAction, initialState);
-  return <Dialog title="Rename project" triggerLabel="Rename">
+  return <Dialog title="Rename project" triggerLabel="Rename" triggerVariant="secondary">
     <form action={action} className="stack">
       <input type="hidden" name="id" value={id} />
       <Input name="name" label="Project name" defaultValue={name} required maxLength={100} error={state.fieldErrors?.name?.[0]} />

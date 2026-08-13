@@ -19,9 +19,9 @@ function ActionForm({ projectId, values, label, variant = "ghost" }: { projectId
   return <form action={action}>{Object.entries({ projectId, ...values }).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}<Button type="submit" variant={variant}>{label}</Button>{state.error ? <span className="menu-error">{state.error}</span> : null}</form>;
 }
 
-function CreateNodeDialog({ projectId, nodes, defaultParentId }: { projectId: string; nodes: PageNode[]; defaultParentId?: string }) {
+function CreateNodeDialog({ projectId, nodes, defaultParentId, triggerVariant = "primary" }: { projectId: string; nodes: PageNode[]; defaultParentId?: string; triggerVariant?: "primary" | "ghost" }) {
   const [state, action] = useActionState(pageTreeAction, initial);
-  return <Dialog title="New page or folder" description="Pages have website URLs. Folders only organize your structure." triggerLabel="New">
+  return <Dialog title="New page or folder" description="Pages have website URLs. Folders only organize your structure." triggerLabel="New" triggerVariant={triggerVariant}>
     <form action={action} className="stack"><input type="hidden" name="intent" value="create" /><input type="hidden" name="projectId" value={projectId} />
       <label className="field"><span className="field-label">Type</span><select className="input" name="type"><option value="page">Page</option><option value="folder">Folder</option></select></label>
       <Input name="name" label="Name" placeholder="About us" required maxLength={120} />
@@ -38,7 +38,7 @@ function EditNodeDialog({ projectId, node, nodes }: { projectId: string; node: P
   let changed = true;
   descendants.add(node.id);
   while (changed) { changed = false; for (const item of nodes) if (item.parentId && descendants.has(item.parentId) && !descendants.has(item.id)) { descendants.add(item.id); changed = true; } }
-  return <Dialog title={node.type === "page" ? "Page settings" : "Folder settings"} triggerLabel="Settings">
+  return <Dialog title={node.type === "page" ? "Page settings" : "Folder settings"} triggerLabel="Settings" triggerVariant="ghost">
     <form action={action} className="stack"><input type="hidden" name="projectId" value={projectId} /><input type="hidden" name="nodeId" value={node.id} />
       <input type="hidden" name="intent" value="rename" /><Input name="name" label="Name" defaultValue={node.name} required maxLength={120} />
       {state.error ? <p className="form-error">{state.error}</p> : null}<SubmitButton>Rename</SubmitButton>
@@ -55,7 +55,7 @@ function TreeItem({ projectId, node, nodes, depth }: { projectId: string; node: 
     <button className="tree-chevron" type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`} onClick={() => setExpanded((value) => !value)} disabled={!node.children.length}>{node.children.length ? expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} /> : null}</button>
     <span className="tree-type-icon">{node.isHomepage ? <Home size={17} /> : node.type === "folder" ? <Folder size={17} /> : <FileText size={17} />}</span>
     <span className="tree-label"><strong>{node.name}</strong><small>{node.type === "page" ? node.routePath : `${node.children.length} item${node.children.length === 1 ? "" : "s"}`}</small></span>
-    <Menu label={`Actions for ${node.name}`}><EditNodeDialog projectId={projectId} node={node} nodes={nodes} />{node.type === "folder" ? <CreateNodeDialog projectId={projectId} nodes={nodes} defaultParentId={node.id} /> : null}{node.type === "page" && !node.isHomepage ? <ActionForm projectId={projectId} values={{ intent: "homepage", nodeId: node.id }} label="Set as homepage" /> : null}{node.type === "page" ? <ActionForm projectId={projectId} values={{ intent: "duplicate", nodeId: node.id }} label="Duplicate" /> : null}<ActionForm projectId={projectId} values={{ intent: "reorder", nodeId: node.id, direction: "up" }} label="Move up" /><ActionForm projectId={projectId} values={{ intent: "reorder", nodeId: node.id, direction: "down" }} label="Move down" /><ConfirmationDialog title={`Delete “${node.name}”?`} triggerLabel="Delete" description={node.children.length ? `This will also delete ${node.children.length} or more nested items.` : "This item will be removed from the project structure."} action={<ActionForm projectId={projectId} values={{ intent: "delete", nodeId: node.id }} label="Delete" variant="danger" />} /></Menu>
+    <Menu label={`Actions for ${node.name}`}><EditNodeDialog projectId={projectId} node={node} nodes={nodes} />{node.type === "folder" ? <CreateNodeDialog projectId={projectId} nodes={nodes} defaultParentId={node.id} triggerVariant="ghost" /> : null}{node.type === "page" && !node.isHomepage ? <ActionForm projectId={projectId} values={{ intent: "homepage", nodeId: node.id }} label="Set as homepage" /> : null}{node.type === "page" ? <ActionForm projectId={projectId} values={{ intent: "duplicate", nodeId: node.id }} label="Duplicate" /> : null}<ActionForm projectId={projectId} values={{ intent: "reorder", nodeId: node.id, direction: "up" }} label="Move up" /><ActionForm projectId={projectId} values={{ intent: "reorder", nodeId: node.id, direction: "down" }} label="Move down" /><ConfirmationDialog title={`Delete “${node.name}”?`} triggerLabel="Delete" description={node.children.length ? `This will also delete ${node.children.length} or more nested items.` : "This item will be removed from the project structure."} action={<ActionForm projectId={projectId} values={{ intent: "delete", nodeId: node.id }} label="Delete" variant="danger" />} /></Menu>
   </div>{expanded && node.children.length ? <ul>{node.children.map((child) => <TreeItem key={child.id} projectId={projectId} node={child} nodes={nodes} depth={depth + 1} />)}</ul> : null}</li>;
 }
 

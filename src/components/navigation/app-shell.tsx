@@ -11,7 +11,7 @@ export function AppShell({ user, children }: { user: AuthenticatedUser; children
     <aside className="sidebar">
       <Link href="/dashboard" className="brand"><span className="brand-mark">C</span><span>Canvas</span></Link>
       <nav aria-label="Main navigation" className="sidebar-nav">
-        <SidebarNavItem href="/dashboard" label="Projects" icon="projects" />
+        <SidebarNavItem href="/dashboard" label="Websites" icon="projects" />
         <SidebarNavItem href="/workspaces" label="Workspaces" icon="workspaces" />
       </nav>
       <div className="sidebar-footer"><SidebarNavItem href="/account" label="Account" icon="account" /></div>
