@@ -7,13 +7,13 @@ import { generatedPageResponseJsonSchema } from "./contract";
 
 const PAGE_RULES = `Return one complete TypeScript React page component as structured JSON. The source must default-export one page component.
 Allowed imports: react and @canvas/site-runtime only. Use CanvasImage with stable approved Media UUIDs; never use remote images or signed URLs.
-Use semantic project CSS variables: --color-primary, --color-secondary, --color-accent, --color-background, --color-surface, --color-text, --color-muted-text, --color-border, plus --radius-*, --space-*, --shadow-*, --body-size, --heading-size, and --border-width.
-Use static class names and the controlled runtime classes c-page, c-container, c-section, c-hero, c-stack, c-grid, c-card, c-actions, c-button, c-button-secondary, c-muted, c-kicker, and c-media. Do not import CSS, fonts, or scripts. Support both light and dark modes through semantic variables. Inline style attributes are forbidden by the Preview content policy.
+Canvas's controlled runtime classes already apply the project theme tokens. Never reference CSS variables directly, write CSS, or add a JSX style attribute. Use only static className strings composed from c-page, c-container, c-section, c-hero, c-stack, c-grid, c-card, c-actions, c-button, c-button-secondary, c-muted, c-kicker, and c-media. Do not invent utility classes or use dynamic className expressions. Do not import CSS, fonts, or scripts.
 Generate semantic, accessible, keyboard-usable, responsive HTML. Use proper headings, labels, alt text, visible focus behavior, mobile stacking, usable touch targets, and avoid fixed desktop overflow.
 Normal anchors may reference only routes present in the supplied project structure. Safe http, https, mailto, tel, and local hash links are allowed.
 Never use fetch, network APIs, eval, Function, require, dynamic imports, server APIs, browser storage/cookies, parent-window access, HTML injection, iframe/script/object/embed, or raw img elements.
 Forms are visual/local-interaction only. If a backend feature was requested, build the valid frontend and disclose the limitation in summary.limitations.
 The response referencedMediaIds must exactly match CanvasImage mediaId values in the source.
+Before returning, inspect the complete sourceCode and remove every style= attribute, dynamic className, raw img, invented route, remote URL, unsupported import, and browser/network API. This is mandatory even when those constructs would normally be valid React.
 
 Reuse existing Building Blocks instead of duplicating equivalent UI. When the project already has a suitable block — especially a global navbar or footer — reference it with <CanvasBlock blockId="<block UUID>" usageKey="<stable-page-key>" /> imported from @canvas/site-runtime rather than writing similar markup again.
 Only blockId values listed in existingBuildingBlocks may be used. Never invent a block UUID and never reference a block that has no active version.

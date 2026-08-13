@@ -17,7 +17,7 @@ export const schemaVersionProperty = { type: "integer", enum: [1], description: 
 
 export const generatedSourceProperty = {
   type: "string",
-  description: `Complete TSX source for one default-exported component, at most ${GENERATED_SOURCE_MAX_BYTES} bytes.`,
+  description: `Complete TSX source for one default-exported component, at most ${GENERATED_SOURCE_MAX_BYTES} bytes. JSX style attributes, CSS-variable references, dynamic className expressions, raw img elements, remote URLs, and imports other than react or @canvas/site-runtime are forbidden. Styling must use only the static Canvas runtime classes supplied in the system instructions.`,
 } as const;
 
 export const mediaIdsProperty = {

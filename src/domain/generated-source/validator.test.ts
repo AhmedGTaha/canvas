@@ -24,6 +24,14 @@ export default function GeneratedBlock(){return <nav className="c-container" ari
       });
   });
 
+  it("rejects the real Gemini inline-style construct even when it uses theme tokens", async () => {
+    const sourceCode = `export default function Navbar(){return <nav data-canvas-id="navbar-root" className="c-container" style={{display:"flex",alignItems:"center",color:"var(--color-text)"}}><div className="c-actions"><a href="/">Home</a></div></nav>}`;
+    await expect(validateGeneratedBlockSource({ sourceCode, ...base, declaredMediaIds: [] })).rejects.toMatchObject({
+      message: "Canvas generated code that uses an unsupported or unsafe website feature. Try a simpler request.",
+      diagnostic: "inline style attributes are not allowed",
+    });
+  });
+
   it("rejects foreign, hallucinated, and undeclared Media references", async () => {
     const foreign = "22222222-2222-4222-8222-222222222222";
     await expect(validateGeneratedBlockSource({ sourceCode: `import{CanvasImage}from"@canvas/site-runtime";export default function B(){return <CanvasImage mediaId="${foreign}" alt=""/>}`, ...base, declaredMediaIds: [foreign] }))
