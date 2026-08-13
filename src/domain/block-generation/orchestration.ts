@@ -16,6 +16,7 @@ import { elementInvalid, elementStale, findEditableElement, readResolvedSelectio
 import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
 import { assembleBlockGenerationRequest } from "./prompt";
 import { observe } from "@/server/observability/events";
+import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 
 function summaryMessage(summary: BlockChangeSummary) {
   return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n");
@@ -100,6 +101,9 @@ export class BlockGenerationOrchestrationService {
       
       const response = await provider.generateStructured(assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal }), generatedBlockResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
+      // Provider metadata is useful even if deterministic validation rejects the candidate.
+      // Invalid source itself remains ephemeral and is never activated or persisted.
+      await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
       
       if (await this.cancellation(jobId)) return this.current(jobId);
 
@@ -128,8 +132,9 @@ export class BlockGenerationOrchestrationService {
       if (current.cancelRequestedAt || error.code === "AI_JOB_CANCELLED") await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." });
       else if (error.retryable && current.attemptCount < 3) await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + 1_000 * 2 ** Math.max(0, current.attemptCount - 1)), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
       else {
-        await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message });
-        await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.block_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code } });
+        const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic);
+        await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic });
+        await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.block_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } });
         observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt });
         if (error.code === "AI_PROVIDER_INVALID_RESPONSE") observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: error.diagnostic });
       }

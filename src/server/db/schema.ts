@@ -259,6 +259,7 @@ export const generationJobs = pgTable("generation_jobs", {
   providerRequestId: varchar("provider_request_id", { length: 255 }),
   errorCode: varchar("error_code", { length: 80 }),
   errorMessage: varchar("error_message", { length: 500 }),
+  errorDiagnostic: varchar("error_diagnostic", { length: 500 }),
   resultMessageId: uuid("result_message_id"),
   resultChangeSetId: uuid("result_change_set_id"),
   usageMetadata: jsonb("usage_metadata"),

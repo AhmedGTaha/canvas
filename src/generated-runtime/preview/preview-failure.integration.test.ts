@@ -102,7 +102,7 @@ class FixtureProvider implements AIProvider {
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       summary: { headline: "Created the navbar", changes: ["Added navigation"], limitations: [] },
     };
-    return { text: "", structuredData: validator.parse(value), provider: this.name, model: this.model };
+    return { text: "", structuredData: validator.parse(value), provider: this.name, model: this.model, providerRequestId: "fixture-response-id", usage: { inputTokens: 120, outputTokens: 340, totalTokens: 460 } };
   }
 }
 async function makeUser(label: string) { const id = randomUUID(); const [record] = await db.insert(users).values({ id, email: `${label}-${id}@test.dev`, normalizedEmail: `${label}-${id}@test.dev`, displayName: label }).returning(); return record!; }
@@ -118,10 +118,13 @@ async function setup() {
   return { owner, project, home, mediaId: asset!.id };
 }
 async function runBlockJob(userId: string, projectId: string, blockId: string, source: string, mediaIds: string[]) {
-  const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: "Create a navbar", selectedMediaIds: [] });
-  await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, { referencedMediaIds: mediaIds })).process(request.job.id);
+  const job = await processBlockJob(userId, projectId, blockId, source, mediaIds);
   expect(job).toMatchObject({ status: "completed" });
+}
+async function processBlockJob(userId: string, projectId: string, blockId: string, source: string, mediaIds: string[]) {
+  const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: "Create a navbar", selectedMediaIds: mediaIds });
+  await claimGenerationJob("worker");
+  return new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, { referencedMediaIds: mediaIds })).process(request.job.id);
 }
 async function runPageJob(userId: string, projectId: string, pageId: string, source: string, blockUsages: Array<{ blockId: string; usageKey: string }>) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "Use the navbar", selectedMediaIds: [] });
@@ -195,6 +198,30 @@ describe.sequential("Preview failure handling", () => {
     const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
     await runBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
     await expect(new BuildingBlockContentProvider().getActive(project.id, navbar.id)).resolves.toMatchObject({ bundle: expect.stringContaining("navbar-root") });
+  });
+
+  it("explains Gemini-style links to nonexistent pages while preserving the valid logo reference", async () => {
+    const { owner, project, mediaId } = await setup();
+    const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
+    const source = `import * as React from "react";
+import { CanvasImage } from "@canvas/site-runtime";
+export default function GlobalNavbar(){return <nav data-canvas-id="navbar-root" className="c-container"><a href="/" data-canvas-id="navbar-logo"><CanvasImage mediaId="${mediaId}" alt="Logo" className="c-media" /></a><div data-canvas-id="navbar-links" className="c-actions"><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact Us</a></div></nav>}`;
+
+    const job = await processBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
+    expect(job).toMatchObject({
+      status: "failed",
+      errorCode: "AI_PROVIDER_INVALID_RESPONSE",
+      errorMessage: "/about and /contact do not exist in this project yet. Create those pages first or ask Canvas to use your existing pages.",
+      errorDiagnostic: "invalid internal routes: /about, /contact",
+      provider: "fixture",
+      providerModel: "fixture-1",
+      providerRequestId: "fixture-response-id",
+      usageMetadata: { inputTokens: 120, outputTokens: 340, totalTokens: 460 },
+    });
+    expect(job?.resultBlockVersionId).toBeNull();
+    const [stored] = await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id));
+    expect(stored?.currentVersionId).toBeNull();
+    expect(await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.buildingBlockId, navbar.id))).toHaveLength(0);
   });
 
   it("reports a normalized, recorded reason when Preview is not configured", async () => {

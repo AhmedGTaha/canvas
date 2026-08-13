@@ -18,6 +18,7 @@ import { generatedPageResponseSchema, type PageChangeSummary } from "./contract"
 import { assemblePageGenerationRequest } from "./prompt";
 import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
 import { observe } from "@/server/observability/events";
+import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 
 function summaryMessage(summary: PageChangeSummary) { return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n"); }
 
@@ -66,6 +67,7 @@ export class PageGenerationOrchestrationService {
       
       const response = await provider.generateStructured(assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal }), generatedPageResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
+      await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
       
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "validating", "Validating page");
@@ -96,7 +98,7 @@ export class PageGenerationOrchestrationService {
       if (!current || ["completed", "failed", "cancelled"].includes(current.status)) return current ?? null;
       if (current.cancelRequestedAt || error.code === "AI_JOB_CANCELLED") await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." });
       else if (error.retryable && current.attemptCount < 3) await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + 1_000 * 2 ** Math.max(0, current.attemptCount - 1)), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
-      else { await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message }); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt }); if (error.code === "AI_PROVIDER_INVALID_RESPONSE") observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: error.diagnostic }); }
+      else { const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic); await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic }); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt }); if (error.code === "AI_PROVIDER_INVALID_RESPONSE") observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: error.diagnostic }); }
       return this.current(jobId);
     } finally {
       if (heartbeat) clearInterval(heartbeat);

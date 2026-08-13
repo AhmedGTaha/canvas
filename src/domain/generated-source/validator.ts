@@ -4,6 +4,7 @@ import { AIError } from "@/domain/ai/provider";
 import { compileGeneratedSource, type GeneratedBlockModule } from "./compiler";
 import { CANVAS_ID_PATTERN, CANVAS_LABEL_MAX_LENGTH, EDITABLE_ELEMENT_LIMIT, GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN } from "./limits";
 import type { EditableElement } from "./selection";
+import { generatedSourceValidationMessage } from "./diagnostics";
 
 export { GENERATED_SOURCE_MAX_BYTES, USAGE_KEY_PATTERN };
 
@@ -40,7 +41,7 @@ export type GeneratedSourceValidationInput = {
 };
 
 function fail(detail: string): never {
-  throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce valid website code from this request. Try again.", false, undefined, detail);
+  throw new AIError("AI_PROVIDER_INVALID_RESPONSE", generatedSourceValidationMessage(detail), false, undefined, detail);
 }
 function literal(node: ts.Expression | undefined) {
   return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : null;
@@ -66,6 +67,7 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
   const media = new Set<string>(); const routes = new Set<string>(); const external = new Set<string>();
   const usages: GeneratedBlockUsage[] = []; const usageKeys = new Set<string>();
   const editableElements: EditableElement[] = []; const canvasIds = new Set<string>();
+  const invalidRoutes = new Set<string>();
   let defaultExport = false; let interactive = false;
 
   const visit = (node: ts.Node) => {
@@ -115,7 +117,7 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
         const href = jsxAttribute(node.attributes, "href");
         if (!href) fail("Anchor href must be static");
         if (href.startsWith("#")) { /* local anchor */ }
-        else if (href.startsWith("/")) { const route = href.split(/[?#]/)[0] || "/"; if (!input.activeRoutes.has(route)) fail(`invalid internal route: ${route}`); routes.add(route); }
+        else if (href.startsWith("/")) { const route = href.split(/[?#]/)[0] || "/"; if (!input.activeRoutes.has(route)) invalidRoutes.add(route); else routes.add(route); }
         else { let url: URL; try { url = new URL(href); } catch { fail(`invalid link: ${href}`); } if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) fail(`unsafe link scheme: ${url.protocol}`); external.add(href); }
       }
       for (const property of node.attributes.properties) if (ts.isJsxAttribute(property) && /^on[A-Z]/.test(property.name.getText())) interactive = true;
@@ -124,6 +126,7 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
   };
   visit(file);
 
+  if (invalidRoutes.size) fail(`invalid internal routes: ${[...invalidRoutes].sort().join(", ")}`);
   if (!defaultExport) fail(`${input.kind} must have one default export`);
   const declaredMedia = new Set(input.declaredMediaIds ?? []);
   if (declaredMedia.size !== media.size || [...declaredMedia].some((id) => !media.has(id))) fail("declared Media references do not match source");

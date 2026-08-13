@@ -1,10 +1,11 @@
 import { build, type Plugin } from "esbuild";
 import { AIError } from "@/domain/ai/provider";
+import { generatedSourceValidationMessage } from "./diagnostics";
 
 export type GeneratedBlockModule = { blockId: string; sourceCode: string };
 
 function fail(detail: string): never {
-  throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce valid website code from this request. Try again.", false, undefined, detail);
+  throw new AIError("AI_PROVIDER_INVALID_RESPONSE", generatedSourceValidationMessage(detail), false, undefined, detail);
 }
 
 // Platform-controlled runtime. Generated source may only import these primitives; the

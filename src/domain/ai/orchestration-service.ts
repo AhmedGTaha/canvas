@@ -9,6 +9,7 @@ import { GenerationJobLifecycle, safeAIError } from "./job-service";
 import { PageGenerationOrchestrationService } from "@/domain/page-generation/orchestration";
 import { BlockGenerationOrchestrationService } from "@/domain/block-generation/orchestration";
 import { observe } from "@/server/observability/events";
+import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 
 const MAX_ATTEMPTS = 3;
 
@@ -75,7 +76,7 @@ export class AIOrchestrationService {
         const delay = Math.min(30_000, 1_000 * (2 ** Math.max(0, current.attemptCount - 1))) + Math.floor(Math.random() * 500);
         await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + delay), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
       } else {
-        await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message });
+        await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic: persistedGenerationDiagnostic(error.diagnostic) });
         observe.generationJob("failed", { jobId, projectId: current.projectId, operation: "assistant", reason: error.code, durationMs: performance.now() - startedAt });
       }
       return this.current(jobId);

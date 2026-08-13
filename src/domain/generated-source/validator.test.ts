@@ -17,8 +17,11 @@ export default function GeneratedBlock(){return <nav className="c-container" ari
   });
 
   it("rejects routes that are not part of the project page tree", async () => {
-    await expect(validateGeneratedBlockSource({ sourceCode: `export default function B(){return <nav><a href="/careers">Careers</a></nav>}`, ...base, declaredMediaIds: [] }))
-      .rejects.toMatchObject({ diagnostic: expect.stringContaining("invalid internal route") });
+    await expect(validateGeneratedBlockSource({ sourceCode: `export default function B(){return <nav><a href="/careers">Careers</a><a href="/about">About</a></nav>}`, ...base, declaredMediaIds: [] }))
+      .rejects.toMatchObject({
+        message: "/about and /careers do not exist in this project yet. Create those pages first or ask Canvas to use your existing pages.",
+        diagnostic: "invalid internal routes: /about, /careers",
+      });
   });
 
   it("rejects foreign, hallucinated, and undeclared Media references", async () => {
