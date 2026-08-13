@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:17-alpine
+    # Comes back on its own after a reboot. Without this the container stays
+    # stopped, the app cannot connect, and it looks like the data is gone.
+    restart: unless-stopped
     environment:
       POSTGRES_DB: canvas
       POSTGRES_USER: canvas
