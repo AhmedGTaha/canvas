@@ -32,6 +32,17 @@ export const updateBlockSchema = blockReferenceSchema.extend({
   kind: blockKindSchema.optional(),
 });
 export const setBlockGlobalSchema = blockReferenceSchema.extend({ isGlobal: z.boolean() });
+/**
+ * One page's copy of a shared block. A usage key is unique per page, not per
+ * block — the same block can be used as "site-navbar" on every page — so the
+ * page has to be part of the identity or detaching one page would silently
+ * detach all of them.
+ */
+export const setUsageResolutionSchema = blockReferenceSchema.extend({
+  pageId: z.uuid("Page not found."),
+  usageKey: z.string().trim().min(1, "Usage not found.").max(100),
+  resolution: z.enum(["pinned", "global"], "Choose whether this page follows the shared section."),
+});
 export const listBlocksSchema = z.object({ projectId: projectIdSchema, search: z.string().trim().max(120).optional(), includeArchived: z.boolean().default(false) });
 
 export const createBlockJobSchema = z.object({

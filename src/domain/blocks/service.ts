@@ -4,8 +4,8 @@ import { auditEvents, buildingBlockUsages, buildingBlockVersions, buildingBlocks
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { BuildingBlockRepository } from "./repository";
 import { duplicateBlockManifest, duplicateBlockName } from "./duplication";
-import { blockDeleted, blockGenerationActive, blockGlobalConversionFailed, blockInUse, blockNotFound } from "./errors";
-import { createBlockSchema, blockReferenceSchema, listBlocksSchema, setBlockGlobalSchema, updateBlockSchema } from "./schemas";
+import { blockDeleted, blockGenerationActive, blockGlobalConversionFailed, blockInUse, blockNotFound, blockUsageNotFound } from "./errors";
+import { createBlockSchema, blockReferenceSchema, listBlocksSchema, setBlockGlobalSchema, setUsageResolutionSchema, updateBlockSchema } from "./schemas";
 import { recordChangeSet } from "@/domain/history/change-set-service";
 
 const ACTIVE_JOB_STATUSES = ["queued", "preparing_context", "generating", "validating", "applying"] as const;
@@ -115,6 +115,70 @@ export class BuildingBlockService {
       });
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: parsed.isGlobal ? "block.made_global" : "block.made_local", entityType: "building_block", entityId: locked.id, metadata: { usageCount: usages.length } });
       return updated;
+    });
+  }
+
+  /**
+   * Attaches or detaches a single page's copy of a Building Block.
+   *
+   * The same mutation the global toggle performs in bulk, scoped to one usage
+   * row: "global" clears the pin so the page follows the block's active version,
+   * "pinned" freezes it at the version the block is on today. The guards match
+   * the bulk toggle exactly — either direction needs an active version to point
+   * at or resolve, or the page would render nothing where the section was.
+   *
+   * A page is identified by id and usage key together, because usage keys are
+   * only unique within a page: updating by key alone would detach every page
+   * using the block under the same key.
+   */
+  async setUsageResolution(userId: string, input: unknown) {
+    const parsed = setUsageResolutionSchema.parse(input);
+    const { block } = await this.read(userId, parsed.projectId, parsed.blockId);
+    return this.database.transaction(async (transaction) => {
+      const [locked] = await transaction.select().from(buildingBlocks)
+        .where(and(eq(buildingBlocks.id, block.id), eq(buildingBlocks.projectId, parsed.projectId), isNull(buildingBlocks.deletedAt))).for("update");
+      if (!locked) throw blockNotFound();
+
+      const [row] = await transaction.select({ usage: buildingBlockUsages, page: pageNodes })
+        .from(buildingBlockUsages)
+        .innerJoin(pageNodes, and(eq(pageNodes.id, buildingBlockUsages.pageId), eq(pageNodes.projectId, buildingBlockUsages.projectId)))
+        .where(and(
+          eq(buildingBlockUsages.projectId, parsed.projectId),
+          eq(buildingBlockUsages.buildingBlockId, locked.id),
+          eq(buildingBlockUsages.pageId, parsed.pageId),
+          eq(buildingBlockUsages.usageKey, parsed.usageKey),
+          isNull(pageNodes.deletedAt),
+        ));
+      if (!row) throw blockUsageNotFound();
+
+      const before = row.usage.buildingBlockVersionId ? "pinned" as const : "global" as const;
+      if (before === parsed.resolution) return { usageKey: row.usage.usageKey, pageId: row.page.id, resolution: before };
+      if (!locked.currentVersionId) {
+        throw blockGlobalConversionFailed(parsed.resolution === "global"
+          ? "Create this Building Block with Canvas before a page can follow it."
+          : "This Building Block has no active version to keep this page rendering.");
+      }
+      const versionId = parsed.resolution === "global" ? null : locked.currentVersionId;
+      await transaction.update(buildingBlockUsages).set({ buildingBlockVersionId: versionId })
+        .where(and(eq(buildingBlockUsages.id, row.usage.id), eq(buildingBlockUsages.projectId, parsed.projectId)));
+
+      await recordChangeSet(transaction, {
+        projectId: parsed.projectId, actorUserId: userId, operation: "block_usage_resolution",
+        summary: `${locked.name} on ${row.page.name}: ${parsed.resolution === "global" ? "follows the shared section" : "frozen at the current version"}`,
+        items: [{
+          entityType: "building_block", entityId: locked.id,
+          beforeVersionId: row.usage.buildingBlockVersionId, afterVersionId: versionId,
+          beforeState: { pageId: row.page.id, usageKey: row.usage.usageKey, resolution: before },
+          afterState: { pageId: row.page.id, usageKey: row.usage.usageKey, resolution: parsed.resolution },
+        }],
+      });
+      await transaction.insert(auditEvents).values({
+        projectId: parsed.projectId, userId,
+        action: parsed.resolution === "global" ? "block.usage_attached" : "block.usage_detached",
+        entityType: "building_block", entityId: locked.id,
+        metadata: { pageId: row.page.id, usageKey: row.usage.usageKey },
+      });
+      return { usageKey: row.usage.usageKey, pageId: row.page.id, resolution: parsed.resolution };
     });
   }
 

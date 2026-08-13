@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { db, sql } from "@/server/db/client";
-import { aiConversations, buildingBlockUsages, buildingBlockVersions, buildingBlocks, generationJobs, pageNodes, pageVersions, users } from "@/server/db/schema";
+import { aiConversations, auditEvents, buildingBlockUsages, buildingBlockVersions, buildingBlocks, generationJobs, pageNodes, pageVersions, users } from "@/server/db/schema";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { ProjectService } from "@/domain/projects/service";
 import { PageTreeService } from "@/domain/pages/service";
@@ -11,6 +11,7 @@ import { BuildingBlockContentProvider } from "@/domain/blocks/preview";
 import { GenerationJobService, claimGenerationJob } from "@/domain/ai/job-service";
 import { AIOrchestrationService } from "@/domain/ai/orchestration-service";
 import type { AIProvider, AIRequest, AIResponse, StructuredValidator } from "@/domain/ai/provider";
+import { HistoryService } from "@/domain/history/undo-service";
 import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
 
@@ -59,7 +60,7 @@ async function runPageJob(userId: string, projectId: string, pageId: string, con
 
 describe.sequential("Phase 9 Building Blocks", () => {
   process.env.PREVIEW_TOKEN_SECRET = "phase-nine-test-preview-secret-value";
-  beforeEach(async () => { await sql`TRUNCATE TABLE building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
+  beforeEach(async () => { await sql`TRUNCATE TABLE change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });
 
   it("creates a validated active Block Version and previews it", async () => {
@@ -277,6 +278,105 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect((await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!))?.bundle).toContain("Navbar version two");
   });
 
+  it("attaches and detaches one page's copy of a shared block without touching the others", async () => {
+    const { owner, project, home } = await setup();
+    const blocks = new BuildingBlockService();
+    const about = await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "About" });
+    const navbar = await blocks.create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar", isGlobal: true });
+    await runBlockJob(owner.id, project.id, navbar.id, "Create", navbarV1);
+    const usage = [{ blockId: navbar.id, usageKey: "site-navbar" }];
+    for (const page of [home, about]) await runPageJob(owner.id, project.id, page.id, "Use the navbar", pageUsing(usage), usage);
+    const [v1] = await db.select().from(buildingBlockVersions);
+    const resolutionOf = async (pageId: string) => (await blocks.listUsages(owner.id, project.id, navbar.id)).find((row) => row.pageId === pageId);
+    expect(await resolutionOf(home.id)).toMatchObject({ resolution: "global", pinnedVersionId: null });
+
+    // Freezing Home leaves About following the shared section, even though both
+    // pages use the same usage key.
+    await blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "pinned" });
+    expect(await resolutionOf(home.id)).toMatchObject({ resolution: "pinned", pinnedVersionId: v1!.id });
+    expect(await resolutionOf(about.id)).toMatchObject({ resolution: "global", pinnedVersionId: null });
+
+    // A later block change reaches the page still following it, and not the frozen one.
+    await runBlockJob(owner.id, project.id, navbar.id, "Update", navbarV2);
+    const bundleOf = async (pageId: string) => {
+      const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, pageId));
+      return (await new GeneratedPageContentProvider().get(project.id, pageId, node!.currentVersionId!))?.bundle;
+    };
+    expect(await bundleOf(home.id)).toContain("Navbar version one");
+    expect(await bundleOf(about.id)).toContain("Navbar version two");
+
+    // Reattaching brings it back onto the shared version.
+    await blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "global" });
+    expect(await resolutionOf(home.id)).toMatchObject({ resolution: "global", pinnedVersionId: null });
+    expect(await bundleOf(home.id)).toContain("Navbar version two");
+  });
+
+  it("lets a page rebuild reset its own resolution, the way the block-wide toggle does", async () => {
+    const { owner, project, home } = await setup();
+    const blocks = new BuildingBlockService();
+    const navbar = await blocks.create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar", isGlobal: true });
+    await runBlockJob(owner.id, project.id, navbar.id, "Create", navbarV1);
+    const usage = [{ blockId: navbar.id, usageKey: "site-navbar" }];
+    await runPageJob(owner.id, project.id, home.id, "Use the navbar", pageUsing(usage), usage);
+    await blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "pinned" });
+    expect((await blocks.listUsages(owner.id, project.id, navbar.id))[0]).toMatchObject({ resolution: "pinned" });
+
+    // Activating a Page Version rebuilds that page's usage rows from the block's
+    // own global flag, so a per-page freeze lasts until the page itself is next
+    // rebuilt. This is the same rule the block-wide toggle has always had; it is
+    // asserted here so the interaction is a decision on record, not a surprise.
+    await runPageJob(owner.id, project.id, home.id, "Tweak the wording", pageUsing(usage), usage);
+    expect((await blocks.listUsages(owner.id, project.id, navbar.id))[0]).toMatchObject({ resolution: "global" });
+  });
+
+  it("records each per-page attach and detach in project history and the audit log", async () => {
+    const { owner, project, home } = await setup();
+    const blocks = new BuildingBlockService();
+    const navbar = await blocks.create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar", isGlobal: true });
+    await runBlockJob(owner.id, project.id, navbar.id, "Create", navbarV1);
+    const usage = [{ blockId: navbar.id, usageKey: "site-navbar" }];
+    await runPageJob(owner.id, project.id, home.id, "Use the navbar", pageUsing(usage), usage);
+
+    await blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "pinned" });
+    const state = await new HistoryService().state(owner.id, project.id);
+    const entry = state.history.find((item) => item.operation === "block_usage_resolution");
+    expect(entry?.summary).toBe("Navbar on Home: frozen at the current version");
+    // Undo replays version moves; a usage's resolution is not one, so the entry
+    // is recorded for the feed but never becomes the undo candidate.
+    expect(entry?.reversible).toBe(false);
+    expect(state.undo?.operation).not.toBe("block_usage_resolution");
+    expect((await db.select().from(auditEvents).where(eq(auditEvents.action, "block.usage_detached")))).toHaveLength(1);
+
+    await blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "global" });
+    expect((await db.select().from(auditEvents).where(eq(auditEvents.action, "block.usage_attached")))).toHaveLength(1);
+    // Asking for the resolution a usage already has changes nothing.
+    await blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "global" });
+    expect((await db.select().from(auditEvents).where(eq(auditEvents.action, "block.usage_attached")))).toHaveLength(1);
+  });
+
+  it("refuses to change a usage that does not exist, and one with no version to point at", async () => {
+    const { owner, project, home } = await setup();
+    const blocks = new BuildingBlockService();
+    const navbar = await blocks.create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar", isGlobal: true });
+    await runBlockJob(owner.id, project.id, navbar.id, "Create", navbarV1);
+    const usage = [{ blockId: navbar.id, usageKey: "site-navbar" }];
+    await runPageJob(owner.id, project.id, home.id, "Use the navbar", pageUsing(usage), usage);
+
+    for (const attempt of [
+      { pageId: home.id, usageKey: "not-a-usage" },
+      { pageId: randomUUID(), usageKey: "site-navbar" },
+    ]) {
+      await expect(blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, resolution: "pinned", ...attempt }))
+        .rejects.toMatchObject({ blockCode: "BLOCK_USAGE_NOT_FOUND" });
+    }
+
+    // The same guard the bulk toggle applies: with no active version there is
+    // nothing to freeze at, and nothing for a following page to resolve.
+    await db.update(buildingBlocks).set({ currentVersionId: null }).where(eq(buildingBlocks.id, navbar.id));
+    await expect(blocks.setUsageResolution(owner.id, { projectId: project.id, blockId: navbar.id, pageId: home.id, usageKey: "site-navbar", resolution: "pinned" }))
+      .rejects.toMatchObject({ blockCode: "BLOCK_GLOBAL_CONVERSION_FAILED" });
+  });
+
   it("archives unused blocks and refuses to archive a block an active page still uses", async () => {
     const { owner, project, home } = await setup();
     const blocks = new BuildingBlockService();
@@ -331,6 +431,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
       () => blocks.duplicate(stranger.id, { projectId: project.id, blockId: navbar.id }),
       () => blocks.archive(stranger.id, { projectId: project.id, blockId: navbar.id }),
       () => blocks.listUsages(stranger.id, project.id, navbar.id),
+      () => blocks.setUsageResolution(stranger.id, { projectId: project.id, blockId: navbar.id, pageId: randomUUID(), usageKey: "site-navbar", resolution: "pinned" }),
       () => new GenerationJobService().getBlockState(stranger.id, project.id, navbar.id),
       () => new GenerationJobService().createBlockJob(stranger.id, { projectId: project.id, blockId: navbar.id, content: "Hijack", selectedMediaIds: [] }),
     ]) await expect(attempt()).rejects.toThrow(/do not have access/);

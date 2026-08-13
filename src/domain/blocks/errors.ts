@@ -4,7 +4,8 @@ export type BlockErrorCode =
   | "BLOCK_NOT_FOUND" | "BLOCK_DELETED" | "BLOCK_IN_USE" | "BLOCK_GENERATION_ACTIVE"
   | "BLOCK_STALE" | "BLOCK_VALIDATION_FAILED" | "BLOCK_COMPILE_FAILED" | "BLOCK_MEDIA_INVALID"
   | "BLOCK_REFERENCE_INVALID" | "BLOCK_CROSS_PROJECT_REFERENCE" | "BLOCK_LEASE_CONFLICT"
-  | "BLOCK_CANCELLED" | "BLOCK_GLOBAL_CONVERSION_FAILED" | "BLOCK_NOT_GENERATED";
+  | "BLOCK_CANCELLED" | "BLOCK_GLOBAL_CONVERSION_FAILED" | "BLOCK_NOT_GENERATED"
+  | "BLOCK_USAGE_NOT_FOUND";
 
 /**
  * Normalized, user-safe Building Block failures. `code` keeps the existing transport
@@ -25,3 +26,4 @@ export const blockGenerationActive = () => new BlockError("BLOCK_GENERATION_ACTI
 export const blockReferenceInvalid = () => new BlockError("BLOCK_REFERENCE_INVALID", "VALIDATION", "This page references a Building Block that is not available.");
 export const blockNotGenerated = () => new BlockError("BLOCK_NOT_GENERATED", "CONFLICT", "Create this Building Block with Canvas before using it.");
 export const blockGlobalConversionFailed = (message: string) => new BlockError("BLOCK_GLOBAL_CONVERSION_FAILED", "CONFLICT", message);
+export const blockUsageNotFound = () => new BlockError("BLOCK_USAGE_NOT_FOUND", "NOT_FOUND", "This page no longer uses that section.");

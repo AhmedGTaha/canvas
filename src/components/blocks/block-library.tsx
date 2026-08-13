@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Blocks, Check, CircleAlert, Copy, Globe, LoaderCircle, Moon, MousePointerClick, Plus, RefreshCw, Search, Send, Sparkles, Sun, Trash2, X } from "lucide-react";
+import { Blocks, Check, CircleAlert, Copy, Globe, Link2, LoaderCircle, Moon, MousePointerClick, Plus, RefreshCw, Search, Send, Sparkles, Sun, Trash2, Unlink, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/form-controls";
@@ -239,6 +239,11 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
         <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Building Block"} preview`} /> : <div className="preview-loading"><Blocks size={20} />Select or create a Building Block.</div>}</div>
       </div>
       {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy} history={history}
+        onUsageResolution={(usage, resolution) => void action(async () => {
+          await request(`/api/projects/${projectId}/blocks/${selected.id}/usages/${encodeURIComponent(usage.usageKey)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pageId: usage.pageId, resolution }) });
+          await loadBlockDetail(selected.id);
+          await refreshPreview();
+        })}
         onRename={(name, kind) => void action(async () => { await request(`/api/projects/${projectId}/blocks/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, kind }) }); await reloadBlocks(); await refreshPreview(); })}
         onToggleGlobal={() => void action(async () => { await request(`/api/projects/${projectId}/blocks/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isGlobal: !selected.isGlobal }) }); await reloadBlocks(); await refreshPreview(); })}
         onDuplicate={() => void action(async () => { const copy = await request<BlockSummary>(`/api/projects/${projectId}/blocks/${selected.id}/duplicate`, { method: "POST" }); await reloadBlocks(); await refreshPreview(); return copy; }, (copy) => setSelectedId(copy.id))}
@@ -259,7 +264,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
   </div>;
 }
 
-function BlockDetails({ block, usages, busy, history, onRename, onToggleGlobal, onDuplicate, onArchive }: { block: BlockSummary; usages: BlockUsage[]; busy: boolean; history: HistoryController; onRename: (name: string, kind: string) => void; onToggleGlobal: () => void; onDuplicate: () => void; onArchive: () => void }) {
+function BlockDetails({ block, usages, busy, history, onRename, onToggleGlobal, onDuplicate, onArchive, onUsageResolution }: { block: BlockSummary; usages: BlockUsage[]; busy: boolean; history: HistoryController; onRename: (name: string, kind: string) => void; onToggleGlobal: () => void; onDuplicate: () => void; onArchive: () => void; onUsageResolution: (usage: BlockUsage, resolution: "pinned" | "global") => void }) {
   const [name, setName] = useState(block.name);
   const [kind, setKind] = useState(block.kind);
   const [showVersions, setShowVersions] = useState(false);
@@ -279,7 +284,18 @@ function BlockDetails({ block, usages, busy, history, onRename, onToggleGlobal, 
     </div>
     <div className="blocks-usage">
       <h3>Used on</h3>
-      {usages.length === 0 ? <p className="inline-empty">Not used on any page yet.</p> : <ul>{usages.map((usage) => <li key={`${usage.pageId}:${usage.usageKey}`}><span>{usage.pageName}</span><small>{usage.route ?? "—"}</small><em>{usage.resolution === "global" ? "Always current" : "Fixed version"}</em></li>)}</ul>}
+      {usages.length === 0 ? <p className="inline-empty">Not used on any page yet.</p> : <ul>{usages.map((usage) => <li key={`${usage.pageId}:${usage.usageKey}`}>
+        <span>{usage.pageName}</span>
+        <small>{usage.route ?? "—"}</small>
+        <em>{usage.resolution === "global" ? "Always current" : "Fixed version"}</em>
+        {/* Per page, not per block: freezing one page's copy leaves every other
+            page following the shared section. */}
+        <Button type="button" variant="ghost" className="button-sm" disabled={busy}
+          title={usage.resolution === "global" ? `Freeze ${usage.pageName} at the current version` : `Let ${usage.pageName} follow the shared section again`}
+          onClick={() => onUsageResolution(usage, usage.resolution === "global" ? "pinned" : "global")}>
+          {usage.resolution === "global" ? <><Unlink size={13} />Detach</> : <><Link2 size={13} />Reattach</>}
+        </Button>
+      </li>)}</ul>}
     </div>
     <details className="blocks-versions" open={showVersions} onToggle={(event) => setShowVersions(event.currentTarget.open)}>
       <summary>Earlier versions</summary>
