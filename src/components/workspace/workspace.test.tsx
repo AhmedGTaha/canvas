@@ -175,6 +175,16 @@ describe("workspace responsive strategy", () => {
     expect(phone).toMatch(/\.ws-panel-wide, \.ws-panel-drawer \{[\s\S]{0,220}left: 8px/);
   });
 
+  it("sizes panels from their insets so the body can scroll", () => {
+    const panel = css.slice(css.indexOf(".ws-panel {"), css.indexOf(".ws-panel::backdrop"));
+    // A <dialog> is width/height: fit-content per the UA stylesheet, which would
+    // let a tall panel grow past the viewport and leave nothing scrollable.
+    expect(panel).toMatch(/width: auto;/);
+    expect(panel).toMatch(/height: auto;/);
+    // A flex child needs min-height: 0 before overflow can shrink it.
+    expect(css).toMatch(/\.ws-panel-bd \{[^}]*min-height: 0[^}]*overflow: auto/);
+  });
+
   it("honours reduced motion", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).toMatch(/\.ws-panel, \.ws-panel::backdrop \{ animation: none; \}/);

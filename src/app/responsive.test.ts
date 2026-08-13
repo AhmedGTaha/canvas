@@ -31,6 +31,13 @@ describe("responsive layout", () => {
     expect(mobile).toContain(".export-intro, .export-row { align-items: stretch; flex-direction: column; }");
   });
 
+  it("lets a tall dialog scroll instead of running off the viewport", () => {
+    // <dialog> is sized by its content, so without a cap the bottom of a long
+    // form (page settings, history, the media picker) becomes unreachable.
+    expect(css).toMatch(/\.dialog \{[^}]*max-height: calc\(100vh - 48px\)/);
+    expect(css).toMatch(/\.dialog-panel \{[^}]*max-height: calc\(100vh - 48px\)[^}]*overflow-y: auto/);
+  });
+
   it("keeps dialogs and panels inside the viewport on phones", () => {
     for (const rule of [/\.dialog \{[^}]*width: min\(480px, calc\(100vw - 32px\)\)/, /\.history-panel \{[^}]*width: min\(560px, calc\(100vw - 32px\)\)/, /\.media-picker-dialog \{[^}]*width: min\(720px, calc\(100vw - 32px\)\)/]) {
       expect(css).toMatch(rule);

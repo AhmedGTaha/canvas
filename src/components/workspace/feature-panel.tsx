@@ -22,8 +22,13 @@ export function FeaturePanel({ title, description, size = "wide", actions, child
 
   useEffect(() => {
     const dialog = ref.current;
-    if (!dialog?.isConnected || dialog.open) return;
-    dialog.showModal();
+    if (!dialog?.isConnected) return;
+    if (!dialog.open) dialog.showModal();
+    // A modal <dialog> that is removed from the DOM while still open is not
+    // guaranteed to release the page from its inert state, which leaves the
+    // whole workspace unclickable. Any unmount that is not a close() — a link
+    // inside the panel navigating, for instance — has to close it explicitly.
+    return () => { if (dialog.open) dialog.close(); };
   }, []);
 
   // Escape and backdrop dismissal both mean "go back to the workspace".

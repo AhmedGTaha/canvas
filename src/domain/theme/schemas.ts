@@ -42,8 +42,10 @@ export function parseStoredThemeSettings(record: StoredThemeSettings) {
 }
 export const brandSettingsSchema = z.object({
   companyName: z.string().trim().min(1, "Enter a company name.").max(120),
-  companyDescription: z.string().trim().max(2000).transform((value) => value || null),
-  brandNotes: z.string().trim().max(4000).transform((value) => value || null),
+  // Empty is stored and returned as null, so the input side has to accept null
+  // too — otherwise reading these settings and saving them straight back fails.
+  companyDescription: z.string().trim().max(2000).nullish().transform((value) => value || null),
+  brandNotes: z.string().trim().max(4000).nullish().transform((value) => value || null),
 }).strict();
 export const updateThemeSchema = z.object({ projectId: projectIdSchema, expectedRevision: z.number().int().positive(), theme: themeSettingsSchema }).strict();
 export const updateBrandSchema = z.object({ projectId: projectIdSchema, expectedRevision: z.number().int().positive(), brand: brandSettingsSchema }).strict();

@@ -21,8 +21,9 @@ export async function mediaAction(input: { projectId: string; intent: string; fo
     else if (input.intent === "move-asset") await service.moveAsset(user.id, { projectId: input.projectId, assetId: input.assetId, folderId: input.folderId ?? null });
     else if (input.intent === "delete-asset") await service.deleteAsset(user.id, { projectId: input.projectId, assetId: input.assetId });
     else return { ok: false, error: "This media action is not supported." };
-    revalidatePath(`/projects/${input.projectId}/media`);
-    revalidatePath(`/projects/${input.projectId}/brand`);
+    revalidatePath(`/projects/${input.projectId}`);
+    revalidatePath(`/projects/${input.projectId}/panel/media`);
+    revalidatePath(`/projects/${input.projectId}/panel/brand`);
     return { ok: true, message: "Changes saved." };
   } catch (error: unknown) {
     return { ok: false, error: error instanceof ZodError ? (error.issues[0]?.message ?? "The media change is invalid.") : userMessage(error, "The media change could not be saved.") };
@@ -33,7 +34,8 @@ export async function setBrandLogoAction(input: { projectId: string; kind: "prim
   try {
     const user = await requireAuthenticatedUser();
     await new MediaService().setBrandLogo(user.id, input);
-    revalidatePath(`/projects/${input.projectId}/brand`);
+    revalidatePath(`/projects/${input.projectId}`);
+    revalidatePath(`/projects/${input.projectId}/panel/brand`);
     return { ok: true, message: "Logo selection saved." };
   } catch (error: unknown) { return { ok: false, error: userMessage(error, "Logo selection could not be saved.") }; }
 }

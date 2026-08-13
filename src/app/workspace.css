@@ -738,6 +738,12 @@
   position: fixed;
   z-index: 31;
   display: flex;
+  /* The UA stylesheet sizes <dialog> as width/height: fit-content, which beats
+     the insets below and lets the panel grow past the viewport — at which point
+     the body has no bounded height and cannot scroll. `auto` hands sizing back
+     to the insets, so the panel is always exactly as tall as its slot. */
+  width: auto;
+  height: auto;
   max-width: none;
   max-height: none;
   flex-direction: column;
@@ -764,7 +770,7 @@
   bottom: 43px;
   left: 16px;
   max-width: 1240px;
-  margin: 0 auto;
+  margin-inline: auto;
 }
 .ws-panel-drawer {
   top: 52px;
@@ -803,7 +809,7 @@
   cursor: pointer;
 }
 .ws-panel-close:hover { background: var(--surface-muted); color: var(--text); }
-.ws-panel-bd { flex: 1; padding: 18px; overflow: auto; }
+.ws-panel-bd { flex: 1; min-height: 0; padding: 18px; overflow: auto; overscroll-behavior: contain; }
 .ws-panel-bd > :last-child { margin-bottom: 0; }
 
 /* Panels reuse the dashboard components, which assume page-width layout.
@@ -943,6 +949,7 @@
     bottom: 8px;
     left: 8px;
     width: auto;
+    height: auto;
     max-width: none;
   }
   .ws-panel-bd { padding: 13px; }

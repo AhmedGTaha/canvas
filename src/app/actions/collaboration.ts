@@ -27,7 +27,8 @@ export async function revokeInviteAction(formData: FormData) {
   const user = await requireAuthenticatedUser();
   const projectId = String(formData.get("projectId") ?? "");
   await new InvitationService().revoke(user.id, { projectId, inviteId: formData.get("inviteId") });
-  revalidatePath(`/projects/${projectId}/collaborators`);
+  revalidatePath(`/projects/${projectId}`);
+    revalidatePath(`/projects/${projectId}/panel/collaborators`);
 }
 
 export async function acceptInviteAction(_state: InviteActionState, formData: FormData): Promise<InviteActionState> {
@@ -47,6 +48,7 @@ export async function removeCollaboratorAction(formData: FormData) {
   const user = await requireAuthenticatedUser();
   const projectId = String(formData.get("projectId") ?? "");
   await new MembershipService().remove(user.id, { projectId, userId: formData.get("userId") });
-  revalidatePath(`/projects/${projectId}/collaborators`);
+  revalidatePath(`/projects/${projectId}`);
+    revalidatePath(`/projects/${projectId}/panel/collaborators`);
   revalidatePath("/dashboard");
 }
