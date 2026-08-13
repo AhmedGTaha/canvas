@@ -129,6 +129,25 @@ describe("Gemini request shaping", () => {
     expect(serialized).not.toContain(API_KEY);
   });
 
+  it("puts project context ahead of the request so the instruction is read last", async () => {
+    generateContent.mockResolvedValue(reply("ok"));
+    await provider().generateText(request({ structuredContext: { project: { name: "Acme" } }, messages: [{ role: "user", parts: [{ type: "text", text: "Build a pricing page" }] }] }));
+    const text = generateContent.mock.calls[0]![0].contents[0].parts[0].text as string;
+    expect(text.indexOf("</canvas_project_context>")).toBeLessThan(text.indexOf("Build a pricing page"));
+    expect(text.trimEnd().endsWith("Build a pricing page")).toBe(true);
+  });
+
+  it("sends an explicit thinking budget only when the request asks for one", async () => {
+    generateContent.mockResolvedValue(reply("ok"));
+    await provider().generateText(request({ reasoningBudget: 6_144 }));
+    expect(generateContent.mock.calls[0]![0].config.thinkingConfig).toEqual({ thinkingBudget: 6_144 });
+
+    generateContent.mockReset();
+    generateContent.mockResolvedValue(reply("ok"));
+    await provider().generateText(request({}));
+    expect(generateContent.mock.calls[0]![0].config.thinkingConfig).toBeUndefined();
+  });
+
   it("maps assistant history to the model role", async () => {
     generateContent.mockResolvedValue(reply("ok"));
     await provider().generateText(request({ messages: [

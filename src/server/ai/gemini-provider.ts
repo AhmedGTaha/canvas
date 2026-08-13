@@ -103,7 +103,9 @@ export class GeminiProvider implements AIProvider {
       const contents = request.messages.map((message, index) => ({
         role: message.role === "assistant" ? "model" as const : "user" as const,
         parts: message.parts.map((part) => part.type === "text"
-          ? { text: index === 0 ? part.text + context : part.text }
+          // Context leads and the request trails it: the instruction the model must act
+          // on is the last thing it reads, never buried in front of a large JSON blob.
+          ? { text: index === 0 ? context + part.text : part.text }
           // Canvas Media is sent inline as bytes: no storage URL or credential leaves Canvas.
           : { inlineData: { mimeType: part.mimeType, data: Buffer.from(part.data).toString("base64") } }),
       }));
@@ -115,6 +117,9 @@ export class GeminiProvider implements AIProvider {
           systemInstruction: request.systemInstructions,
           temperature: request.temperature,
           maxOutputTokens: request.maxOutputTokens,
+          // Thinking tokens are billed against maxOutputTokens, so an explicit budget
+          // keeps a long generation from being truncated by dynamic thinking.
+          thinkingConfig: request.reasoningBudget === undefined ? undefined : { thinkingBudget: request.reasoningBudget },
           responseMimeType: structured ? "application/json" : undefined,
           responseJsonSchema: structured ? request.responseSchema : undefined,
           abortSignal: controller.signal,

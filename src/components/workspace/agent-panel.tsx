@@ -57,6 +57,11 @@ export function AgentPanel({
   onOpenHistory: () => void;
 }) {
   const thread = useRef<HTMLDivElement>(null);
+  // The workspace restores client-only state immediately after mount. Keep the
+  // first browser render aligned with SSR so a restored composer value cannot
+  // make the send button disagree with the server during hydration.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { const timer = window.setTimeout(() => setHydrated(true), 0); return () => window.clearTimeout(timer); }, []);
   const editingBlock = target?.kind === "block";
   const visible = (messages ?? []).filter((message) => message.role !== "system_internal");
 
@@ -69,7 +74,7 @@ export function AgentPanel({
       ? (editingBlock ? "Change the spacing in this shared block…" : "Make the hero shorter and improve the spacing on phones…")
       : "Describe the page you want — for example, a services page with three cards…";
   const sendLabel = selection ? "Update element" : built ? (editingBlock ? "Update block" : "Update page") : "Create page";
-  const canSend = Boolean(target) && Boolean(prompt.trim()) && !loading;
+  const canSend = hydrated && Boolean(target) && Boolean(prompt.trim()) && !loading;
 
   return <>
     <div className="ws-pane-hd">

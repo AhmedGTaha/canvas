@@ -10,8 +10,11 @@ const MAX_RECENT = 8;
 
 export function CommandPalette({ projectId, userId = "current", open, commands, pages, onClose, onPage }: { projectId: string; userId?: string; open: boolean; commands: WorkspaceCommand[]; pages: CommandPage[]; onClose: () => void; onPage: (page: CommandPage) => void }) {
   const dialog = useRef<HTMLDialogElement>(null); const input = useRef<HTMLInputElement>(null); const returnFocus = useRef<HTMLElement | null>(null);
-  const [query, setQuery] = useState(""); const [selected, setSelected] = useState(0); const [recent, setRecent] = useState<Recent[]>([]);
+  const [query, setQuery] = useState(""); const [selected, setSelected] = useState(0); const [recent, setRecent] = useState<Recent[]>([]); const [hydrated, setHydrated] = useState(false);
   const storageKey = `canvas.recent.${userId}.${projectId}`;
+  // Command availability can change as client-only history data loads. Render
+  // controls inert through hydration, then enable the current availability.
+  useEffect(() => { const timer = window.setTimeout(() => setHydrated(true), 0); return () => window.clearTimeout(timer); }, []);
   useEffect(() => { const timer = window.setTimeout(() => { try { setRecent(JSON.parse(localStorage.getItem(storageKey) ?? "[]") as Recent[]); } catch { setRecent([]); } }, 0); return () => clearTimeout(timer); }, [storageKey]);
   useEffect(() => {
     const node = dialog.current;
@@ -48,7 +51,7 @@ export function CommandPalette({ projectId, userId = "current", open, commands, 
       <div className="command-results" role="listbox" aria-label="Results" aria-activedescendant={results[safeSelected] ? `palette-${results[safeSelected].key}` : undefined}>
         {!query && recent.length ? <p className="command-heading">Recent</p> : null}
         {!results.length ? <p className="command-empty">No matching commands or pages in this project.</p> : results.map((result, index) => {
-          const command = result.type === "command" ? result.command : null; const disabled = command ? !command.availability.available : false;
+          const command = result.type === "command" ? result.command : null; const disabled = !hydrated || (command ? !command.availability.available : false);
           return <button type="button" id={`palette-${result.key}`} role="option" aria-selected={index === safeSelected} aria-disabled={disabled} disabled={disabled} className={index === safeSelected ? "selected" : ""} key={result.key} onMouseEnter={() => setSelected(index)} onClick={() => execute(result)}>
             <span className="command-result-main"><strong>{result.type === "page" ? result.page.name : command!.label}</strong><small>{result.type === "page" ? (result.page.routePath || (result.page.type === "folder" ? "Folder" : "Page")) : (command!.availability.reason || command!.description || command!.category)}</small></span>
             <span className="command-result-kind">{result.type === "page" ? result.page.type : command!.category}</span>{command?.shortcut ? <kbd>{command.shortcut}</kbd> : <ArrowRight size={13} aria-hidden="true" />}

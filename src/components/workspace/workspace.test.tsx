@@ -372,6 +372,11 @@ describe("workspace responsive strategy", () => {
     expect(phone).toMatch(/\.ws-panel-wide,\.ws-panel-drawer\{[^}]*top:0[^}]*left:0/);
   });
 
+  it("keeps the agent composer visible when its conversation is long", () => {
+    expect(css).toMatch(/\.ws-pane\s*\{[^}]*min-height:\s*0/);
+    expect(css).toMatch(/\.wsa-thread\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/);
+  });
+
   it("sizes panels from their insets so the body can scroll", () => {
     const panel = css.slice(css.indexOf(".ws-panel {"), css.indexOf(".ws-panel::backdrop"));
     // A <dialog> is width/height: fit-content per the UA stylesheet, which would

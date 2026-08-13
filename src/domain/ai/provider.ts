@@ -24,6 +24,8 @@ export type AIRequest = {
   responseSchema?: unknown;
   temperature?: number;
   maxOutputTokens?: number;
+  /** Provider-side reasoning tokens to allow. Counts against `maxOutputTokens`. */
+  reasoningBudget?: number;
   requestMetadata?: Record<string, string>;
   signal?: AbortSignal;
 };
