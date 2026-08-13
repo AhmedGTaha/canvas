@@ -22,6 +22,7 @@ export const pageNodeType = pgEnum("page_node_type", ["page", "folder"]);
 export const aiMessageRole = pgEnum("ai_message_role", ["user", "assistant", "system_internal"]);
 export const generationTargetType = pgEnum("generation_target_type", ["project", "page", "building_block"]);
 export const generationJobStatus = pgEnum("generation_job_status", ["queued", "preparing_context", "generating", "validating", "applying", "completed", "failed", "cancelled"]);
+export const exportJobStatus = pgEnum("export_job_status", ["queued", "validating", "assembling", "building", "packaging", "completed", "failed"]);
 export const changeSetOperation = pgEnum("change_set_operation", ["page_generate", "page_modify", "block_generate", "block_modify", "block_duplicate", "block_global_toggle", "block_archive", "page_version_restore", "block_version_restore", "checkpoint_restore", "undo", "redo"]);
 export const changeSetEntityType = pgEnum("change_set_entity_type", ["page", "building_block", "project"]);
 export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify", "block_generate", "block_modify"]);
@@ -391,6 +392,28 @@ export const projectCheckpointItems = pgTable("project_checkpoint_items", {
   position: integer("position").notNull(),
 }, (table) => [unique("project_checkpoint_items_position_unique").on(table.checkpointId, table.position), unique("project_checkpoint_items_entity_unique").on(table.checkpointId, table.entityType, table.entityId), index("project_checkpoint_items_checkpoint_idx").on(table.checkpointId, table.position)]);
 
+export const exportJobs = pgTable("export_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  status: exportJobStatus("status").notNull().default("queued"),
+  progressStage: varchar("progress_stage", { length: 80 }).notNull().default("Queued"),
+  validation: jsonb("validation"),
+  errorCode: varchar("error_code", { length: 80 }),
+  errorMessage: varchar("error_message", { length: 500 }),
+  artifactStorageKey: text("artifact_storage_key"),
+  artifactFileName: varchar("artifact_file_name", { length: 160 }),
+  artifactBytes: bigint("artifact_bytes", { mode: "number" }),
+  artifactFileCount: integer("artifact_file_count"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
+  workerId: varchar("worker_id", { length: 120 }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  availableAt: timestamp("available_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
+}, (table) => [unique("export_jobs_id_project_unique").on(table.id, table.projectId), index("export_jobs_project_created_idx").on(table.projectId, table.createdAt)]);
+
 export const aiJobRateLimits = pgTable("ai_job_rate_limits", {
   scope: varchar("scope", { length: 16 }).notNull(),
   subjectId: uuid("subject_id").notNull(),
@@ -418,6 +441,7 @@ export type ChangeSet = typeof changeSets.$inferSelect;
 export type ChangeSetItem = typeof changeSetItems.$inferSelect;
 export type ProjectCheckpoint = typeof projectCheckpoints.$inferSelect;
 export type ProjectCheckpointItem = typeof projectCheckpointItems.$inferSelect;
+export type ExportJob = typeof exportJobs.$inferSelect;
 export type BuildingBlock = typeof buildingBlocks.$inferSelect;
 export type BuildingBlockVersion = typeof buildingBlockVersions.$inferSelect;
 export type BuildingBlockUsage = typeof buildingBlockUsages.$inferSelect;
