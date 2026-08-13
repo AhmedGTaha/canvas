@@ -734,25 +734,6 @@
 .ws-panel-bd .collaboration-layout,
 .ws-panel-bd .account-card { width: 100%; max-width: none; }
 
-/* A panel loaded as its own page (a bookmark or a full reload). */
-.standalone-panel {
-  width: min(1240px, 100%);
-  margin: 0 auto;
-  padding: 26px 24px 56px;
-}
-.standalone-panel-hd {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 22px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-.standalone-panel-hd h1 { margin: 0; font-size: 1.35rem; letter-spacing: -0.025em; }
-.standalone-panel-hd p { margin: 5px 0 0; max-width: 70ch; font-size: var(--fs-md); }
-.standalone-panel-bd .page-header { display: none; }
-
 /* ------------------------------------------------------------- skeleton */
 .ws-skeleton .ws-device,
 .ws-skeleton .ws-skeleton-bar { background: linear-gradient(90deg, var(--hover) 25%, var(--surface-muted) 37%, var(--hover) 63%); background-size: 400% 100%; animation: ws-shimmer 1.4s ease infinite; }

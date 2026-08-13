@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Bot, CircleAlert, FileText, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { signOutAction } from "@/app/actions/auth";
@@ -15,6 +15,7 @@ import { AgentPanel, type AgentMessage, type AgentJob, type AgentTarget, type Ag
 import { ActivityBar } from "./activity-bar";
 import { ContextSidebar } from "./context-sidebar";
 import { Explorer } from "./explorer";
+import { notePanelPushed, panelHref } from "./panel-url";
 import { PreviewStage, type Device } from "./preview-stage";
 import { TitleBar } from "./title-bar";
 import { breakpointFor, DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout, type WorkspaceBreakpoint, type WorkspaceLayout, type WorkspaceActivity } from "./workspace-layout";
@@ -61,7 +62,7 @@ export function WorkspaceShell({
   canManageProject: boolean;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
   const frame = useRef<HTMLIFrameElement>(null);
   const initialRoute = initialPreviewRoute(initialSession.manifest, initialPageId);
@@ -316,14 +317,19 @@ export function WorkspaceShell({
   }
 
   /* -------------------------------------------------------------- panels */
-  const panelIsOpen = pathname.includes("/panel/");
+  // The open tool is a parameter on this same URL, never a route of its own —
+  // see panel-url.ts. Reading it from the URL rather than from local state is
+  // what makes a reload, a bookmark and a menu click indistinguishable.
+  const panelIsOpen = Boolean(searchParams.get("tool"));
   const openPanel = useCallback((name: string, query?: Record<string, string>) => {
-    const params = query ? `?${new URLSearchParams(query)}` : "";
-    const url = `/projects/${projectId}/panel/${name}${params}`;
+    // Built from the live location so the previewed page, and anything else the
+    // workspace has written to the URL, survives opening a tool.
+    const href = panelHref(new URL(window.location.href), name, query);
     // Swapping tools replaces the entry, so Escape/back from any panel returns
     // to the website instead of walking back through the tools you opened.
-    if (panelIsOpen) router.replace(url); else router.push(url);
-  }, [panelIsOpen, projectId, router]);
+    if (panelIsOpen) router.replace(href, { scroll: false });
+    else { notePanelPushed(); router.push(href, { scroll: false }); }
+  }, [panelIsOpen, router]);
 
   const commands = useMemo(() => createWorkspaceCommands({
     canManageProject, hasPage: Boolean(currentPageId), hasSelection: Boolean(selection), activeWork: taskSummary.some((task) => task.status === "active"),

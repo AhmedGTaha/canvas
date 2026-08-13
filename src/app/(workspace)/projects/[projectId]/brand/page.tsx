@@ -6,5 +6,5 @@ import { redirect } from "next/navigation";
  */
 export default async function LegacyRoute({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
-  redirect(`/projects/${projectId}/panel/brand`);
+  redirect(`/projects/${projectId}?tool=brand`);
 }

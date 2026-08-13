@@ -15,7 +15,7 @@ export async function createInviteAction(_state: InviteActionState, formData: Fo
     const user = await requireAuthenticatedUser();
     const result = await new InvitationService().create(user.id, { projectId: formData.get("projectId") });
     const origin = process.env.APP_URL ?? "http://localhost:3000";
-    revalidatePath(`/projects/${result.invite.projectId}/collaborators`);
+    revalidatePath(`/projects/${result.invite.projectId}`);
     return { inviteUrl: `${origin.replace(/\/$/, "")}/invite/${result.token}`, inviteId: result.invite.id, expiresAt: result.invite.expiresAt.toISOString(), success: "Invitation link created." };
   } catch (error: unknown) {
     if (error instanceof ZodError) return { error: error.issues[0]?.message ?? "Invitation could not be created." };
@@ -28,7 +28,6 @@ export async function revokeInviteAction(formData: FormData) {
   const projectId = String(formData.get("projectId") ?? "");
   await new InvitationService().revoke(user.id, { projectId, inviteId: formData.get("inviteId") });
   revalidatePath(`/projects/${projectId}`);
-    revalidatePath(`/projects/${projectId}/panel/collaborators`);
 }
 
 export async function acceptInviteAction(_state: InviteActionState, formData: FormData): Promise<InviteActionState> {
@@ -49,6 +48,5 @@ export async function removeCollaboratorAction(formData: FormData) {
   const projectId = String(formData.get("projectId") ?? "");
   await new MembershipService().remove(user.id, { projectId, userId: formData.get("userId") });
   revalidatePath(`/projects/${projectId}`);
-    revalidatePath(`/projects/${projectId}/panel/collaborators`);
   revalidatePath("/dashboard");
 }

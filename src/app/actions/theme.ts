@@ -22,7 +22,6 @@ export async function saveBrandAction(input: { projectId: string; expectedRevisi
   try {
     const record = await service.update(user.id, input);
     revalidatePath(`/projects/${input.projectId}`);
-    revalidatePath(`/projects/${input.projectId}/panel/brand`);
     return { ok: true, revision: record.revision, value: { companyName: record.companyName, companyDescription: record.companyDescription, brandNotes: record.brandNotes } };
   } catch (error: unknown) {
     if (error instanceof DomainError && error.code === "CONFLICT") {
@@ -39,7 +38,6 @@ export async function saveThemeAction(input: { projectId: string; expectedRevisi
   try {
     const result = await service.update(user.id, input);
     revalidatePath(`/projects/${input.projectId}`);
-    revalidatePath(`/projects/${input.projectId}/panel/brand`);
     return { ok: true, revision: result.revision, value: themeValue(result) };
   } catch (error: unknown) {
     if (error instanceof DomainError && error.code === "CONFLICT") {
@@ -55,7 +53,6 @@ export async function resetThemeAction(input: { projectId: string; expectedRevis
   try {
     const result = await new ThemeService().reset(user.id, input);
     revalidatePath(`/projects/${input.projectId}`);
-    revalidatePath(`/projects/${input.projectId}/panel/brand`);
     return { ok: true, revision: result.revision, value: themeValue(result) };
   } catch (error: unknown) {
     return { ok: false, error: userMessage(error, "Theme could not be reset.") };

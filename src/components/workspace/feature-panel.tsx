@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { closedPanelHref, takePanelPushed } from "./panel-url";
 
 /**
  * Host for a project tool opened from the menu bar.
@@ -31,10 +32,16 @@ export function FeaturePanel({ title, description, size = "wide", actions, child
     return () => { if (dialog.open) dialog.close(); };
   }, []);
 
-  // Escape and backdrop dismissal both mean "go back to the workspace".
+  // Escape and backdrop dismissal both mean "go back to the workspace", which
+  // is this same URL without the tool parameters. Stepping back is preferred
+  // when the workspace put the open tool in history, so the browser's own back
+  // button and this button agree; a tool opened by a bookmark or a reload has
+  // no such entry, and replacing the URL is what keeps the user in the project
+  // instead of sending them to whatever preceded it.
   function close() {
     ref.current?.close();
-    router.back();
+    if (takePanelPushed()) { router.back(); return; }
+    router.replace(closedPanelHref(new URL(window.location.href)), { scroll: false });
   }
 
   return <dialog

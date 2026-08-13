@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MonitorOff } from "lucide-react";
+import { FeaturePanel } from "@/components/workspace/feature-panel";
+import { isPanelName } from "@/components/workspace/panel-names";
+import { resolvePanel } from "@/components/workspace/project-panel";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 import { MediaService } from "@/domain/media/service";
 import { PageTreeService } from "@/domain/pages/service";
@@ -21,10 +24,15 @@ export async function generateMetadata({ params }: { params: Promise<{ projectId
 
 /**
  * Opening a project lands here: the unified workspace, not an overview screen.
+ *
+ * Whichever project tool is open arrives as `?tool=`, resolved and rendered
+ * here on top of the workspace. There is deliberately no separate route for an
+ * open tool, so a reload, a bookmark, or a refresh triggered from inside a
+ * panel all take this same path and all still show the website underneath.
  */
-export default async function ProjectWorkspacePage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ page?: string }> }) {
+export default async function ProjectWorkspacePage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ page?: string; tool?: string; node?: string }> }) {
   const { projectId } = await params;
-  const { page } = await searchParams;
+  const { page, tool, node } = await searchParams;
   const user = await requireAuthenticatedUser();
 
   let access;
@@ -66,19 +74,26 @@ export default async function ProjectWorkspacePage({ params, searchParams }: { p
     </div>;
   }
 
-  return <WorkspaceShell
-    projectId={access.project.id}
-    workspaceName={access.workspace.name}
-    projectName={access.project.name}
-    projectStatus={access.project.status}
-    userId={user.id}
-    userName={user.displayName}
-    canManageProject={access.role === "owner"}
-    initialSession={session}
-    initialPageId={page}
-    initialInstanceId={randomUUID()}
-    nodes={nodes}
-    mediaAssets={media.assets}
-    mediaFolders={media.folders}
-  />;
+  // An unrecognised tool name is ignored rather than treated as a missing page:
+  // a stale link should still open the website, not a 404.
+  const view = tool && isPanelName(tool) ? await resolvePanel(projectId, tool, { nodeId: node }) : null;
+
+  return <>
+    <WorkspaceShell
+      projectId={access.project.id}
+      workspaceName={access.workspace.name}
+      projectName={access.project.name}
+      projectStatus={access.project.status}
+      userId={user.id}
+      userName={user.displayName}
+      canManageProject={access.role === "owner"}
+      initialSession={session}
+      initialPageId={page}
+      initialInstanceId={randomUUID()}
+      nodes={nodes}
+      mediaAssets={media.assets}
+      mediaFolders={media.folders}
+    />
+    {view ? <FeaturePanel key={tool} title={view.title} description={view.description} size={view.size} actions={view.actions}>{view.body}</FeaturePanel> : null}
+  </>;
 }

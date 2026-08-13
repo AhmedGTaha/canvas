@@ -28,7 +28,6 @@ export async function pageTreeAction(_state: TreeActionState, formData: FormData
     else return { error: "This page action is not supported." };
     // The tree drives the workspace explorer, the Pages panel and the preview.
     revalidatePath(`/projects/${projectId}`);
-    revalidatePath(`/projects/${projectId}/panel/pages`);
     return { success: "Changes saved.", createdNodeId };
   } catch (error: unknown) {
     if (error instanceof ZodError) return { error: error.issues[0]?.message ?? "Changes could not be saved." };

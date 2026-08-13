@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarDays, ShieldCheck, Sparkles, UserRound, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
@@ -15,6 +14,8 @@ import { RenameProjectDialog } from "@/components/projects/project-forms";
 import { ThemeEditor } from "@/components/theme/theme-editor";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { PanelLink } from "@/components/workspace/panel-link";
+import { type PanelName } from "@/components/workspace/panel-names";
 import { ProjectInstructionService } from "@/domain/ai/instruction-service";
 import { BuildingBlockService } from "@/domain/blocks/service";
 import { InvitationService } from "@/domain/collaboration/invitation-service";
@@ -28,21 +29,13 @@ import { previewUnavailableMessage } from "@/generated-runtime/preview/errors";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { WORKSPACE_SHORTCUTS } from "@/domain/commands/registry";
 
-/** Every project tool reachable from the workspace menu bar. */
-export const PANEL_NAMES = ["overview", "pages", "media", "blocks", "brand", "export", "collaborators", "settings", "shortcuts"] as const;
-export type PanelName = (typeof PANEL_NAMES)[number];
-
-export function isPanelName(value: string): value is PanelName {
-  return (PANEL_NAMES as readonly string[]).includes(value);
-}
-
 export type PanelView = { title: string; description?: string; size: "wide" | "drawer"; actions?: ReactNode; body: ReactNode };
 
 /**
  * Resolves a panel name to its heading and content, fetching only that panel's
- * data. The same resolver serves the overlay (soft navigation from the menu
- * bar) and the standalone page (a bookmarked deep link), so the two can never
- * drift apart.
+ * data. It is called from the project page for whatever `?tool=` names, so a
+ * tool opened from the menu bar, from a bookmark, or after a reload is always
+ * the same render over the same workspace.
  */
 export async function resolvePanel(projectId: string, name: PanelName, options: { nodeId?: string } = {}): Promise<PanelView> {
   const user = await requireAuthenticatedUser();
@@ -67,7 +60,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
           <div><dt><UsersRound size={15} />Your role</dt><dd style={{ textTransform: "capitalize" }}>{role}</dd></div>
           <div><dt><CalendarDays size={15} />Created</dt><dd>{project.createdAt.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}</dd></div>
         </dl>
-      </Card><nav className="settings-destinations" aria-label="Project settings sections"><Link href={`/projects/${project.id}/panel/settings`}><Sparkles size={16} /><span><strong>Agent guidance</strong><small>Instructions Canvas follows for this website</small></span></Link><Link href={`/projects/${project.id}/panel/collaborators`}><UsersRound size={16} /><span><strong>Collaborators</strong><small>People who can work on this project</small></span></Link><Link href={`/projects/${project.id}/panel/export`}><ShieldCheck size={16} /><span><strong>Export website</strong><small>Validate and download the frontend project</small></span></Link></nav></div>,
+      </Card><nav className="settings-destinations" aria-label="Project settings sections"><PanelLink tool="settings"><Sparkles size={16} /><span><strong>Agent guidance</strong><small>Instructions Canvas follows for this website</small></span></PanelLink><PanelLink tool="collaborators"><UsersRound size={16} /><span><strong>Collaborators</strong><small>People who can work on this project</small></span></PanelLink><PanelLink tool="export"><ShieldCheck size={16} /><span><strong>Export website</strong><small>Validate and download the frontend project</small></span></PanelLink></nav></div>,
     };
   }
 
@@ -207,23 +200,5 @@ function Shortcuts() {
       <div><span>Move between menus</span><kbd>← →</kbd></div>
       <div><span>Move through items</span><kbd>↑ ↓</kbd></div>
     </section>
-  </div>;
-}
-
-/** Standalone rendering for a bookmarked panel URL, where there is no workspace
- *  underneath to overlay onto. */
-export function StandalonePanel({ projectId, view }: { projectId: string; view: PanelView }) {
-  return <div className="standalone-panel">
-    <header className="standalone-panel-hd">
-      <div>
-        <h1>{view.title}</h1>
-        {view.description ? <p>{view.description}</p> : null}
-      </div>
-      <div className="ws-panel-hd-acts">
-        {view.actions}
-        <Link href={`/projects/${projectId}`} className="button button-secondary">Back to the website</Link>
-      </div>
-    </header>
-    <div className="standalone-panel-bd">{view.body}</div>
   </div>;
 }

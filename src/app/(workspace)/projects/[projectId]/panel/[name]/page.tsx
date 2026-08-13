@@ -1,20 +1,15 @@
-import { notFound } from "next/navigation";
-import { StandalonePanel, isPanelName, resolvePanel } from "@/components/workspace/project-panel";
-
-export async function generateMetadata({ params }: { params: Promise<{ name: string }> }) {
-  const { name } = await params;
-  return { title: name.charAt(0).toUpperCase() + name.slice(1) };
-}
+import { redirect } from "next/navigation";
+import { isPanelName } from "@/components/workspace/panel-names";
 
 /**
- * The same tool loaded directly — a bookmark, a shared link, or a full page
- * reload. There is no workspace behind it to overlay, so it renders as its own
- * screen with a way back.
+ * Project tools used to be routes of their own. They are now a parameter on the
+ * project URL, so this path exists only to carry old bookmarks and shared links
+ * across — it renders nothing itself.
  */
-export default async function PanelPage({ params, searchParams }: { params: Promise<{ projectId: string; name: string }>; searchParams: Promise<{ node?: string }> }) {
+export default async function LegacyPanelRoute({ params, searchParams }: { params: Promise<{ projectId: string; name: string }>; searchParams: Promise<{ node?: string }> }) {
   const { projectId, name } = await params;
-  if (!isPanelName(name)) notFound();
+  if (!isPanelName(name)) redirect(`/projects/${projectId}`);
   const { node } = await searchParams;
-  const view = await resolvePanel(projectId, name, { nodeId: node });
-  return <StandalonePanel projectId={projectId} view={view} />;
+  const query = new URLSearchParams({ tool: name, ...(node ? { node } : {}) });
+  redirect(`/projects/${projectId}?${query}`);
 }

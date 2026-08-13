@@ -300,7 +300,7 @@ select.input:disabled { cursor: not-allowed; }
 .standalone-state { width: min(680px, calc(100% - 32px)); margin: 80px auto; }
 .brand-page-stack { display: grid; gap: 16px; }
 .brand-logo-card { max-width: 100%; }
-.brand-logo-card .settings-title a { color: var(--text); font-size: .78rem; font-weight: 650; }
+.brand-logo-card .settings-title a, .brand-logo-card .settings-title .link-button { color: var(--text); font-size: .78rem; font-weight: 650; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
 .logo-picker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .logo-select { min-width: 0; display: grid; gap: 8px; }
 .logo-preview { position: relative; min-height: 120px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-muted); color: var(--muted); font-size: .78rem; }

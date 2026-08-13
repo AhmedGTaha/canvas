@@ -1,15 +1,25 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // The explorer calls a server action and Next's router; neither exists in jsdom.
 type TreeResult = { error?: string; success?: string; createdNodeId?: string };
 const pageTreeAction = vi.fn((...args: [TreeResult, FormData]): Promise<TreeResult> => { void args; return Promise.resolve({ success: "Changes saved.", createdNodeId: "new-page" }); });
+const push = vi.fn();
+const replace = vi.fn();
+const back = vi.fn();
+const refresh = vi.fn();
+const redirect = vi.fn((href: string) => { throw new Error(`REDIRECT:${href}`); });
 vi.mock("@/app/actions/pages", () => ({ pageTreeAction }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), back: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("@/app/actions/media", () => ({ mediaAction: vi.fn(() => Promise.resolve({ ok: true, message: "Changes saved." })) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, replace, back, refresh }), redirect }));
 
 const { Explorer } = await import("./explorer");
+const { FeaturePanel } = await import("./feature-panel");
+const { MediaManager } = await import("@/components/media/media-manager");
+const { closedPanelHref, notePanelPushed, panelHref, resetPanelHistory, takePanelPushed } = await import("./panel-url");
 
 afterEach(() => { cleanup(); pageTreeAction.mockClear(); });
 
@@ -161,6 +171,96 @@ describe("website explorer", () => {
   it("offers a way forward when the website has no pages", () => {
     renderExplorer({ nodes: [], currentPageId: null, routes: {} });
     expect(screen.getByRole("button", { name: /Create your first page/ })).toBeDefined();
+  });
+});
+
+/*
+ * Project tools are a parameter on the project URL, never a route of their own.
+ * That is the whole fix for landing on a bare tool screen after an upload: with
+ * no second route, no navigation has anywhere else to go.
+ */
+describe("project tool panels", () => {
+  const projectRoute = "src/app/(workspace)/projects/[projectId]";
+
+  beforeEach(() => {
+    for (const spy of [push, replace, back, refresh, redirect]) spy.mockClear();
+    resetPanelHistory();
+    window.history.replaceState({}, "", "/projects/p");
+    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) { this.open = true; };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) { this.open = false; };
+  });
+
+  it("keeps every unrelated parameter when a tool opens, and drops only the tool when it closes", () => {
+    const url = new URL("https://canvas.test/projects/p?page=home");
+    expect(panelHref(url, "media")).toBe("/projects/p?page=home&tool=media");
+    expect(panelHref(url, "pages", { node: "svc" })).toBe("/projects/p?page=home&tool=pages&node=svc");
+    // Switching away from a node-scoped tool must not carry the node with it.
+    expect(panelHref(new URL("https://canvas.test/projects/p?tool=pages&node=svc"), "media")).toBe("/projects/p?tool=media");
+    expect(closedPanelHref(new URL("https://canvas.test/projects/p?page=home&tool=pages&node=svc"))).toBe("/projects/p?page=home");
+  });
+
+  it("only steps back for tools the workspace itself pushed", () => {
+    expect(takePanelPushed()).toBe(false);
+    notePanelPushed();
+    expect(takePanelPushed()).toBe(true);
+    expect(takePanelPushed()).toBe(false);
+  });
+
+  it("leaves no route that renders a project tool without the workspace behind it", () => {
+    // The parallel slot and its intercepted twin were the second route that
+    // hard navigations fell back to.
+    expect(existsSync(join(projectRoute, "@panel"))).toBe(false);
+
+    const routes = readdirSync(projectRoute, { recursive: true, encoding: "utf8" }).filter((entry) => entry.endsWith("page.tsx"));
+    const resolvers = routes.filter((entry) => readFileSync(join(projectRoute, entry), "utf8").includes("resolvePanel"));
+    expect(resolvers).toEqual(["page.tsx"]);
+
+    const projectPage = readFileSync(join(projectRoute, "page.tsx"), "utf8");
+    expect(projectPage).toContain("<WorkspaceShell");
+    expect(projectPage).toContain("<FeaturePanel");
+    // Every other route under a project forwards onto that one page.
+    for (const entry of routes.filter((route) => route !== "page.tsx")) {
+      const source = readFileSync(join(projectRoute, entry), "utf8");
+      expect(source, `${entry} should only redirect`).toContain("redirect(`/projects/");
+      expect(source, `${entry} should render nothing of its own`).not.toMatch(/return </);
+    }
+  });
+
+  it("forwards old panel bookmarks onto the workspace URL", async () => {
+    const { default: legacyPanel } = await import("@/app/(workspace)/projects/[projectId]/panel/[name]/page");
+    const { default: legacyMedia } = await import("@/app/(workspace)/projects/[projectId]/media/page");
+
+    const target = async (run: Promise<unknown>) => { try { await run; } catch (error) { return (error as Error).message.replace("REDIRECT:", ""); } throw new Error("expected a redirect"); };
+    expect(await target(legacyPanel({ params: Promise.resolve({ projectId: "p", name: "media" }), searchParams: Promise.resolve({}) })))
+      .toBe("/projects/p?tool=media");
+    expect(await target(legacyPanel({ params: Promise.resolve({ projectId: "p", name: "pages" }), searchParams: Promise.resolve({ node: "svc" }) })))
+      .toBe("/projects/p?tool=pages&node=svc");
+    // A tool name that no longer exists opens the website rather than 404ing.
+    expect(await target(legacyPanel({ params: Promise.resolve({ projectId: "p", name: "nonsense" }), searchParams: Promise.resolve({}) })))
+      .toBe("/projects/p");
+    expect(await target(legacyMedia({ params: Promise.resolve({ projectId: "p" }) }))).toBe("/projects/p?tool=media");
+  });
+
+  it("keeps the website visible and navigates nowhere while images upload", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) })));
+    render(<>
+      <div data-testid="workspace">Website preview</div>
+      <FeaturePanel title="Images"><MediaManager projectId="p" initialFolders={[]} initialAssets={[]} /></FeaturePanel>
+    </>);
+
+    const field = document.querySelector<HTMLInputElement>("input[type=file]")!;
+    Object.defineProperty(field, "files", { value: [new File(["binary"], "logo.png", { type: "image/png" })] });
+    await act(async () => { fireEvent.change(field); });
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // The upload refreshes the data behind the panel. It must not move the app:
+    // the website is still mounted, the tool is still an overlay on top of it,
+    // and nothing navigated to a screen of its own.
+    expect(screen.getByTestId("workspace")).toBeDefined();
+    expect(document.querySelector("dialog")!.open).toBe(true);
+    expect(screen.getByText("logo.png: done")).toBeDefined();
+    for (const spy of [push, replace, back]) expect(spy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
 

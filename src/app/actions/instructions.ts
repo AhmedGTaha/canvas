@@ -14,7 +14,6 @@ export async function saveProjectInstructionsAction(input: { projectId: string; 
   try {
     const result = await service.update(user.id, input);
     revalidatePath(`/projects/${input.projectId}`);
-    revalidatePath(`/projects/${input.projectId}/panel/settings`);
     return { ok: true, revision: result.revisionNumber, content: result.content };
   } catch (error) {
     if (error instanceof DomainError && error.code === "CONFLICT") {
