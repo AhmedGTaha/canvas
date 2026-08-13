@@ -14,7 +14,7 @@ export const parentPreviewMessageSchema = z.discriminatedUnion("type", [
 export const previewParentMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("CANVAS_PREVIEW_READY"), sessionId: z.string(), instanceId: z.uuid(), route: z.string().startsWith("/") }).strict(),
   z.object({ type: z.literal("CANVAS_ROUTE_CHANGED"), sessionId: z.string(), instanceId: z.uuid(), route: z.string().startsWith("/"), pageId: z.uuid().nullable() }).strict(),
-  z.object({ type: z.literal("CANVAS_PREVIEW_ERROR"), sessionId: z.string(), instanceId: z.uuid(), code: z.string(), route: z.string().startsWith("/"), pageId: z.uuid().nullable(), message: z.string().max(200) }).strict(),
+  z.object({ type: z.literal("CANVAS_PREVIEW_ERROR"), sessionId: z.string(), instanceId: z.uuid(), code: z.string().max(40), route: z.string().startsWith("/"), pageId: z.uuid().nullable(), message: z.string().max(200), detail: z.string().max(200).optional() }).strict(),
   // Selection metadata is a controlled, minimal shape: no DOM, markup, or source escapes
   // the sandbox, and the parent still re-resolves the target server-side.
   z.object({

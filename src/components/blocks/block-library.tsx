@@ -39,7 +39,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return value;
 }
 
-export function BlockLibrary({ projectId, initialBlocks, initialSession, initialInstanceId, mediaAssets, mediaFolders }: { projectId: string; initialBlocks: BlockSummary[]; initialSession: PreviewSession | null; initialInstanceId: string; mediaAssets: MediaAsset[]; mediaFolders: MediaFolder[] }) {
+export function BlockLibrary({ projectId, initialBlocks, initialSession, initialPreviewError, initialInstanceId, mediaAssets, mediaFolders }: { projectId: string; initialBlocks: BlockSummary[]; initialSession: PreviewSession | null; initialPreviewError?: string; initialInstanceId: string; mediaAssets: MediaAsset[]; mediaFolders: MediaFolder[] }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const createDialog = useRef<HTMLDialogElement>(null);
   const [blocks, setBlocks] = useState(initialBlocks);
@@ -48,7 +48,8 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
   const [selectedId, setSelectedId] = useState<string | null>(initialBlocks[0]?.id ?? null);
   const [search, setSearch] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [previewStatus, setPreviewStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [previewStatus, setPreviewStatus] = useState<"loading" | "ready" | "error">(initialPreviewError ? "error" : "loading");
+  const [previewError, setPreviewError] = useState<string | undefined>(initialPreviewError);
   const [libraryError, setLibraryError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [usages, setUsages] = useState<BlockUsage[]>([]);
@@ -76,12 +77,12 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
       const message = parsePreviewParentMessage(event.data, event.origin, event.source === frame.current?.contentWindow, session.manifest.previewSessionId, instanceId);
       if (!message) return;
       if (message.type === "CANVAS_PREVIEW_READY") {
-        setPreviewStatus("ready");
+        setPreviewStatus("ready"); setPreviewError(undefined);
         post({ type: "CANVAS_SET_SELECT_MODE", enabled: selectMode }, session.manifest.previewSessionId, instanceId);
         const restore = pendingSelection.current;
         if (restore) post({ type: "CANVAS_SELECT_ELEMENT", canvasId: restore.canvasId, blockId: restore.blockId }, session.manifest.previewSessionId, instanceId);
       }
-      else if (message.type === "CANVAS_PREVIEW_ERROR") setPreviewStatus("error");
+      else if (message.type === "CANVAS_PREVIEW_ERROR") { setPreviewStatus("error"); setPreviewError(message.detail ? `${message.message} (${message.detail})` : message.message); }
       else if (message.type === "CANVAS_ELEMENT_SELECTED") { const { type, sessionId, instanceId: _instance, ...value } = message; void type; void sessionId; void _instance; pendingSelection.current = value; setSelection(value); }
       else if (message.type === "CANVAS_ELEMENT_CLEARED") { pendingSelection.current = null; setSelection(null); }
     };
@@ -98,11 +99,15 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
   }, [projectId]);
 
   const refreshPreview = useCallback(async () => {
-    setPreviewStatus("loading");
+    setPreviewStatus("loading"); setPreviewError(undefined);
     try {
       const value = await request<PreviewSession>(`/api/projects/${projectId}/preview-session`, { method: "POST" });
       setSession(value); setInstanceId(crypto.randomUUID());
-    } catch { setPreviewStatus("error"); }
+    } catch (cause) {
+      // The reason reaches the user rather than collapsing into "Preview error".
+      setPreviewStatus("error");
+      setPreviewError(cause instanceof Error ? cause.message : "Preview could not be prepared.");
+    }
   }, [projectId]);
 
   const loadBlockDetail = useCallback(async (blockId: string) => {
@@ -224,6 +229,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
       </div>
       <div className="preview-status" role="status">{!selected ? <>Nothing selected</> : previewStatus === "loading" ? <><LoaderCircle className="spin" size={13} />Loading preview</> : previewStatus === "error" ? <><span className="status-error-dot" />Preview error</> : <><Check size={13} />Preview ready</>}</div>
       <div className="preview-canvas">
+        {previewStatus === "error" ? <div className="preview-error" role="alert"><h2>Preview could not be loaded.</h2><p>{previewError ?? "Return to Canvas and refresh the preview."}</p><Button type="button" onClick={() => void refreshPreview()}>Try again</Button></div> : null}
         <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Building Block"} preview`} /> : <div className="preview-loading"><Blocks size={20} />Select or create a Building Block.</div>}</div>
       </div>
       {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy}

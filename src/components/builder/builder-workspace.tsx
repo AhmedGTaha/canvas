@@ -61,7 +61,7 @@ export function BuilderWorkspace({ projectId, initialSession, initialPageId, ini
         const restore = pendingSelection.current;
         if (restore) post({ type: "CANVAS_SELECT_ELEMENT", canvasId: restore.canvasId, blockId: restore.blockId }, session.manifest.previewSessionId, instanceId);
       }
-      else if (message.type === "CANVAS_PREVIEW_ERROR") { setStatus("error"); setError(message.message); }
+      else if (message.type === "CANVAS_PREVIEW_ERROR") { setStatus("error"); setError(message.detail ? `${message.message} (${message.detail})` : message.message); }
       else if (message.type === "CANVAS_ELEMENT_SELECTED") { const { type, sessionId, instanceId: _instance, ...value } = message; void type; void sessionId; void _instance; pendingSelection.current = value; setSelection(value); }
       else if (message.type === "CANVAS_ELEMENT_CLEARED") { pendingSelection.current = null; setSelection(null); }
       else if (message.type === "CANVAS_ROUTE_CHANGED") {

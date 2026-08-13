@@ -35,6 +35,14 @@ export const observe = {
     metrics.count("preview.compile_failure");
     emit("preview.compile_failed", fields, "error");
   },
+  previewSessionFailed(fields: { projectId?: string; code: string; reason?: string }) {
+    metrics.count("preview.session_failure", { code: fields.code });
+    emit("preview.session_failed", fields, "error");
+  },
+  previewRuntimeFailed(fields: { projectId?: string; pageId?: string | null; blockId?: string | null; route?: string; reason?: string }) {
+    metrics.count("preview.runtime_failure");
+    emit("preview.runtime_failed", fields, "error");
+  },
   historyAction(action: "undo" | "redo" | "page_restore" | "block_restore" | "checkpoint_created" | "checkpoint_restored" | "conflict", fields: { projectId: string; changeSetId?: string; entityId?: string; reason?: string }) {
     metrics.count("history.action", { action });
     emit(`history.${action}`, fields, action === "conflict" ? "warn" : "info");

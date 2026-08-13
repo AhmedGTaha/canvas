@@ -4,6 +4,7 @@ import { pageNodes, pageVersions } from "@/server/db/schema";
 import { compileGeneratedPage } from "@/domain/page-generation/validator";
 import { resolvePageBlockModules } from "@/domain/blocks/usages";
 import { observe } from "@/server/observability/events";
+import { previewCompileFailed } from "./errors";
 
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 50;
@@ -22,9 +23,10 @@ export class GeneratedPageContentProvider {
       try {
         bundle = await compileGeneratedPage(row.version.sourceCode, modules.map(({ blockId, sourceCode }) => ({ blockId, sourceCode })));
       } catch (error) {
-        // Preview stays recoverable: the caller renders the safe placeholder shell.
-        observe.previewCompileFailed({ projectId, pageId, versionId, reason: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
-        return null;
+        const reason = error instanceof Error ? error.message.slice(0, 160) : "unknown";
+        observe.previewCompileFailed({ projectId, pageId, versionId, reason });
+        // Preview stays recoverable, but the reason travels with the failure.
+        throw previewCompileFailed(reason);
       }
       if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
       cache.set(key, bundle);

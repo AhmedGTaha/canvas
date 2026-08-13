@@ -1,13 +1,14 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { DomainError } from "@/domain/shared/errors";
+import { previewNotConfigured } from "@/generated-runtime/preview/errors";
 
 const payloadSchema = z.object({ version: z.literal(1), sessionId: z.string().regex(/^[A-Za-z0-9_-]{22}$/), projectId: z.uuid(), userId: z.uuid(), expiresAt: z.number().int().positive() }).strict();
 export type PreviewTokenPayload = z.infer<typeof payloadSchema>;
 
 function configuredSecret() {
   const secret = process.env.PREVIEW_TOKEN_SECRET;
-  if (!secret || secret.length < 32) throw new Error("PREVIEW_TOKEN_SECRET must contain at least 32 characters.");
+  if (!secret || secret.length < 32) throw previewNotConfigured("PREVIEW_TOKEN_SECRET must be set to at least 32 characters.");
   return secret;
 }
 
@@ -16,7 +17,7 @@ export class PreviewTokenService {
 
   issue(projectId: string, userId: string) {
     const ttlSeconds = Number(process.env.PREVIEW_TOKEN_TTL_SECONDS || 300);
-    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 30 || ttlSeconds > 900) throw new Error("PREVIEW_TOKEN_TTL_SECONDS must be between 30 and 900.");
+    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 30 || ttlSeconds > 900) throw previewNotConfigured("PREVIEW_TOKEN_TTL_SECONDS must be between 30 and 900.");
     const payload: PreviewTokenPayload = { version: 1, sessionId: randomBytes(16).toString("base64url"), projectId, userId, expiresAt: this.now() + ttlSeconds * 1000 };
     const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
     return { token: `${encoded}.${this.sign(encoded)}`, payload };

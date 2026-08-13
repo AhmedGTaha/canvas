@@ -22,7 +22,11 @@ ${selectionRuntimeScript("null")}
 function navigate(next){const normalized=normalize(next);if(normalized===route)return;send({type:"CANVAS_ROUTE_CHANGED",route:normalized,pageId:manifest.routes[normalized]?.pageId||null});const url=new URL(location.href);url.searchParams.set("route",normalized);location.replace(url.href)}
 document.addEventListener("click",event=>{const link=event.target.closest("a[href]");if(!link)return;const href=link.getAttribute("href");if(!href||href.startsWith("#"))return;if(href.startsWith("/")&&manifest.routes[normalize(href)]){event.preventDefault();navigate(href)}});
 addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;const data=event.data;if(!data||data.sessionId!==sessionId||data.instanceId!==config.instanceId)return;if(handleSelectionMessage(data))return;if(data.type==="CANVAS_NAVIGATE"&&typeof data.route==="string")navigate(data.route);else if(data.type==="CANVAS_SET_THEME"&&(data.mode==="light"||data.mode==="dark")){mode=data.mode;applyTheme()}else if(data.type==="CANVAS_REFRESH")location.reload()});
-addEventListener("error",()=>send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route,pageId:manifest.routes[route]?.pageId||null,message:"Preview could not be loaded."}));globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route})})()</script>${input.generatedBundle ? `<script nonce="${input.nonce}">${safeScript(input.generatedBundle)}</script>` : ""}</body></html>`;
+function previewRoute(){return route}
+function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\/\/[^\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
+function reportPreviewFailure(detail){send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:previewRoute(),pageId:currentPageId(),message:"This part of your website could not be displayed.",detail})}
+addEventListener("error",event=>reportPreviewFailure(previewDetail(event)));
+addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route})})()</script>${input.generatedBundle ? `<script nonce="${input.nonce}">${safeScript(input.generatedBundle)}</script>` : ""}</body></html>`;
 }
 
 /**
@@ -42,7 +46,11 @@ ${selectionRuntimeScript("config.block.id")}
 function render(){document.documentElement.dataset.theme=mode;root.replaceChildren();const canvas=el("div","block-canvas");if(config.generated){const host=el("div","generated-page-root block-surface");host.id="generated-root";canvas.append(host)}else{const empty=el("div","block-empty");empty.append(el("span","site-kicker","Building Block"),el("h1",null,config.block.name),el("p","site-lead","Describe this block and Canvas will create it."));canvas.append(empty)}root.append(canvas)}
 document.addEventListener("click",event=>{const link=event.target.closest("a[href]");if(link)event.preventDefault()});
 addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;const data=event.data;if(!data||data.sessionId!==sessionId||data.instanceId!==config.instanceId)return;if(handleSelectionMessage(data))return;if(data.type==="CANVAS_SET_THEME"&&(data.mode==="light"||data.mode==="dark")){mode=data.mode;document.documentElement.dataset.theme=mode}else if(data.type==="CANVAS_REFRESH")location.reload()});
-addEventListener("error",()=>send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:"/",pageId:null,message:"Preview could not be loaded."}));globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route:"/"})})()</script>${input.blockBundle ? `<script nonce="${input.nonce}">${safeScript(input.blockBundle)}</script>` : ""}</body></html>`;
+function previewRoute(){return "/"}
+function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\/\/[^\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
+function reportPreviewFailure(detail){send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:previewRoute(),pageId:currentPageId(),message:"This part of your website could not be displayed.",detail})}
+addEventListener("error",event=>reportPreviewFailure(previewDetail(event)));
+addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route:"/"})})()</script>${input.blockBundle ? `<script nonce="${input.nonce}">${safeScript(input.blockBundle)}</script>` : ""}</body></html>`;
 }
 
 const blockPreviewCss = `.block-canvas{min-height:100vh;padding:0;background:var(--color-background)}.block-surface{min-height:100vh}.block-empty{display:grid;align-content:center;justify-items:start;gap:var(--space-sm);min-height:60vh;padding:clamp(24px,6vw,64px)}.block-empty h1{margin:0;font-size:clamp(1.5rem,4vw,2.25rem)}`;
@@ -75,6 +83,15 @@ function handleSelectionMessage(data){if(data.type==="CANVAS_SET_SELECT_MODE"){s
 }
 
 const selectionCss = `.canvas-block-host{display:contents}#generated-root [data-canvas-hover]{outline:2px dashed var(--color-accent);outline-offset:2px}#generated-root [data-canvas-selected]{outline:2px solid var(--color-accent);outline-offset:2px}html[data-select-mode=on] #generated-root [data-canvas-id]{cursor:pointer}`;
+
+/**
+ * Rendered when the Preview route itself fails. It states the normalized reason in plain
+ * language instead of a generic failure, under the same CSP as every other Preview
+ * response, and contains no markup supplied by generated code.
+ */
+export function renderPreviewErrorDocument(input: { nonce: string; message: string }) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview unavailable</title><style nonce="${input.nonce}">body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fafafa;color:#27272a;font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.error{max-width:420px;padding:28px;text-align:center}.error h1{margin:0 0 8px;font-size:16px}.error p{margin:0;color:#6b7280}</style></head><body><div class="error" role="alert"><h1>Preview unavailable</h1><p>${escapeHtml(input.message)}</p></div></body></html>`;
+}
 
 function safeScript(value: string) { return value.replace(/<\/script/gi, "<\\/script").replace(/<!--/g, "<\\!--"); }
 

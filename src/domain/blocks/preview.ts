@@ -3,6 +3,7 @@ import { db, type Database } from "@/server/db/client";
 import { buildingBlockVersions, buildingBlocks } from "@/server/db/schema";
 import { compileGeneratedBlock } from "./validation";
 import { observe } from "@/server/observability/events";
+import { previewCompileFailed } from "@/generated-runtime/preview/errors";
 
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 50;
@@ -26,8 +27,10 @@ export class BuildingBlockContentProvider {
     if (!bundle) {
       try { bundle = await compileGeneratedBlock(row.version.sourceCode); }
       catch (error) {
-        observe.previewCompileFailed({ projectId, versionId: row.version.id, reason: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
-        return null;
+        const reason = error instanceof Error ? error.message.slice(0, 160) : "unknown";
+        observe.previewCompileFailed({ projectId, versionId: row.version.id, reason });
+        // Surfaced to the caller so Preview can explain itself instead of looking empty.
+        throw previewCompileFailed(reason);
       }
       if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
       cache.set(row.version.id, bundle);
