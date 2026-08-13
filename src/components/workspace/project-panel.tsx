@@ -170,7 +170,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
   let project; let instructions;
   try { [project, instructions] = await Promise.all([new ProjectService().read(user.id, projectId), new ProjectInstructionService().read(user.id, projectId)]); } catch { notFound(); }
   return {
-    title: "Project settings",
+    title: "Agent guidance",
     description: "Guidance the agent should always follow on this website.",
     size: "drawer",
     body: <ProjectInstructionsEditor projectId={project.id} initialContent={instructions.content} initialRevision={instructions.revisionNumber} />,
