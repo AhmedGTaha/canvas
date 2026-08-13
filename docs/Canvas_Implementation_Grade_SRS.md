@@ -494,19 +494,16 @@ The Builder is the primary project editing experience.
 
 ## 12.1 Main Builder Areas
 
-The desktop Builder should conceptually contain:
+The Builder uses one persistent spatial workbench:
 
-1. Project/page navigation.
-2. Page tree.
-3. Live preview.
-4. AI prompt/composer.
-5. Contextual selected-element controls.
-6. Undo/Redo.
-7. Preview mode controls.
-8. Optional Code View.
-9. AI progress/change summary.
+1. Compact title bar with Canvas home, workspace/project/page breadcrumb, command search, task/share state, and a predictable account menu.
+2. Narrow activity bar for Website, Assets, Design, Reusable Sections, and History.
+3. One optional contextual primary sidebar controlled by the activity bar.
+4. Dominant live Preview workbench.
+5. Optional secondary Canvas Agent sidebar with target, conversation, active/queued work, and pinned composer.
+6. Operational-only status bar.
 
-Exact pixel layout is an implementation/UI decision, but usability must follow the approved minimal SaaS direction.
+Switching activities or opening intercepted project-tool routes must not remount the preview or Agent. Detailed settings use a right drawer; genuinely complex tools use a focused work surface; short blocking confirmation remains modal.
 
 ## 12.2 Builder Actions
 
@@ -2013,6 +2010,8 @@ Prefer:
 - Minimal shadows.
 - Clear selected states.
 
+The project workspace specifically follows `Title bar / Activity bar + Context sidebar + Preview workbench + Canvas Agent / Status bar`. It uses the spatial model of a workbench without developer terminology or desktop application menus. The account avatar always opens Account, All Projects, Workspaces, and Sign out.
+
 ## 47.2 Icons
 
 Use a consistent icon system.
@@ -2043,16 +2042,16 @@ should be available without overwhelming the default flow.
 
 ## 47.5 Builder Responsiveness
 
-Desktop:
-- Sidebar/tree and preview may coexist.
+Desktop (1280px and wider):
+- Activity bar, optional contextual sidebar, preview, and optional Agent may coexist and sidebars are resizable.
 
-Tablet:
-- Builder panels may collapse.
+Compact (768–1279px):
+- Activity bar and preview remain; the primary sidebar may coexist, while the Agent is an explicit overlay and opening it normalizes the primary sidebar closed.
 
-Mobile:
-- Use compact navigation/drawer.
-- Tree, preview, and AI composer may use focused tab/panel switching rather than unusably squeezing all areas together.
-- Core create/edit/undo/preview actions must remain accessible.
+Mobile (below 768px):
+- A text-labelled Tools / Preview / Agent switcher enforces exactly one focused surface.
+- Preview is edge-to-edge; drawers and dialogs become full-screen safe-area-aware sheets.
+- Breakpoint changes normalize invalid persisted combinations.
 
 ---
 
@@ -2258,6 +2257,8 @@ At minimum, users should be able to find:
 
 Search should remain project/workspace scoped appropriately.
 
+Cmd/Ctrl+K is the global project command and destination search. Everyday browsing starts from the labelled activity bar. The Website activity is the canonical page/folder editor; New page and New folder always begin the same inline tree flow. Preview navigation has independent Back/Forward history and never navigates the Canvas shell.
+
 ---
 
 # 55. Empty States and Onboarding
@@ -2277,6 +2278,8 @@ Empty Media:
 Empty Building Blocks:
 
 > Create a reusable navbar, footer, card, or section with AI.
+
+The primary user-facing name is **Reusable Sections**. Empty activity sidebars provide a plain-language explanation and one direct next action. Loading, error, task failure, and preview failure states say what remains safe and what the user can do next.
 
 Avoid technical jargon such as "component AST" or "route manifest" in normal UI.
 
@@ -2315,13 +2318,12 @@ Do not require full brand setup before the user can experiment.
 - Active/Archived views.
 
 ## 57.3 Project Builder
-- Page tree.
-- Preview.
-- AI composer.
-- Undo/Redo.
-- Device controls.
-- Element selection.
-- Change summary.
+- Title bar and command search.
+- Activity bar and contextual Website/Assets/Design/Reusable Sections/History sidebar.
+- Preview workbench with route picker, Back/Forward, refresh, Desktop/Tablet/Phone, zoom/fit, selection, appearance, new-tab, and focus controls.
+- Optional Canvas Agent with durable queued work and change-review links.
+- Operational status bar and responsive Tools/Preview/Agent switcher.
+- Routed Project Settings drawer for details, guidance, collaborators, and export destinations.
 
 ## 57.4 Building Blocks
 - Block list.
@@ -2625,6 +2627,9 @@ At minimum:
 - Current-version ownership validation.
 - Export manifest generation.
 - AI output rule validation.
+- Workspace breakpoint classification and layout normalization.
+- Command-registry naming and enabled-state consistency.
+- Preview navigation and zoom state.
 
 ## 65.2 Integration Tests
 
@@ -2669,6 +2674,8 @@ Critical E2E journey:
 16. Collaborator modifies a different page.
 17. Export project.
 18. Validate downloaded ZIP project builds.
+
+Focused workspace interaction coverage must additionally verify activity switching without remount, canonical inline creation, Preview Back/Forward/page/device/zoom/fit/selection/appearance/new-tab/focus controls, account menu semantics, desktop resizing persistence, and one-surface mobile normalization at representative 1440, 1024/768, and 390px widths.
 
 ## 65.4 Security Tests
 
@@ -3012,6 +3019,9 @@ Canvas V1 is considered functionally complete when a new non-technical user can:
 21. Validate the project.
 22. Download a ZIP.
 23. Run/build the exported Next.js + TypeScript frontend independently of Canvas.
+24. Find Website, Assets, Design, Reusable Sections, History, Share, Project Settings, and Export without an application-style menu bar.
+25. Switch activities and detailed tools without losing preview route/session, Agent conversation, selection, prompt draft, queued work, or valid pane layout.
+26. Use the workspace at mobile width with only Tools, Preview, or Agent visible at one time.
 
 The system must complete those journeys without tenant data leakage, silent invalid AI commits, broken history, or dependence on a generated backend.
 
@@ -3068,3 +3078,39 @@ The core experience combines:
 - Validated ZIP export.
 
 The implementation must prioritize simplicity for non-technical users while maintaining strong architectural boundaries, multi-tenant security, reversible changes, safe AI-generated code execution, and exportable ownership of the generated frontend.
+
+---
+
+# 74. Approved Post-V1 Usability Phase: Workflow Foundation
+
+## WF-01 — Unified workspace command registry
+
+Workspace actions must be typed, declarative, and identified by stable IDs. A command includes its label, category, icon key, optional description/shortcut/synonyms, client-side permission and availability, disabled reason, and execution or navigation target. The registry is the source for workspace menus, shortcut help, the command palette, and later shell controls. Server authorization remains authoritative. Categories are Navigation, Pages, Assets, Design, Reusable sections, Agent, History, Preview, Collaboration, Project, Export, and Account.
+
+## WF-02 — Project command palette
+
+Cmd+K on macOS and Ctrl+K elsewhere opens a keyboard-operable fuzzy palette. It searches allowed commands and only the active project's pages/folders by name, slug, and route; groups destinations; shows shortcuts and disabled reasons; and supports arrows, Enter, Escape, and focus return. Page navigation reuses the mounted preview. Project tools use the existing parallel/intercepted route so the preview session, route, selection where valid, conversation, draft, and pane layout survive.
+
+## WF-03 — Durable task center
+
+Existing AI generation and export jobs are normalized into a project-scoped task model showing task type, target, plain-language stage, initiator, timestamps, outcome, safe failure copy, and recovery action. A global indicator remains visible with panels closed. Completed generation work opens its committed change review and completed exports open the existing result/download surface. Every query and action revalidates project access.
+
+## WF-04 — Queued AI follow-up instructions
+
+While a protected page or Building Block has active generation, members may create durable, project/target-scoped FIFO follow-ups containing prompt, selected media IDs, selected element reference, creator, sequence, and the then-active base version. Users may edit/cancel their own item before claim. At most 20 waiting items per project and 10 per user are allowed. A worker revalidates membership, target, media, selected element, and base version before atomically creating an ordinary generation job. Changed/missing targets pause rather than silently retarget. Prompts do not reach a provider before their ordinary job turn. Existing generation indexes, leases, validation, immutable versions, rate limits, and idempotent queue linkage remain authoritative; cancelling active work retains follow-ups.
+
+## WF-05 — AI change review
+
+A completed generation review is available only when its validated result version and linked Change Set are committed. It presents the request, target entities, completion time, non-technical summary, active version, and reusable/global impact, with View result, Open in preview, Version history, and conflict-protected Undo. Version IDs are progressive technical detail. Reviews are reconstructed from history after reload and access is audited.
+
+## WF-06 — Recent destinations and actions
+
+The palette may store up to eight per-user/per-project recent result identifiers locally. Items are revalidated against the current registry and project tree before display. Prompt text, media data, and other users' activity must never enter browser storage.
+
+## WF-07 — Non-technical language and recovery
+
+New primary surfaces translate internal states to ordinary language. Failures state what did not finish, that committed website state remains safe, and the next valid action. Provider, database, queue, token, syntax-tree, manifest, and lease terminology is confined to logs or optional technical details.
+
+## Phase acceptance criteria
+
+Cmd/Ctrl+K works throughout the mounted workspace; page names/routes and ordinary action terms yield project-isolated results; page results navigate the existing preview; active work remains visible with the agent hidden; follow-ups can be queued, edited, cancelled, and execute safely in FIFO order; stale work pauses; completed generation opens a committed review with existing Undo/History protections; menus and the palette consume the same command definitions; and no authorization, tenant isolation, preview security, validation, provider abstraction, immutable history, or frontend-only generation guarantee is weakened.

@@ -11,9 +11,10 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
  * reload. There is no workspace behind it to overlay, so it renders as its own
  * screen with a way back.
  */
-export default async function PanelPage({ params }: { params: Promise<{ projectId: string; name: string }> }) {
+export default async function PanelPage({ params, searchParams }: { params: Promise<{ projectId: string; name: string }>; searchParams: Promise<{ node?: string }> }) {
   const { projectId, name } = await params;
   if (!isPanelName(name)) notFound();
-  const view = await resolvePanel(projectId, name);
+  const { node } = await searchParams;
+  const view = await resolvePanel(projectId, name, { nodeId: node });
   return <StandalonePanel projectId={projectId} view={view} />;
 }

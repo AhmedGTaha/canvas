@@ -68,8 +68,10 @@ export default async function ProjectWorkspacePage({ params, searchParams }: { p
 
   return <WorkspaceShell
     projectId={access.project.id}
+    workspaceName={access.workspace.name}
     projectName={access.project.name}
     projectStatus={access.project.status}
+    userId={user.id}
     userName={user.displayName}
     canManageProject={access.role === "owner"}
     initialSession={session}

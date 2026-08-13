@@ -26,6 +26,7 @@ export const exportJobStatus = pgEnum("export_job_status", ["queued", "validatin
 export const changeSetOperation = pgEnum("change_set_operation", ["page_generate", "page_modify", "block_generate", "block_modify", "block_duplicate", "block_global_toggle", "block_archive", "page_version_restore", "block_version_restore", "checkpoint_restore", "undo", "redo"]);
 export const changeSetEntityType = pgEnum("change_set_entity_type", ["page", "building_block", "project"]);
 export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify", "block_generate", "block_modify"]);
+export const aiQueueStatus = pgEnum("ai_queue_status", ["queued", "paused", "claimed", "completed", "cancelled"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -262,6 +263,7 @@ export const generationJobs = pgTable("generation_jobs", {
   errorDiagnostic: varchar("error_diagnostic", { length: 500 }),
   resultMessageId: uuid("result_message_id"),
   resultChangeSetId: uuid("result_change_set_id"),
+  queueItemId: uuid("queue_item_id"),
   usageMetadata: jsonb("usage_metadata"),
   contextFingerprint: char("context_fingerprint", { length: 64 }),
   contextMetadata: jsonb("context_metadata"),
@@ -273,7 +275,7 @@ export const generationJobs = pgTable("generation_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
   finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
-}, (table) => [unique("generation_jobs_id_project_unique").on(table.id, table.projectId), index("generation_jobs_project_created_idx").on(table.projectId, table.createdAt), index("generation_jobs_claim_idx").on(table.status, table.availableAt, table.createdAt)]);
+}, (table) => [unique("generation_jobs_id_project_unique").on(table.id, table.projectId), unique("generation_jobs_queue_item_unique").on(table.queueItemId), index("generation_jobs_project_created_idx").on(table.projectId, table.createdAt), index("generation_jobs_claim_idx").on(table.status, table.availableAt, table.createdAt)]);
 
 export const pageVersions = pgTable("page_versions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -297,6 +299,18 @@ export const generationJobMedia = pgTable("generation_job_media", {
   mediaAssetId: uuid("media_asset_id").notNull(),
   position: integer("position").notNull(),
 }, (table) => [primaryKey({ columns: [table.generationJobId, table.mediaAssetId] }), unique("generation_job_media_job_position_unique").on(table.generationJobId, table.position), index("generation_job_media_project_idx").on(table.projectId, table.mediaAssetId)]);
+
+export const aiFollowUpQueue = pgTable("ai_follow_up_queue", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  targetType: leaseTargetType("target_type").notNull(), targetId: uuid("target_id").notNull(),
+  creatorUserId: uuid("creator_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  prompt: text("prompt").notNull(), selectedMediaIds: jsonb("selected_media_ids").notNull().default([]), selectedElement: jsonb("selected_element"),
+  baseVersionId: uuid("base_version_id"), status: aiQueueStatus("status").notNull().default("queued"), pauseReason: varchar("pause_reason", { length: 500 }),
+  sequence: bigint("sequence", { mode: "number" }).generatedAlwaysAsIdentity(), generationJobId: uuid("generation_job_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }), cancelledAt: timestamp("cancelled_at", { withTimezone: true, mode: "date" }),
+}, (table) => [unique("ai_follow_up_queue_job_unique").on(table.generationJobId), index("ai_follow_up_queue_claim_idx").on(table.status, table.sequence), index("ai_follow_up_queue_project_target_idx").on(table.projectId, table.targetType, table.targetId, table.sequence), index("ai_follow_up_queue_user_idx").on(table.creatorUserId, table.status)]);
 
 export const buildingBlocks = pgTable("building_blocks", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -438,6 +452,7 @@ export type ProjectInstruction = typeof projectInstructions.$inferSelect;
 export type AIConversation = typeof aiConversations.$inferSelect;
 export type AIMessage = typeof aiMessages.$inferSelect;
 export type GenerationJob = typeof generationJobs.$inferSelect;
+export type AIFollowUp = typeof aiFollowUpQueue.$inferSelect;
 export type PageVersion = typeof pageVersions.$inferSelect;
 export type ChangeSet = typeof changeSets.$inferSelect;
 export type ChangeSetItem = typeof changeSetItems.$inferSelect;

@@ -32,13 +32,13 @@ function CreateNodeDialog({ projectId, nodes, defaultParentId, triggerVariant = 
   </Dialog>;
 }
 
-function EditNodeDialog({ projectId, node, nodes }: { projectId: string; node: PageNode; nodes: PageNode[] }) {
+export function PageSettingsEditor({ projectId, node, nodes }: { projectId: string; node: PageNode; nodes: PageNode[] }) {
   const [state, action] = useActionState(pageTreeAction, initial);
   const descendants = new Set<string>();
   let changed = true;
   descendants.add(node.id);
   while (changed) { changed = false; for (const item of nodes) if (item.parentId && descendants.has(item.parentId) && !descendants.has(item.id)) { descendants.add(item.id); changed = true; } }
-  return <Dialog title={node.type === "page" ? "Page settings" : "Folder settings"} triggerLabel="Settings" triggerVariant="ghost">
+  return <>
     <form action={action} className="stack"><input type="hidden" name="projectId" value={projectId} /><input type="hidden" name="nodeId" value={node.id} />
       <input type="hidden" name="intent" value="rename" /><Input name="name" label="Name" defaultValue={node.name} required maxLength={120} />
       {state.error ? <p className="form-error">{state.error}</p> : null}<SubmitButton>Rename</SubmitButton>
@@ -46,8 +46,10 @@ function EditNodeDialog({ projectId, node, nodes }: { projectId: string; node: P
     {node.type === "page" ? <><div className="dialog-divider" /><form action={action} className="stack"><input type="hidden" name="intent" value="slug" /><input type="hidden" name="projectId" value={projectId} /><input type="hidden" name="nodeId" value={node.id} /><Input name="slug" label="URL slug" defaultValue={node.slug ?? ""} required maxLength={100} hint={`Current path: ${node.routePath}`} /><SubmitButton>Update URL</SubmitButton></form>
       <div className="dialog-divider" /><form action={action} className="stack"><input type="hidden" name="intent" value="seo" /><input type="hidden" name="projectId" value={projectId} /><input type="hidden" name="nodeId" value={node.id} /><Input name="pageTitle" label="Page title" defaultValue={node.pageTitle ?? ""} maxLength={100} hint="Around 50–60 characters is often effective." /><Textarea name="metaDescription" label="Meta description" defaultValue={node.metaDescription ?? ""} maxLength={300} rows={3} /><SubmitButton>Save SEO</SubmitButton></form></> : null}
     <div className="dialog-divider" /><form action={action} className="stack"><input type="hidden" name="intent" value="move" /><input type="hidden" name="projectId" value={projectId} /><input type="hidden" name="nodeId" value={node.id} /><input type="hidden" name="newPosition" value="0" /><label className="field"><span className="field-label">Move inside</span><select className="input" name="newParentId" defaultValue={node.parentId ?? ""}><option value="">Top level</option>{nodes.filter((item) => !descendants.has(item.id)).map((item) => <option key={item.id} value={item.id}>{item.name} ({item.type})</option>)}</select></label><SubmitButton>Move</SubmitButton></form>
-  </Dialog>;
+  </>;
 }
+
+function EditNodeDialog({ projectId, node, nodes }: { projectId: string; node: PageNode; nodes: PageNode[] }) { return <Dialog title={node.type === "page" ? "Page settings" : "Folder settings"} triggerLabel="Settings" triggerVariant="ghost"><PageSettingsEditor projectId={projectId} node={node} nodes={nodes} /></Dialog>; }
 
 function TreeItem({ projectId, node, nodes, depth }: { projectId: string; node: PageTreeNode; nodes: PageNode[]; depth: number }) {
   const [expanded, setExpanded] = useState(true);

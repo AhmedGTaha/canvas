@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarDays, ShieldCheck, UserRound, UsersRound } from "lucide-react";
+import { CalendarDays, ShieldCheck, Sparkles, UserRound, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { BlockLibrary } from "@/components/blocks/block-library";
 import { InviteManager } from "@/components/collaboration/invite-manager";
@@ -9,7 +9,7 @@ import { MemberList } from "@/components/collaboration/member-list";
 import { ExportManager } from "@/components/export/export-manager";
 import { BrandLogoSettings } from "@/components/media/brand-logo-settings";
 import { MediaManager } from "@/components/media/media-manager";
-import { PageTreeManager } from "@/components/pages/page-tree-manager";
+import { PageSettingsEditor } from "@/components/pages/page-tree-manager";
 import { ProjectInstructionsEditor } from "@/components/projects/project-instructions-editor";
 import { RenameProjectDialog } from "@/components/projects/project-forms";
 import { ThemeEditor } from "@/components/theme/theme-editor";
@@ -26,6 +26,7 @@ import { BrandService, ThemeService } from "@/domain/theme/services";
 import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { previewUnavailableMessage } from "@/generated-runtime/preview/errors";
 import { requireAuthenticatedUser } from "@/server/auth/session";
+import { WORKSPACE_SHORTCUTS } from "@/domain/commands/registry";
 
 /** Every project tool reachable from the workspace menu bar. */
 export const PANEL_NAMES = ["overview", "pages", "media", "blocks", "brand", "export", "collaborators", "settings", "shortcuts"] as const;
@@ -43,7 +44,7 @@ export type PanelView = { title: string; description?: string; size: "wide" | "d
  * bar) and the standalone page (a bookmarked deep link), so the two can never
  * drift apart.
  */
-export async function resolvePanel(projectId: string, name: PanelName): Promise<PanelView> {
+export async function resolvePanel(projectId: string, name: PanelName, options: { nodeId?: string } = {}): Promise<PanelView> {
   const user = await requireAuthenticatedUser();
 
   if (name === "shortcuts") {
@@ -55,30 +56,26 @@ export async function resolvePanel(projectId: string, name: PanelName): Promise<
     try { access = await new ProjectService().readWithRole(user.id, projectId); } catch { notFound(); }
     const { project, role, owner } = access;
     return {
-      title: project.name,
+      title: "Project Settings",
       description: project.description || "Add a description as this project takes shape.",
       size: "drawer",
       actions: role === "owner" ? <RenameProjectDialog id={project.id} name={project.name} /> : undefined,
-      body: <Card>
+      body: <div className="settings-page-stack"><Card>
         <dl className="detail-list">
           <div><dt><ShieldCheck size={15} />Status</dt><dd><StatusBadge status={project.status} /></dd></div>
           <div><dt><UserRound size={15} />Owner</dt><dd>{owner.displayName}</dd></div>
           <div><dt><UsersRound size={15} />Your role</dt><dd style={{ textTransform: "capitalize" }}>{role}</dd></div>
           <div><dt><CalendarDays size={15} />Created</dt><dd>{project.createdAt.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}</dd></div>
         </dl>
-      </Card>,
+      </Card><nav className="settings-destinations" aria-label="Project settings sections"><Link href={`/projects/${project.id}/panel/settings`}><Sparkles size={16} /><span><strong>Agent guidance</strong><small>Instructions Canvas follows for this website</small></span></Link><Link href={`/projects/${project.id}/panel/collaborators`}><UsersRound size={16} /><span><strong>Collaborators</strong><small>People who can work on this project</small></span></Link><Link href={`/projects/${project.id}/panel/export`}><ShieldCheck size={16} /><span><strong>Export website</strong><small>Validate and download the frontend project</small></span></Link></nav></div>,
     };
   }
 
   if (name === "pages") {
     let project; let nodes;
     try { [project, nodes] = await Promise.all([new ProjectService().read(user.id, projectId), new PageTreeService().listTree(user.id, projectId)]); } catch { notFound(); }
-    return {
-      title: "Pages & folders",
-      description: "Rename, reorder and set the web address of every page on this website.",
-      size: "wide",
-      body: <PageTreeManager projectId={project.id} nodes={nodes} />,
-    };
+    const node = options.nodeId ? nodes.find((item) => item.id === options.nodeId) : undefined;
+    return { title: node?.type === "folder" ? "Folder Settings" : "Page Settings", description: node ? `Settings for ${node.name}. Website remains the canonical place to browse and organize pages.` : "Select a page or folder from Website to edit its details.", size: "drawer", body: node ? <PageSettingsEditor projectId={project.id} node={node} nodes={nodes} /> : <div className="empty-state"><h2>No page selected</h2><p>Close this drawer and choose a page or folder from Website.</p></div> };
   }
 
   if (name === "media") {
@@ -188,8 +185,7 @@ function Shortcuts() {
   return <div className="ws-keys">
     <section>
       <h2>Workspace</h2>
-      <div><span>Show or hide the website explorer</span><kbd>Ctrl / ⌘ + B</kbd></div>
-      <div><span>Show or hide the Website Agent</span><kbd>Ctrl / ⌘ + J</kbd></div>
+      {WORKSPACE_SHORTCUTS.map((item) => <div key={item.id}><span>{item.label}</span><kbd>{item.shortcut}</kbd></div>)}
       <div><span>Leave full screen</span><kbd>Esc</kbd></div>
       <div><span>Close a panel</span><kbd>Esc</kbd></div>
     </section>

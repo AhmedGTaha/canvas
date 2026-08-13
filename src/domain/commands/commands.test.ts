@@ -1,0 +1,11 @@
+import { describe, expect, it, vi } from "vitest";
+import { createWorkspaceCommands } from "./registry";
+import { fuzzyScore, searchWorkspace } from "./search";
+
+function commands() { const noop = vi.fn(); return createWorkspaceCommands({ canManageProject: false, hasPage: false, hasSelection: false, activeWork: true, canUndo: false, canRedo: true, explorerOpen: true, agentOpen: false, openPanel: noop, openPalette: noop, openTasks: noop, openHistory: noop, openCheckpoints: noop, openWebsite: noop, openAssets: noop, openDesign: noop, openSections: noop, newPage: noop, newFolder: noop, navigate: noop, toggleExplorer: noop, toggleAgent: noop, undo: noop, redo: noop, setTheme: noop, setDevice: noop, refreshPreview: noop, toggleFullScreen: noop, signOut: noop }); }
+
+describe("workspace command registry and search", () => {
+  it("ranks exact, prefix, token, and fuzzy matches deterministically", () => { expect(fuzzyScore("media", "Media")).toBeGreaterThan(fuzzyScore("media", "Open media library")); expect(fuzzyScore("bld blks", "Building Blocks")).toBeGreaterThan(0); expect(fuzzyScore("xyz", "Media")).toBe(0); });
+  it("finds synonyms and project-scoped page routes", () => { const results = searchWorkspace("uploads", commands(), [{ id: "p1", name: "Work", slug: "work", routePath: "/portfolio/work", type: "page" }]); expect(results[0]?.type).toBe("command"); expect(results[0]?.key).toBe("command:assets.media"); expect(searchWorkspace("/portfolio", commands(), [{ id: "p1", name: "Work", slug: "work", routePath: "/portfolio/work", type: "page" }])[0]?.key).toBe("page:p1"); });
+  it("carries categories, shortcuts, disabled reasons, and permission filtering", () => { const registry = commands(); expect(registry.find((item) => item.id === "agent.toggle")).toMatchObject({ category: "Agent", shortcut: "Ctrl / ⌘ + J" }); expect(registry.find((item) => item.id === "history.undo")?.availability).toEqual({ available: false, reason: "There is nothing to undo." }); expect(searchWorkspace("secret", [{ ...registry[0]!, id: "secret", label: "Secret", permitted: false }], [])).toEqual([]); });
+});

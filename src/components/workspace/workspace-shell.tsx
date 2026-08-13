@@ -1,16 +1,23 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Blocks, Copy, Download, FileCog, FilePlus2, FolderPlus, House, Images, Keyboard, LayoutGrid, ListTree, LogOut, Maximize2, Monitor, Moon, Palette, PanelLeft, PanelRight, Redo2, RefreshCw, Save, Settings, Smartphone, Sparkles, Sun, Tablet, Type, Undo2, UserRound, UsersRound } from "lucide-react";
+import { Bot, CircleAlert, FileText, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { signOutAction } from "@/app/actions/auth";
-import { pageTreeAction } from "@/app/actions/pages";
 import { HistoryControls, type HistoryApi } from "@/components/history/history-controls";
-import { AgentPanel, type AgentMessage, type AgentJob, type AgentTarget } from "./agent-panel";
+import { ChangeReview } from "@/components/history/change-review";
+import { CommandPalette } from "@/components/commands/command-palette";
+import { TaskCenter } from "@/components/tasks/task-center";
+import { createWorkspaceCommands } from "@/domain/commands/registry";
+import type { CommandPage } from "@/domain/commands/types";
+import type { ProjectTask } from "@/domain/tasks/model";
+import { AgentPanel, type AgentMessage, type AgentJob, type AgentTarget, type AgentQueueItem } from "./agent-panel";
+import { ActivityBar } from "./activity-bar";
+import { ContextSidebar } from "./context-sidebar";
 import { Explorer } from "./explorer";
-import { MenuBar, type MenuEntry, type MenuGroup } from "./menu-bar";
 import { PreviewStage, type Device } from "./preview-stage";
+import { TitleBar } from "./title-bar";
+import { breakpointFor, DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout, type WorkspaceBreakpoint, type WorkspaceLayout, type WorkspaceActivity } from "./workspace-layout";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
 import { initialPreviewRoute } from "@/generated-runtime/runtime/router";
@@ -24,12 +31,8 @@ type ElementSelection = Omit<PreviewElementSelection, "type" | "sessionId" | "in
 type ComposerTarget = { kind: "page"; id: string } | { kind: "block"; id: string; name: string };
 
 const ACTIVE_JOB_STATUSES = new Set(["queued", "preparing_context", "generating", "validating", "applying"]);
-const LAYOUT_KEY = "canvas.workspace.layout";
-const EXPLORER_RANGE = [190, 460] as const;
-const AGENT_RANGE = [300, 640] as const;
-
-type Layout = { explorer: boolean; agent: boolean; explorerWidth: number; agentWidth: number };
-const DEFAULT_LAYOUT: Layout = { explorer: true, agent: true, explorerWidth: 262, agentWidth: 384 };
+const PRIMARY_RANGE = [224, 440] as const;
+const AGENT_RANGE = [320, 640] as const;
 
 /**
  * The Canvas project workspace.
@@ -41,11 +44,13 @@ const DEFAULT_LAYOUT: Layout = { explorer: true, agent: true, explorerWidth: 262
  * current page all survive.
  */
 export function WorkspaceShell({
-  projectId, projectName, projectStatus, userName, initialSession, initialPageId, initialInstanceId, nodes, mediaAssets, mediaFolders, canManageProject,
+  projectId, workspaceName, projectName, projectStatus, userId, userName, initialSession, initialPageId, initialInstanceId, nodes, mediaAssets, mediaFolders, canManageProject,
 }: {
   projectId: string;
+  workspaceName: string;
   projectName: string;
   projectStatus: string;
+  userId: string;
   userName: string;
   initialSession: PreviewSession;
   initialPageId?: string;
@@ -64,6 +69,7 @@ export function WorkspaceShell({
   const [session, setSession] = useState(initialSession);
   const [instanceId, setInstanceId] = useState(initialInstanceId);
   const [route, setRoute] = useState(initialRoute);
+  const [routeHistory, setRouteHistory] = useState({ entries: [initialRoute], index: 0 });
   const [frameSrc, setFrameSrc] = useState(() => `/preview/${encodeURIComponent(initialSession.token)}?route=${encodeURIComponent(initialRoute)}&mode=light&instance=${initialInstanceId}`);
   const [view, dispatchView] = useReducer(builderViewReducer, INITIAL_BUILDER_VIEW);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -74,9 +80,17 @@ export function WorkspaceShell({
   const [agentLoading, setAgentLoading] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
+  const [queuedFollowUps, setQueuedFollowUps] = useState<AgentQueueItem[]>([]);
   const [agentError, setAgentError] = useState<string>();
-  const [layout, setLayout] = useState<Layout>(DEFAULT_LAYOUT);
+  const [breakpoint, setBreakpoint] = useState<WorkspaceBreakpoint>("desktop");
+  const [layout, setLayout] = useState<WorkspaceLayout>(DEFAULT_WORKSPACE_LAYOUT);
+  const [createRequest, setCreateRequest] = useState<{ type: "page" | "folder"; key: number } | null>(null);
+  const createKey = useRef(0);
   const [history, setHistory] = useState<HistoryApi | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [taskCenterOpen, setTaskCenterOpen] = useState(false);
+  const [reviewJobId, setReviewJobId] = useState<string | null>(null);
+  const [taskSummary, setTaskSummary] = useState<ProjectTask[]>([]);
   // HistoryControls republishes its API whenever its own inputs change. Holding
   // the previous object when nothing meaningful moved stops a publish from
   // re-rendering this component, which would republish, and so on. The identity
@@ -89,42 +103,33 @@ export function WorkspaceShell({
 
   const currentPageId = session.manifest.routes[route]?.pageId ?? null;
   const currentPage = session.manifest.pages.find((page) => page.pageId === currentPageId) ?? null;
-  const currentNode = nodes.find((node) => node.id === currentPageId) ?? null;
 
   /* ------------------------------------------------------------- layout */
-  // Restoring a saved panel layout has to happen after hydration — the server
-  // has no access to localStorage, so reading it during render would produce a
-  // mismatched tree. This is the one-time preference read the React docs call
-  // out as a legitimate effect; it cannot cascade because it runs once.
+  const layoutKey = `canvas.workspace.layout.${userId}.${projectId}`;
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(LAYOUT_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (stored) setLayout({ ...DEFAULT_LAYOUT, ...JSON.parse(stored) as Partial<Layout> });
-    } catch { /* a corrupt preference is not worth surfacing; the default is fine */ }
-  }, []);
+    function read() { const nextBreakpoint = breakpointFor(window.innerWidth); setBreakpoint(nextBreakpoint); setLayout((current) => { try { const stored = window.localStorage.getItem(layoutKey); return normalizeWorkspaceLayout(stored ? JSON.parse(stored) as Partial<WorkspaceLayout> : current, nextBreakpoint); } catch { return normalizeWorkspaceLayout(current, nextBreakpoint); } }); }
+    const timer = window.setTimeout(read, 0); window.addEventListener("resize", read); return () => { clearTimeout(timer); window.removeEventListener("resize", read); };
+  }, [layoutKey]);
 
   // Mirrors the layout so the drag handlers can persist the final width without
   // depending on a stale closure.
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
-  const persistLayout = useCallback((next: Layout) => {
-    try { window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)); } catch { /* private mode */ }
-  }, []);
-  const saveLayout = useCallback((next: Layout) => {
-    setLayout(next);
-    persistLayout(next);
-  }, [persistLayout]);
-  const toggleExplorer = useCallback(() => saveLayout({ ...layout, explorer: !layout.explorer }), [layout, saveLayout]);
-  const toggleAgent = useCallback(() => saveLayout({ ...layout, agent: !layout.agent }), [layout, saveLayout]);
+  const persistLayout = useCallback((next: WorkspaceLayout) => { try { window.localStorage.setItem(layoutKey, JSON.stringify(next)); } catch { /* convenience only */ } }, [layoutKey]);
+  const saveLayout = useCallback((input: WorkspaceLayout) => { const next = normalizeWorkspaceLayout(input, breakpoint); setLayout(next); persistLayout(next); }, [breakpoint, persistLayout]);
+  const showMobileSurface = useCallback((surface: "tools" | "preview" | "agent") => saveLayout({ ...layout, mobileSurface: surface, primary: surface === "tools", agent: surface === "agent" }), [layout, saveLayout]);
+  const toggleExplorer = useCallback(() => { if (breakpoint === "mobile") { showMobileSurface(layout.mobileSurface === "tools" ? "preview" : "tools"); return; } saveLayout({ ...layout, primary: !layout.primary, ...(breakpoint === "compact" && !layout.primary ? { agent: false } : {}) }); }, [breakpoint, layout, saveLayout, showMobileSurface]);
+  const toggleAgent = useCallback(() => { if (breakpoint === "mobile") { showMobileSurface(layout.mobileSurface === "agent" ? "preview" : "agent"); return; } const opening = !layout.agent; saveLayout({ ...layout, agent: opening, ...(breakpoint === "compact" && opening ? { primary: false } : {}) }); }, [breakpoint, layout, saveLayout, showMobileSurface]);
+  const selectActivity = useCallback((activity: WorkspaceActivity) => { if (breakpoint === "mobile") { saveLayout({ ...layout, activity, mobileSurface: "tools", primary: true, agent: false }); return; } if (layout.activity === activity && layout.primary) saveLayout({ ...layout, primary: false }); else saveLayout({ ...layout, activity, primary: true, ...(breakpoint === "compact" ? { agent: false } : {}) }); }, [breakpoint, layout, saveLayout]);
+  const requestCreate = useCallback((type: "page" | "folder") => { selectActivity("website"); createKey.current += 1; setCreateRequest({ type, key: createKey.current }); }, [selectActivity]);
 
   const [resizing, setResizing] = useState<"explorer" | "agent" | null>(null);
   useEffect(() => {
     if (!resizing) return;
     function onMove(event: PointerEvent) {
       if (resizing === "explorer") {
-        const width = Math.min(EXPLORER_RANGE[1], Math.max(EXPLORER_RANGE[0], event.clientX));
-        setLayout((current) => ({ ...current, explorerWidth: width }));
+        const width = Math.min(PRIMARY_RANGE[1], Math.max(PRIMARY_RANGE[0], event.clientX - 48));
+        setLayout((current) => ({ ...current, primaryWidth: width }));
       } else {
         const width = Math.min(AGENT_RANGE[1], Math.max(AGENT_RANGE[0], window.innerWidth - event.clientX));
         setLayout((current) => ({ ...current, agentWidth: width }));
@@ -140,6 +145,7 @@ export function WorkspaceShell({
   /* ------------------------------------------------------------ preview */
   const makeSrc = useCallback((token: string, nextRoute: string, mode: "light" | "dark", instance: string) => `/preview/${encodeURIComponent(token)}?route=${encodeURIComponent(nextRoute)}&mode=${mode}&instance=${instance}`, []);
   const post = useCallback((message: ParentPreviewCommand, sessionId: string, instance: string) => { frame.current?.contentWindow?.postMessage({ ...message, sessionId, instanceId: instance }, "*"); }, []);
+  const recordRoute = useCallback((next: string) => { setRoute(next); setRouteHistory((current) => { if (current.entries[current.index] === next) return current; const entries = [...current.entries.slice(0, current.index + 1), next].slice(-30); return { entries, index: entries.length - 1 }; }); }, []);
 
   useEffect(() => {
     const listener = (event: MessageEvent) => {
@@ -156,7 +162,7 @@ export function WorkspaceShell({
       else if (message.type === "CANVAS_ELEMENT_CLEARED") { pendingSelection.current = null; setSelection(null); }
       else if (message.type === "CANVAS_ROUTE_CHANGED") {
         if (message.pageId !== currentPageId) { pendingSelection.current = null; setSelection(null); }
-        setRoute(message.route);
+        recordRoute(message.route);
         const page = message.pageId;
         const url = new URL(window.location.href);
         if (page) url.searchParams.set("page", page); else url.searchParams.delete("page");
@@ -165,16 +171,17 @@ export function WorkspaceShell({
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, [currentPageId, instanceId, post, selectMode, session.manifest.previewSessionId]);
+  }, [currentPageId, instanceId, post, recordRoute, selectMode, session.manifest.previewSessionId]);
 
   function send(message: ParentPreviewCommand) { post(message, session.manifest.previewSessionId, instanceId); }
   const navigate = useCallback((next: string) => {
     pendingSelection.current = null;
     setSelection(null);
-    setRoute(next);
+    recordRoute(next);
     post({ type: "CANVAS_NAVIGATE", route: next }, session.manifest.previewSessionId, instanceId);
-  }, [instanceId, post, session.manifest.previewSessionId]);
-  function changeTheme(mode: "light" | "dark") { dispatchView({ type: "SET_THEME", theme: mode }); send({ type: "CANVAS_SET_THEME", mode }); }
+  }, [instanceId, post, recordRoute, session.manifest.previewSessionId]);
+  const stepPreviewHistory = useCallback((delta: -1 | 1) => { const index = routeHistory.index + delta; const next = routeHistory.entries[index]; if (!next || index < 0 || index >= routeHistory.entries.length) return; pendingSelection.current = null; setSelection(null); setRoute(next); setRouteHistory({ ...routeHistory, index }); post({ type: "CANVAS_NAVIGATE", route: next }, session.manifest.previewSessionId, instanceId); }, [instanceId, post, routeHistory, session.manifest.previewSessionId]);
+  const changeTheme = useCallback((mode: "light" | "dark") => { dispatchView({ type: "SET_THEME", theme: mode }); post({ type: "CANVAS_SET_THEME", mode }, session.manifest.previewSessionId, instanceId); }, [instanceId, post, session.manifest.previewSessionId]);
   function toggleSelectMode() { const next = !selectMode; setSelectMode(next); send({ type: "CANVAS_SET_SELECT_MODE", enabled: next }); if (!next) clearSelection(); }
   function clearSelection() { pendingSelection.current = null; setSelection(null); send({ type: "CANVAS_CLEAR_SELECTION" }); }
 
@@ -196,9 +203,9 @@ export function WorkspaceShell({
       const nextInstance = crypto.randomUUID();
       pendingSelection.current = null;
       setSelection(null);
-      setSession(value); setRoute(retained); setInstanceId(nextInstance); setFrameSrc(makeSrc(value.token, retained, view.theme, nextInstance));
+      setSession(value); recordRoute(retained); setInstanceId(nextInstance); setFrameSrc(makeSrc(value.token, retained, view.theme, nextInstance));
     } catch (cause) { setStatus("error"); setError(cause instanceof Error ? cause.message : "Preview could not be prepared."); }
-  }, [currentPageId, makeSrc, projectId, route, view.theme]);
+  }, [currentPageId, makeSrc, projectId, recordRoute, route, view.theme]);
 
   /*
    * The preview manifest is a snapshot taken when the session was minted, so it
@@ -238,9 +245,9 @@ export function WorkspaceShell({
   /* -------------------------------------------------------------- agent */
   // Selecting inside a shared Building Block retargets the composer at that
   // block, so a global component is edited once instead of copied per page.
-  const target: ComposerTarget | null = selection?.blockId
+  const target: ComposerTarget | null = useMemo(() => selection?.blockId
     ? { kind: "block", id: selection.blockId, name: session.manifest.blocks[selection.blockId]?.name ?? "Shared block" }
-    : currentPageId ? { kind: "page", id: currentPageId } : null;
+    : currentPageId ? { kind: "page", id: currentPageId } : null, [currentPageId, selection?.blockId, session.manifest.blocks]);
   const targetKey = target ? `${target.kind}:${target.id}` : null;
   const stateUrl = target ? (target.kind === "block" ? `/api/projects/${projectId}/blocks/${target.id}/ai` : `/api/projects/${projectId}/pages/${target.id}/ai`) : null;
 
@@ -251,18 +258,19 @@ export function WorkspaceShell({
     setAgentState(value);
     return value;
   }, []);
+  const loadQueue = useCallback(async (nextTarget: ComposerTarget) => { const type = nextTarget.kind === "block" ? "building_block" : "page"; const response = await fetch(`/api/projects/${projectId}/ai-queue?targetType=${type}&targetId=${nextTarget.id}`, { cache: "no-store" }); const value = await response.json() as { items?: AgentQueueItem[] }; if (response.ok) setQueuedFollowUps(value.items ?? []); }, [projectId]);
 
   useEffect(() => {
     if (!stateUrl) return;
     let active = true;
     const timer = window.setTimeout(() => {
       if (active) { setAgentState(null); setAgentError(undefined); setPrompt(""); setSelectedMediaIds([]); setAgentLoading(true); }
-      void loadAgentState(stateUrl)
+      void Promise.all([loadAgentState(stateUrl), target ? loadQueue(target) : Promise.resolve()])
         .catch((cause: unknown) => { if (active) setAgentError(cause instanceof Error ? cause.message : "This conversation could not be loaded."); })
         .finally(() => { if (active) setAgentLoading(false); });
     }, 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [loadAgentState, stateUrl, targetKey]);
+  }, [loadAgentState, loadQueue, stateUrl, target, targetKey]);
 
   const activeJob = agentState?.job && ACTIVE_JOB_STATUSES.has(agentState.job.status) ? agentState.job : null;
   useEffect(() => {
@@ -280,17 +288,21 @@ export function WorkspaceShell({
   }, [agentState?.job, refresh, router]);
 
   async function submitPrompt() {
-    if (!target || !stateUrl || !prompt.trim() || activeJob) return;
+    if (!target || !stateUrl || !prompt.trim()) return;
     setAgentLoading(true); setAgentError(undefined);
     try {
       const body = { content: prompt, selectedMediaIds, selection: selection ? { canvasId: selection.canvasId, blockId: selection.blockId, usageKey: selection.usageKey } : null };
-      const response = await fetch(stateUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const response = activeJob
+        ? await fetch(`/api/projects/${projectId}/ai-queue`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetType: target.kind === "block" ? "building_block" : "page", targetId: target.id, prompt, selectedMediaIds, selection: body.selection }) })
+        : await fetch(stateUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const value = await response.json() as { error?: string };
       if (!response.ok) throw new Error(value.error || "The agent could not start this update.");
-      await loadAgentState(stateUrl);
+      if (activeJob) { setPrompt(""); setSelectedMediaIds([]); await loadQueue(target); } else await loadAgentState(stateUrl);
     } catch (cause) { setAgentError(cause instanceof Error ? cause.message : "The agent could not start this update."); }
     finally { setAgentLoading(false); }
   }
+  async function cancelQueued(id: string) { const response = await fetch(`/api/projects/${projectId}/ai-queue/${id}`, { method: "DELETE" }); if (!response.ok) { const value = await response.json() as { error?: string }; setAgentError(value.error || "This follow-up could not be cancelled."); } if (target) await loadQueue(target); }
+  async function editQueued(item: AgentQueueItem, nextPrompt: string) { const response = await fetch(`/api/projects/${projectId}/ai-queue/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: nextPrompt, selectedMediaIds: item.selectedMediaIds, selection: item.selectedElement }) }); if (!response.ok) { const value = await response.json() as { error?: string }; setAgentError(value.error || "This follow-up could not be edited."); } if (target) await loadQueue(target); }
   async function cancelJob() {
     if (!activeJob || !stateUrl) return;
     setAgentLoading(true);
@@ -305,12 +317,27 @@ export function WorkspaceShell({
 
   /* -------------------------------------------------------------- panels */
   const panelIsOpen = pathname.includes("/panel/");
-  const openPanel = useCallback((name: string) => {
-    const url = `/projects/${projectId}/panel/${name}`;
+  const openPanel = useCallback((name: string, query?: Record<string, string>) => {
+    const params = query ? `?${new URLSearchParams(query)}` : "";
+    const url = `/projects/${projectId}/panel/${name}${params}`;
     // Swapping tools replaces the entry, so Escape/back from any panel returns
     // to the website instead of walking back through the tools you opened.
     if (panelIsOpen) router.replace(url); else router.push(url);
   }, [panelIsOpen, projectId, router]);
+
+  const commands = useMemo(() => createWorkspaceCommands({
+    canManageProject, hasPage: Boolean(currentPageId), hasSelection: Boolean(selection), activeWork: taskSummary.some((task) => task.status === "active"),
+    canUndo: history?.canUndo ?? false, canRedo: history?.canRedo ?? false, explorerOpen: layout.primary, agentOpen: layout.agent,
+    openPanel, openPalette: () => setPaletteOpen(true), openTasks: () => setTaskCenterOpen(true), openHistory: () => history?.openVersions(), openCheckpoints: () => history?.openCheckpoints(), navigate: (href) => router.push(href),
+    openWebsite: () => selectActivity("website"), openAssets: () => selectActivity("assets"), openDesign: () => selectActivity("design"), openSections: () => selectActivity("sections"), newPage: () => requestCreate("page"), newFolder: () => requestCreate("folder"),
+    toggleExplorer, toggleAgent, undo: () => history?.undo(), redo: () => history?.redo(), setTheme: changeTheme,
+    setDevice: (device) => dispatchView({ type: "SET_DEVICE", device }), refreshPreview: () => void refresh(), toggleFullScreen: () => dispatchView({ type: "TOGGLE_FULL_SCREEN" }),
+    signOut: () => startTransition(() => { void signOutAction(); }),
+  }), [canManageProject, changeTheme, currentPageId, history, layout.agent, layout.primary, openPanel, refresh, requestCreate, router, selectActivity, selection, startTransition, taskSummary, toggleAgent, toggleExplorer]);
+  const commandPages = useMemo<CommandPage[]>(() => nodes.map((node) => ({ id: node.id, name: node.name, slug: node.slug, routePath: node.routePath, type: node.type })), [nodes]);
+
+  const loadTaskSummary = useCallback(async () => { try { const response = await fetch(`/api/projects/${projectId}/tasks`, { cache: "no-store" }); if (response.ok) setTaskSummary(((await response.json()) as { tasks: ProjectTask[] }).tasks); } catch { /* detailed recovery lives in the task center */ } }, [projectId]);
+  useEffect(() => { const timer = window.setTimeout(() => void loadTaskSummary(), 0); const interval = window.setInterval(() => void loadTaskSummary(), 3_000); return () => { clearTimeout(timer); clearInterval(interval); }; }, [loadTaskSummary]);
 
   const routesByPageId = useMemo(() => Object.fromEntries(session.manifest.pages.map((page) => [page.pageId, page.canonicalRoute])), [session.manifest.pages]);
   const selectPage = useCallback((pageId: string, pageRoute: string | undefined) => {
@@ -319,13 +346,6 @@ export function WorkspaceShell({
     if (pageRoute) navigate(pageRoute); else void refresh(pageId);
   }, [navigate, refresh]);
 
-  const runPageAction = useCallback((values: Record<string, string>) => {
-    const data = new FormData();
-    data.set("projectId", projectId);
-    for (const [key, value] of Object.entries(values)) data.set(key, value);
-    void pageTreeAction({}, data).then((result) => onTreeChanged(result.createdNodeId));
-  }, [onTreeChanged, projectId]);
-
   /* ---------------------------------------------------------- shortcuts */
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -333,82 +353,13 @@ export function WorkspaceShell({
       const meta = event.metaKey || event.ctrlKey;
       if (!meta) return;
       const key = event.key.toLowerCase();
-      if (key === "b") { event.preventDefault(); toggleExplorer(); }
+      if (key === "k") { event.preventDefault(); setPaletteOpen(true); }
+      else if (key === "b") { event.preventDefault(); toggleExplorer(); }
       else if (key === "j") { event.preventDefault(); toggleAgent(); }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggleAgent, toggleExplorer, view.fullScreen]);
-
-  /* --------------------------------------------------------- menu model */
-  const canUndo = history?.canUndo ?? false;
-  const canRedo = history?.canRedo ?? false;
-  // Written the same way for every platform: resolving the real modifier needs
-  // `navigator`, which the server does not have.
-  const SHORTCUT = { explorer: "Ctrl / ⌘ + B", agent: "Ctrl / ⌘ + J" };
-  const pageEntries: MenuEntry[] = currentNode ? [
-    { kind: "separator" },
-    { kind: "caption", label: currentNode.name },
-    { kind: "item", label: "Page settings & address…", icon: <FileCog size={14} />, onSelect: () => openPanel("pages") },
-    { kind: "item", label: "Duplicate this page", icon: <Copy size={14} />, onSelect: () => runPageAction({ intent: "duplicate", nodeId: currentNode.id }) },
-    ...(currentNode.isHomepage ? [] : [{ kind: "item" as const, label: "Set as home page", icon: <House size={14} />, onSelect: () => runPageAction({ intent: "homepage", nodeId: currentNode.id }) }]),
-  ] : [];
-
-  const groups: MenuGroup[] = [
-    { id: "canvas", label: "Canvas", entries: [
-      { kind: "item", label: "All projects", icon: <LayoutGrid size={14} />, href: "/dashboard" },
-      { kind: "item", label: "Workspaces", icon: <LayoutGrid size={14} />, href: "/workspaces" },
-      { kind: "item", label: "Your account", icon: <UserRound size={14} />, href: "/account" },
-      { kind: "separator" },
-      { kind: "item", label: "Keyboard shortcuts", icon: <Keyboard size={14} />, onSelect: () => openPanel("shortcuts") },
-      { kind: "separator" },
-      { kind: "item", label: "Sign out", icon: <LogOut size={14} />, onSelect: () => startTransition(() => { void signOutAction(); }) },
-    ] },
-    { id: "project", label: "Project", entries: [
-      { kind: "item", label: "Project details…", icon: <Settings size={14} />, onSelect: () => openPanel("overview") },
-      { kind: "item", label: "Project settings…", icon: <Sparkles size={14} />, title: "Persistent guidance for the agent", onSelect: () => openPanel("settings") },
-      { kind: "item", label: "Collaborators…", icon: <UsersRound size={14} />, onSelect: () => openPanel("collaborators") },
-      { kind: "separator" },
-      { kind: "item", label: "Export website…", icon: <Download size={14} />, onSelect: () => openPanel("export") },
-    ] },
-    { id: "pages", label: "Pages", entries: [
-      { kind: "item", label: "Manage all pages…", icon: <ListTree size={14} />, onSelect: () => openPanel("pages") },
-      { kind: "item", label: "New page", icon: <FilePlus2 size={14} />, onSelect: () => { saveLayout({ ...layout, explorer: true }); openPanel("pages"); } },
-      { kind: "item", label: "New folder", icon: <FolderPlus size={14} />, onSelect: () => { saveLayout({ ...layout, explorer: true }); openPanel("pages"); } },
-      ...pageEntries,
-    ] },
-    { id: "assets", label: "Assets", entries: [
-      { kind: "item", label: "Images…", icon: <Images size={14} />, onSelect: () => openPanel("media") },
-      { kind: "item", label: "Reusable sections…", icon: <Blocks size={14} />, title: "Building Blocks — navbars, footers and other shared sections", onSelect: () => openPanel("blocks") },
-    ] },
-    { id: "design", label: "Design", entries: [
-      { kind: "item", label: "Brand & logo…", icon: <Palette size={14} />, onSelect: () => openPanel("brand") },
-      { kind: "item", label: "Colours, type & spacing…", icon: <Type size={14} />, onSelect: () => openPanel("brand") },
-      { kind: "separator" },
-      { kind: "caption", label: "Preview appearance" },
-      { kind: "item", label: "Light", icon: <Sun size={14} />, checked: view.theme === "light", onSelect: () => changeTheme("light") },
-      { kind: "item", label: "Dark", icon: <Moon size={14} />, checked: view.theme === "dark", onSelect: () => changeTheme("dark") },
-    ] },
-    { id: "history", label: "History", entries: [
-      { kind: "item", label: canUndo ? history!.undoLabel : "Nothing to undo", icon: <Undo2 size={14} />, disabled: !canUndo, onSelect: () => history?.undo() },
-      { kind: "item", label: canRedo ? history!.redoLabel : "Nothing to redo", icon: <Redo2 size={14} />, disabled: !canRedo, onSelect: () => history?.redo() },
-      { kind: "separator" },
-      { kind: "item", label: "Version history…", icon: <RefreshCw size={14} />, onSelect: () => history?.openVersions() },
-      { kind: "item", label: "Checkpoints…", icon: <Save size={14} />, title: "Save the whole website so you can come back to it", onSelect: () => history?.openCheckpoints() },
-    ] },
-    { id: "view", label: "View", entries: [
-      { kind: "item", label: "Website explorer", icon: <PanelLeft size={14} />, keys: SHORTCUT.explorer, checked: layout.explorer, onSelect: toggleExplorer },
-      { kind: "item", label: "Website Agent", icon: <PanelRight size={14} />, keys: SHORTCUT.agent, checked: layout.agent, onSelect: toggleAgent },
-      { kind: "separator" },
-      { kind: "caption", label: "Preview size" },
-      { kind: "item", label: "Desktop", icon: <Monitor size={14} />, checked: view.device === "desktop", onSelect: () => dispatchView({ type: "SET_DEVICE", device: "desktop" }) },
-      { kind: "item", label: "Tablet", icon: <Tablet size={14} />, checked: view.device === "tablet", onSelect: () => dispatchView({ type: "SET_DEVICE", device: "tablet" }) },
-      { kind: "item", label: "Phone", icon: <Smartphone size={14} />, checked: view.device === "mobile", onSelect: () => dispatchView({ type: "SET_DEVICE", device: "mobile" }) },
-      { kind: "separator" },
-      { kind: "item", label: "Full screen", icon: <Maximize2 size={14} />, keys: "Esc to exit", checked: view.fullScreen, onSelect: () => dispatchView({ type: "TOGGLE_FULL_SCREEN" }) },
-      { kind: "item", label: "Refresh the preview", icon: <RefreshCw size={14} />, onSelect: () => void refresh() },
-    ] },
-  ];
 
   const built = target?.kind === "block" || currentPage?.contentStatus === "generated";
   const agentTarget: AgentTarget = target
@@ -417,39 +368,21 @@ export function WorkspaceShell({
 
   return <div
     className="ws-shell"
-    data-explorer={layout.explorer ? "on" : "off"}
+    data-primary={layout.primary ? "on" : "off"}
     data-agent={layout.agent ? "on" : "off"}
+    data-breakpoint={breakpoint}
+    data-surface={layout.mobileSurface}
     data-fullscreen={view.fullScreen ? "on" : "off"}
     data-resizing={resizing ? "on" : "off"}
-    style={{ ["--ws-explorer-w" as string]: `${layout.explorerWidth}px`, ["--ws-ai-w" as string]: `${layout.agentWidth}px` }}
+    style={{ ["--ws-primary-w" as string]: `${layout.primaryWidth}px`, ["--ws-ai-w" as string]: `${layout.agentWidth}px` }}
   >
-    <header className="ws-menubar">
-      <Link href="/dashboard" className="ws-mark" title="All projects" aria-label="All projects">C</Link>
-      <MenuBar groups={groups} />
-      <p className="ws-titlebar">
-        <span className={`ws-dot ${activeJob ? "ws-dot-busy" : ""}`} aria-hidden="true" />
-        <strong>{projectName}</strong>
-        <span className="ws-titlebar-note">{activeJob ? "The agent is working…" : projectStatus === "active" ? "All changes saved" : projectStatus}</span>
-      </p>
-      <div className="ws-menubar-right">
-        {canManageProject ? <button type="button" className="ws-menu-trigger" onClick={() => openPanel("collaborators")}>Share</button> : null}
-        <button type="button" className="ws-avatar" title={userName} aria-label={`Your account — ${userName}`} onClick={() => openPanel("overview")}>{initials(userName)}</button>
-      </div>
-    </header>
+    <TitleBar workspaceName={workspaceName} projectName={projectName} pageName={currentPage?.name ?? "No page"} userName={userName} canShare={canManageProject} activeTasks={taskSummary.filter((task) => task.status === "active").length} failedTasks={taskSummary.filter((task) => task.status === "failed").length} saveState={activeJob ? "Canvas is updating your website…" : projectStatus === "active" ? undefined : projectStatus} agentOpen={layout.agent} onSearch={() => setPaletteOpen(true)} onShare={() => openPanel("collaborators")} onTasks={() => setTaskCenterOpen(true)} onToggleAgent={toggleAgent} onSignOut={() => startTransition(() => { void signOutAction(); })} />
 
     <div className="ws-body">
-      <aside className="ws-pane ws-pane-l" aria-label="Website structure">
-        <Explorer
-          projectId={projectId}
-          nodes={nodes}
-          currentPageId={currentPageId}
-          routes={routesByPageId}
-          onSelectPage={selectPage}
-          onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }}
-          onOpenPagesPanel={() => openPanel("pages")}
-          onTreeChanged={onTreeChanged}
-        />
-        <button type="button" className="ws-resize ws-resize-r" aria-label="Resize the explorer" onPointerDown={() => setResizing("explorer")} />
+      <ActivityBar activity={layout.activity} sidebarOpen={layout.primary} onActivity={selectActivity} onSettings={() => openPanel("overview")} onHelp={() => openPanel("shortcuts")} />
+      <aside className="ws-pane ws-pane-l" aria-label={`${layout.activity} tools`}>
+        <ContextSidebar activity={layout.activity} mediaAssets={mediaAssets} mediaFolders={mediaFolders} blocks={session.manifest.blocks} onOpenPanel={openPanel} onNewBlock={() => openPanel("blocks")} onHistory={() => history?.openVersions()} website={<Explorer projectId={projectId} nodes={nodes} currentPageId={currentPageId} routes={routesByPageId} onSelectPage={selectPage} onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }} onOpenPagesPanel={(nodeId) => openPanel("pages", nodeId ? { node: nodeId } : undefined)} onTreeChanged={onTreeChanged} createRequest={createRequest} />} />
+        <button type="button" className="ws-resize ws-resize-r" aria-label="Resize project tools" onPointerDown={() => setResizing("explorer")} />
       </aside>
 
       <PreviewStage
@@ -459,17 +392,29 @@ export function WorkspaceShell({
         device={view.device as Device}
         route={route}
         host={hostLabel(session.manifest.brand.companyName)}
+        pages={session.manifest.pages.map((page) => ({ id: page.pageId, name: page.name, route: page.canonicalRoute }))}
         status={status}
         error={error}
         selectMode={selectMode}
         fullScreen={view.fullScreen}
+        theme={view.theme}
+        zoom={layout.zoom}
+        fit={layout.fit}
+        canBack={routeHistory.index > 0}
+        canForward={routeHistory.index < routeHistory.entries.length - 1}
+        onBack={() => stepPreviewHistory(-1)}
+        onForward={() => stepPreviewHistory(1)}
+        onPage={navigate}
         onDevice={(device) => dispatchView({ type: "SET_DEVICE", device })}
+        onZoom={(zoom) => saveLayout({ ...layout, zoom, fit: false })}
+        onFit={() => saveLayout({ ...layout, fit: !layout.fit })}
+        onTheme={changeTheme}
         onSelectMode={toggleSelectMode}
         onRefresh={() => void refresh()}
         onFullScreen={() => dispatchView({ type: "TOGGLE_FULL_SCREEN" })}
       />
 
-      <aside className="ws-pane ws-pane-r" aria-label="Website Agent">
+      <aside className="ws-pane ws-pane-r" aria-label="Canvas Agent">
         <button type="button" className="ws-resize ws-resize-l" aria-label="Resize the agent panel" onPointerDown={() => setResizing("agent")} />
         <AgentPanel
           target={agentTarget}
@@ -485,11 +430,15 @@ export function WorkspaceShell({
           assets={mediaAssets}
           folders={mediaFolders}
           built={Boolean(built)}
+          queue={queuedFollowUps}
           onPrompt={setPrompt}
           onMedia={setSelectedMediaIds}
           onClearSelection={clearSelection}
           onSubmit={() => void submitPrompt()}
           onCancel={() => void cancelJob()}
+          onCancelQueued={(id) => void cancelQueued(id)}
+          onEditQueued={(item, value) => void editQueued(item, value)}
+          onReview={setReviewJobId}
           onHide={toggleAgent}
           onOpenHistory={() => history?.openVersions()}
         />
@@ -497,22 +446,13 @@ export function WorkspaceShell({
     </div>
 
     <footer className="ws-statusbar">
-      <button type="button" className="ws-sb-btn" aria-pressed={layout.explorer} title={`Show or hide the website explorer (${SHORTCUT.explorer})`} onClick={toggleExplorer}><PanelLeft size={12} aria-hidden="true" /><span className="ws-desktop-only">Explorer</span></button>
-      <button type="button" className="ws-sb-btn" aria-pressed={layout.agent} title={`Show or hide the Website Agent (${SHORTCUT.agent})`} onClick={toggleAgent}><PanelRight size={12} aria-hidden="true" /><span className="ws-desktop-only">Agent</span></button>
-      <span className="ws-sb-sep" />
-      <button type="button" className="ws-sb-btn" disabled={!canUndo} title={history?.undoLabel} onClick={() => history?.undo()}><Undo2 size={12} aria-hidden="true" />Undo</button>
-      <button type="button" className="ws-sb-btn" disabled={!canRedo} title={history?.redoLabel} onClick={() => history?.redo()}><Redo2 size={12} aria-hidden="true" />Redo</button>
-      <span className="ws-sb-sep" />
-      <button type="button" className="ws-sb-btn" onClick={() => history?.openVersions()}>History</button>
-      <span className="ws-sb-spacer" />
-      {status === "error"
-        ? <span className="ws-sb-note ws-sb-bad" role="status">Preview error</span>
-        : status === "loading"
-          ? <span className="ws-sb-note" role="status">Loading preview…</span>
-          : <span className="ws-sb-note ws-sb-ok" role="status">Preview ready</span>}
-      <span className="ws-sb-sep" />
-      <span className="ws-sb-note">{currentPage?.name ?? "No page"}</span>
+      <span className={`ws-sb-note ${status === "error" ? "ws-sb-bad" : status === "ready" ? "ws-sb-ok" : ""}`} role="status">{status === "error" ? <CircleAlert size={12} /> : status === "loading" ? <LoaderCircle className="spin" size={12} /> : <FileText size={12} />}{status === "error" ? "Preview needs attention" : status === "loading" ? "Loading preview…" : "Preview ready"}</span>
+      <span className="ws-sb-sep" /><span className="ws-sb-note">{currentPage?.name ?? "No page"}</span><span className="ws-sb-spacer" />
+      {queuedFollowUps.filter((item) => item.status === "queued" || item.status === "paused").length ? <button type="button" className="ws-sb-btn" onClick={() => setTaskCenterOpen(true)}><Bot size={12} />{queuedFollowUps.filter((item) => item.status === "queued" || item.status === "paused").length} queued</button> : null}
+      {taskSummary.some((task) => task.status === "active") ? <button type="button" className="ws-sb-btn" onClick={() => setTaskCenterOpen(true)}><LoaderCircle className="spin" size={12} />{taskSummary.filter((task) => task.status === "active").length} active</button> : null}
     </footer>
+
+    <nav className="ws-mobile-switcher" aria-label="Workspace surface"><button type="button" aria-pressed={layout.mobileSurface === "tools"} onClick={() => showMobileSurface("tools")}><FileText size={15} />Tools</button><button type="button" aria-pressed={layout.mobileSurface === "preview"} onClick={() => showMobileSurface("preview")}><FileText size={15} />Preview</button><button type="button" aria-pressed={layout.mobileSurface === "agent"} onClick={() => showMobileSurface("agent")}><Bot size={15} />Agent</button></nav>
 
     {/* Mounted for its logic and its History dialog; the visible controls live
         in the status bar and the History menu. */}
@@ -524,6 +464,9 @@ export function WorkspaceShell({
       hideTrigger
       onApi={publishHistoryApi}
     />
+    <CommandPalette projectId={projectId} userId={userId} open={paletteOpen} commands={commands} pages={commandPages} onClose={() => setPaletteOpen(false)} onPage={(page) => { if (page.type === "page") selectPage(page.id, page.routePath ?? undefined); else selectActivity("website"); }} />
+    <TaskCenter projectId={projectId} open={taskCenterOpen} onClose={() => setTaskCenterOpen(false)} onReview={setReviewJobId} onOpenExport={() => openPanel("export")} onReopenAgent={() => { if (!layout.agent) toggleAgent(); }} />
+    <ChangeReview projectId={projectId} jobId={reviewJobId} onClose={() => setReviewJobId(null)} onOpenPage={(id, pageRoute) => { setReviewJobId(null); selectPage(id, pageRoute ?? undefined); }} onOpenBlock={() => { setReviewJobId(null); openPanel("blocks"); }} onHistory={() => { setReviewJobId(null); history?.openVersions(); }} onChanged={onHistoryChanged} />
   </div>;
 }
 
@@ -539,11 +482,6 @@ function sameHistory(a: HistoryApi, b: HistoryApi) {
     && a.redo === b.redo
     && a.openVersions === b.openVersions
     && a.openCheckpoints === b.openCheckpoints;
-}
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).slice(0, 2);
-  return parts.map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
 }
 
 /** A friendly stand-in for the site's own domain in the address bar. */

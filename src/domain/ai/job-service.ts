@@ -57,7 +57,7 @@ export class GenerationJobService {
     });
   }
 
-  async createPageJob(userId: string, input: unknown) {
+  async createPageJob(userId: string, input: unknown, queueItemId?: string) {
     const parsed = createPageJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
@@ -85,7 +85,7 @@ export class GenerationJobService {
         const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = page.currentVersionId ? "page_modify" as const : "page_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, queueItemId, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
@@ -105,7 +105,7 @@ export class GenerationJobService {
    * UUID, so retries and reconnects stay deterministic, and the partial unique index on
    * active block mutations enforces one AI job per block at the database level.
    */
-  async createBlockJob(userId: string, input: unknown) {
+  async createBlockJob(userId: string, input: unknown, queueItemId?: string) {
     const parsed = createBlockJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
@@ -131,7 +131,7 @@ export class GenerationJobService {
         const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = block.currentVersionId ? "block_modify" as const : "block_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, queueItemId, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));

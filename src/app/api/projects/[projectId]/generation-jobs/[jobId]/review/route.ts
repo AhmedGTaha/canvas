@@ -1,0 +1,6 @@
+import { ChangeReviewService } from "@/domain/history/change-review-service";
+import { userMessage } from "@/domain/shared/errors";
+import { getCurrentUser } from "@/server/auth/session";
+type Context = { params: Promise<{ projectId: string; jobId: string }> };
+export async function GET(_request: Request, { params }: Context) { const user = await getCurrentUser(); if (!user) return Response.json({ error: "Authentication required." }, { status: 401 }); try { const { projectId, jobId } = await params; return Response.json(await new ChangeReviewService().get(user.id, projectId, jobId), { headers: { "Cache-Control": "private, no-store" } }); } catch (error) { return Response.json({ error: userMessage(error, "This change review could not be opened.") }, { status: 404 }); } }
+export async function POST(_request: Request, { params }: Context) { const user = await getCurrentUser(); if (!user) return Response.json({ error: "Authentication required." }, { status: 401 }); try { const { projectId, jobId } = await params; const result = await new ChangeReviewService().undo(user.id, projectId, jobId); return Response.json({ summary: result.changeSet.summary }); } catch (error) { return Response.json({ error: userMessage(error, "This update could not be undone safely.") }, { status: 409 }); } }

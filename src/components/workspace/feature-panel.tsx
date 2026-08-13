@@ -57,3 +57,6 @@ export function FeaturePanel({ title, description, size = "wide", actions, child
     <div className="ws-panel-bd">{children}</div>
   </dialog>;
 }
+
+export function DetailDrawer(props: Omit<Parameters<typeof FeaturePanel>[0], "size">) { return <FeaturePanel {...props} size="drawer" />; }
+export function FocusedWorkSurface(props: Omit<Parameters<typeof FeaturePanel>[0], "size">) { return <FeaturePanel {...props} size="wide" />; }

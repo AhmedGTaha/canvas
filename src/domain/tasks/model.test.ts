@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { safeTaskStage, taskStatus } from "./model";
+describe("task normalization", () => { it("normalizes generation and export states", () => { expect(taskStatus("generation", "validating")).toBe("active"); expect(taskStatus("export", "packaging")).toBe("active"); expect(taskStatus("generation", "cancelled")).toBe("cancelled"); expect(taskStatus("export", "failed")).toBe("failed"); }); it("uses plain-language stages", () => { expect(safeTaskStage("active", "preparing_context")).toBe("Preparing your website"); expect(safeTaskStage("failed", "AI_PROVIDER_TIMEOUT")).toBe("Needs attention"); }); });

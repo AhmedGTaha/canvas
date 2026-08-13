@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, FolderClosed, FolderOpen, FolderPlus, House, ListTree, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, FolderClosed, FolderOpen, FolderPlus, House, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { pageTreeAction } from "@/app/actions/pages";
 import { Menu } from "@/components/ui/menu";
@@ -27,14 +27,15 @@ export type ExplorerProps = {
   onSelectPage: (pageId: string, route: string | undefined) => void;
   /** Opens the page and reveals the agent panel, focused on it. */
   onEditWithAgent: (pageId: string, route: string | undefined) => void;
-  onOpenPagesPanel: () => void;
+  onOpenPagesPanel: (nodeId?: string) => void;
   /** Reports a committed tree change; the id is set when a node was created. */
   onTreeChanged: (createdNodeId?: string) => void;
+  createRequest?: { type: "page" | "folder"; key: number } | null;
 };
 
 type Draft = { parentId: string | null; type: "page" | "folder" };
 
-export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage, onEditWithAgent, onOpenPagesPanel, onTreeChanged }: ExplorerProps) {
+export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage, onEditWithAgent, onOpenPagesPanel, onTreeChanged, createRequest }: ExplorerProps) {
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -78,6 +79,7 @@ export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage
     setDraft(next);
     if (next.parentId) setCollapsed((current) => ({ ...current, [next.parentId as string]: false }));
   }
+  useEffect(() => { if (!createRequest) return; const timer = window.setTimeout(() => startDraft({ parentId: null, type: createRequest.type }), 0); return () => clearTimeout(timer); }, [createRequest]);
 
   return <>
     <div className="ws-pane-hd">
@@ -85,7 +87,6 @@ export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage
       <div className="ws-pane-hd-acts">
         <button type="button" className="ws-icon-btn" title="New page" aria-label="New page" onClick={() => startDraft({ parentId: null, type: "page" })}><FilePlus2 size={14} /></button>
         <button type="button" className="ws-icon-btn" title="New folder" aria-label="New folder" onClick={() => startDraft({ parentId: null, type: "folder" })}><FolderPlus size={14} /></button>
-        <button type="button" className="ws-icon-btn" title="Manage all pages" aria-label="Manage all pages" onClick={onOpenPagesPanel}><ListTree size={14} /></button>
       </div>
     </div>
 
@@ -145,7 +146,7 @@ type RowProps = {
   onToggle: (id: string) => void;
   onSelectPage: ExplorerProps["onSelectPage"];
   onEditWithAgent: ExplorerProps["onEditWithAgent"];
-  onOpenPagesPanel: () => void;
+  onOpenPagesPanel: (nodeId?: string) => void;
   onRename: (id: string | null) => void;
   onDraft: (draft: Draft) => void;
   onCancelDraft: () => void;
@@ -201,7 +202,7 @@ function Row(props: RowProps) {
           <button type="button" className="ws-mi" disabled={pending} onClick={() => onRun({ intent: "reorder", nodeId: node.id, direction: "up" })}><CornerUpLeft size={14} /><span className="ws-mi-label">Move up</span></button>
           <button type="button" className="ws-mi" disabled={pending} onClick={() => onRun({ intent: "reorder", nodeId: node.id, direction: "down" })}><CornerUpLeft size={14} style={{ transform: "scaleY(-1)" }} /><span className="ws-mi-label">Move down</span></button>
           <div className="ws-menu-sep" />
-          <button type="button" className="ws-mi" onClick={onOpenPagesPanel}><Settings2 size={14} /><span className="ws-mi-label">{isFolder ? "Folder settings…" : "Page settings & address…"}</span></button>
+          <button type="button" className="ws-mi" onClick={() => onOpenPagesPanel(node.id)}><Settings2 size={14} /><span className="ws-mi-label">{isFolder ? "Folder Settings" : "Page Settings"}</span></button>
           {!isFolder ? <button type="button" className="ws-mi" onClick={() => onEditWithAgent(node.id, routes[node.id])}><Sparkles size={14} /><span className="ws-mi-label">Edit with the agent</span></button> : null}
           <div className="ws-menu-sep" />
           <DeleteItem node={node} pending={pending} onConfirm={() => onRun({ intent: "delete", nodeId: node.id })} />

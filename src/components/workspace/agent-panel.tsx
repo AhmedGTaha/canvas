@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { Blocks, ChevronRight, CircleAlert, FileText, History, LoaderCircle, MousePointerClick, Send, Sparkles, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MultiMediaPicker } from "@/components/media/media-picker";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import { AI_LIMITS } from "@/domain/ai/limits";
@@ -11,6 +11,7 @@ import { PAGE_MEDIA_ATTACHMENT_LIMIT } from "@/domain/page-generation/contract";
 export type AgentMessage = { id: string; role: "user" | "assistant" | "system_internal"; content: string; createdAt: string };
 export type AgentJob = null | { id: string; status: string; progressStage: string; errorMessage: string | null };
 export type AgentTarget = { kind: "page"; id: string; name: string } | { kind: "block"; id: string; name: string } | null;
+export type AgentQueueItem = { id: string; prompt: string; status: "queued" | "paused" | "claimed" | "completed" | "cancelled"; pauseReason: string | null; editable: boolean; selectedMediaIds: string[]; selectedElement: unknown };
 export type AgentSelection = { canvasId: string; elementType: string; label: string | null; blockId: string | null } | null;
 
 const STARTERS = [
@@ -20,7 +21,7 @@ const STARTERS = [
 ];
 
 /**
- * The Website Agent panel.
+ * The Canvas Agent panel.
  *
  * The conversation is the panel's main content and gets the vertical space,
  * rather than being a short scroll box wedged under the page list as it was in
@@ -28,7 +29,7 @@ const STARTERS = [
  */
 export function AgentPanel({
   target, selection, selectMode, messages, job, activeJob, loading, error, prompt, selectedMediaIds, assets, folders, built,
-  onPrompt, onMedia, onClearSelection, onSubmit, onCancel, onHide, onOpenHistory,
+  queue, onPrompt, onMedia, onClearSelection, onSubmit, onCancel, onCancelQueued, onEditQueued, onReview, onHide, onOpenHistory,
 }: {
   target: AgentTarget;
   selection: AgentSelection;
@@ -43,11 +44,15 @@ export function AgentPanel({
   assets: MediaAsset[];
   folders: MediaFolder[];
   built: boolean;
+  queue: AgentQueueItem[];
   onPrompt: (value: string) => void;
   onMedia: (ids: string[]) => void;
   onClearSelection: () => void;
   onSubmit: () => void;
   onCancel: () => void;
+  onCancelQueued: (id: string) => void;
+  onEditQueued: (item: AgentQueueItem, prompt: string) => void;
+  onReview: (jobId: string) => void;
   onHide: () => void;
   onOpenHistory: () => void;
 }) {
@@ -64,21 +69,21 @@ export function AgentPanel({
       ? (editingBlock ? "Change the spacing in this shared block…" : "Make the hero shorter and improve the spacing on phones…")
       : "Describe the page you want — for example, a services page with three cards…";
   const sendLabel = selection ? "Update element" : built ? (editingBlock ? "Update block" : "Update page") : "Create page";
-  const canSend = Boolean(target) && Boolean(prompt.trim()) && !activeJob && !loading;
+  const canSend = Boolean(target) && Boolean(prompt.trim()) && !loading;
 
   return <>
     <div className="ws-pane-hd">
-      <h2>Website Agent</h2>
+      <h2>Canvas Agent</h2>
       <div className="ws-pane-hd-acts">
         <button type="button" className="ws-icon-btn" title="Version history" aria-label="Version history" onClick={onOpenHistory}><History size={14} /></button>
-        <button type="button" className="ws-icon-btn" title="Hide the agent panel" aria-label="Hide the agent panel" onClick={onHide}><ChevronRight size={14} /></button>
+        <button type="button" className="ws-icon-btn" title="Collapse Canvas Agent" aria-label="Collapse Canvas Agent" onClick={onHide}><ChevronRight size={14} /></button>
       </div>
     </div>
 
     {/* What the agent will change, stated before you type rather than inferred. */}
     <div className="wsa-context">
       {editingBlock ? <Blocks size={12} aria-hidden="true" /> : <FileText size={12} aria-hidden="true" />}
-      <span className="wsa-context-label">Editing</span>
+      <span className="wsa-context-label">{selection ? "Selected Element" : editingBlock ? "Reusable Section" : "Page"}</span>
       <strong>{target ? target.name : "nothing yet"}</strong>
       {selection ? <span className="ws-chip" style={{ marginLeft: "auto" }}>
         <MousePointerClick size={10} aria-hidden="true" />
@@ -107,8 +112,10 @@ export function AgentPanel({
         <span>{activeJob.progressStage}</span>
         <button type="button" className="button button-secondary button-sm" onClick={onCancel} disabled={loading}>Cancel</button>
       </div> : null}
+      {queue.filter((item) => item.status === "queued" || item.status === "paused").map((item, index) => <QueuedFollowUp key={item.id} item={item} position={index + 1} onCancel={onCancelQueued} onEdit={onEditQueued} />)}
 
       {job?.status === "failed" ? <p className="wsa-error" role="alert"><CircleAlert size={14} aria-hidden="true" />{job.errorMessage || "The agent could not apply that change. Try describing it differently."}</p> : null}
+      {job?.status === "completed" ? <button type="button" className="wsa-review-link" onClick={() => onReview(job.id)}>Review completed changes</button> : null}
       {error ? <p className="wsa-error" role="alert"><CircleAlert size={14} aria-hidden="true" />{error}</p> : null}
       {selectMode && !selection ? <p className="ws-chip ws-chip-neutral" style={{ alignSelf: "flex-start" }}><MousePointerClick size={11} aria-hidden="true" /><span>Click a part of the website to select it</span></p> : null}
     </div>
@@ -128,7 +135,7 @@ export function AgentPanel({
         value={prompt}
         rows={3}
         maxLength={AI_LIMITS.userMessageCharacters}
-        disabled={!target || Boolean(activeJob)}
+        disabled={!target}
         placeholder={placeholder}
         onChange={(event) => onPrompt(event.target.value)}
         // Enter sends, Shift+Enter adds a line — the convention for chat composers.
@@ -142,9 +149,19 @@ export function AgentPanel({
           : null}
         <button type="button" className="wsa-send" disabled={!canSend} onClick={onSubmit}>
           {loading && !activeJob ? <LoaderCircle className="spin" size={12} aria-hidden="true" /> : <Send size={12} aria-hidden="true" />}
-          {sendLabel}
+          {activeJob ? "Queue follow-up" : sendLabel}
         </button>
       </div>
     </div>
   </>;
+}
+
+function QueuedFollowUp({ item, position, onCancel, onEdit }: { item: AgentQueueItem; position: number; onCancel: (id: string) => void; onEdit: (item: AgentQueueItem, prompt: string) => void }) {
+  const [editing, setEditing] = useState(false); const [value, setValue] = useState(item.prompt);
+  return <div className={`wsa-progress ${item.status === "paused" ? "wsa-error" : ""}`} role="status">
+    <span>{item.status === "paused" ? "Review needed" : `Follow-up ${position}`}</span><p>{item.status === "paused" ? item.pauseReason : item.prompt}</p>
+    {item.editable && editing ? <><textarea aria-label="Edit queued follow-up" value={value} onChange={(event) => setValue(event.target.value)} /><button type="button" className="button button-secondary button-sm" onClick={() => { onEdit(item, value); setEditing(false); }}>Save</button></> : null}
+    {item.editable && !editing ? <button type="button" className="button button-secondary button-sm" onClick={() => setEditing(true)}>Edit</button> : null}
+    {item.editable ? <button type="button" className="button button-secondary button-sm" onClick={() => onCancel(item.id)}>Cancel</button> : null}
+  </div>;
 }

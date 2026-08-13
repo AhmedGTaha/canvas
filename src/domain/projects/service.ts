@@ -35,8 +35,9 @@ export class ProjectService {
     const id = projectIdSchema.parse(rawId);
     const access = await this.access.requireProjectAccess(userId, id);
     const owner = await this.projects.findOwnerProfile(id);
-    if (!owner) throw new DomainError("NOT_FOUND", "Project not found.");
-    return { ...access, owner };
+    const workspace = await this.workspaces.findById(access.project.workspaceId);
+    if (!owner || !workspace) throw new DomainError("NOT_FOUND", "Project not found.");
+    return { ...access, owner, workspace };
   }
 
   async create(userId: string, input: unknown) {

@@ -18,6 +18,7 @@ generated code never runs on the Canvas server.
 - **Building Blocks** — reusable sections; global blocks resolve through one stable UUID and propagate everywhere.
 - **Element-level editing** — click a region in the Preview and ask Canvas to change that region only.
 - **History** — Change Sets, Undo/Redo with conflict protection, Page/Block version history and restore, named project checkpoints.
+- **Workflow tools** — one searchable command system, durable AI/export task visibility, safe queued AI follow-ups, and committed change reviews.
 - **Export** — validated ZIP containing a runnable Next.js project with no Canvas internals.
 
 ## Prerequisites
@@ -183,6 +184,11 @@ at an expendable local database only.
 - `src/generated-runtime` — Preview manifest, signed sessions, restrictive response policy, isolated document renderer, runtime router and messaging.
 - `src/server` — database client and migrations, authorization, sessions, object storage, jobs, observability, HTTP error normalization.
 - `migrations` — deterministic SQL with the database-level integrity constraints Canvas depends on.
+
+The mounted project workbench is split into explicit presentation boundaries: `TitleBar`,
+`ActivityBar`, `ContextSidebar`, `PreviewStage`, and `AgentPanel`. `workspace-layout.ts`
+owns breakpoint normalization and persisted pane state; intercepted `/panel/*` routes render
+detail drawers or focused work without replacing that mounted workbench.
 
 Immutable history is the backbone: Page Versions, Block Versions, Change Sets, and
 Checkpoints are never mutated or deleted. Restores move active pointers and are recorded

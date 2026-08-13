@@ -10,7 +10,6 @@ vi.mock("@/app/actions/pages", () => ({ pageTreeAction }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), back: vi.fn(), refresh: vi.fn() }) }));
 
 const { Explorer } = await import("./explorer");
-const { MenuBar } = await import("./menu-bar");
 
 afterEach(() => { cleanup(); pageTreeAction.mockClear(); });
 
@@ -116,6 +115,12 @@ describe("website explorer", () => {
     expect(screen.getByLabelText("Rename New page")).toBeDefined();
   });
 
+  it("starts the same inline creation flow from command and activity entry points", async () => {
+    const view = renderExplorer({ createRequest: { type: "folder", key: 1 } });
+    await waitFor(() => expect(screen.getByLabelText("Rename New folder")).toBeDefined());
+    view.onTreeChanged.mockClear();
+  });
+
   it("hands the new page's id up so the workspace can open it without a reload", async () => {
     const { onTreeChanged } = renderExplorer();
     fireEvent.click(screen.getByRole("button", { name: "New page" }));
@@ -159,61 +164,26 @@ describe("website explorer", () => {
   });
 });
 
-describe("application menu bar", () => {
-  const groups = [
-    { id: "project", label: "Project", entries: [{ kind: "item" as const, label: "Project settings…", onSelect: vi.fn() }] },
-    { id: "view", label: "View", entries: [{ kind: "item" as const, label: "Website explorer", checked: true, onSelect: vi.fn() }] },
-  ];
-
-  it("opens a menu, exposes its items, and closes on a second click", () => {
-    render(<MenuBar groups={groups} />);
-    const trigger = screen.getByRole("button", { name: "Project" });
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(trigger);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("menuitem", { name: "Project settings…" })).toBeDefined();
-    fireEvent.click(trigger);
-    expect(screen.queryByRole("menuitem")).toBeNull();
-  });
-
-  it("closes on Escape and returns focus to the trigger", () => {
-    render(<MenuBar groups={groups} />);
-    const trigger = screen.getByRole("button", { name: "Project" });
-    fireEvent.click(trigger);
-    fireEvent.keyDown(trigger, { key: "Escape" });
-    expect(screen.queryByRole("menuitem")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-  });
-
-  it("reports toggle state so the View menu shows what is on", () => {
-    render(<MenuBar groups={groups} />);
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
-    expect(screen.getByRole("menuitemcheckbox", { name: "Website explorer" }).getAttribute("aria-checked")).toBe("true");
-  });
-});
-
 describe("workspace responsive strategy", () => {
-  const css = readFileSync("src/app/workspace.css", "utf8");
+  const css = readFileSync("src/app/workspace.css", "utf8") + readFileSync("src/app/workspace-redesign.css", "utf8");
 
   it("declares the progressive collapse breakpoints", () => {
     const queries = [...css.matchAll(/@media \(max-width:\s*(\d+)px\)/g)].map((match) => Number(match[1]));
-    for (const width of [1180, 1000, 720]) expect(queries).toContain(width);
+    for (const width of [1279, 767]) expect(queries).toContain(width);
   });
 
   it("never squeezes three columns onto a tablet or phone", () => {
-    const tablet = css.slice(css.indexOf("@media (max-width: 1000px)"), css.indexOf("@media (max-width: 720px)"));
-    const phone = css.slice(css.indexOf("@media (max-width: 720px)"));
-    // Tablet drops to two columns and floats the agent over the stage.
-    expect(tablet).toContain("grid-template-columns: var(--ws-explorer-w) minmax(0, 1fr)");
-    expect(tablet).toMatch(/\.ws-shell\[data-agent="on"\] \.ws-pane-r \{[^}]*position: fixed/);
-    // Phone gives the website the whole width; both panels become drawers.
-    expect(phone).toContain("grid-template-columns: minmax(0, 1fr)");
-    expect(phone).toMatch(/\.ws-shell\[data-explorer="on"\] \.ws-pane-l \{[^}]*position: fixed/);
+    const tablet = css.slice(css.lastIndexOf("@media (max-width:1279px)"), css.lastIndexOf("@media (max-width:767px)"));
+    const phone = css.slice(css.lastIndexOf("@media (max-width:767px)"));
+    expect(tablet).toMatch(/data-agent=.*\.ws-pane-r\{position:fixed/);
+    expect(phone).toContain('data-surface="tools"');
+    expect(phone).toContain('data-surface="preview"');
+    expect(phone).toContain('data-surface="agent"');
   });
 
   it("keeps panels inside the viewport on phones", () => {
-    const phone = css.slice(css.indexOf("@media (max-width: 720px)"));
-    expect(phone).toMatch(/\.ws-panel-wide, \.ws-panel-drawer \{[\s\S]{0,220}left: 8px/);
+    const phone = css.slice(css.lastIndexOf("@media (max-width:767px)"));
+    expect(phone).toMatch(/\.ws-panel-wide,\.ws-panel-drawer\{[^}]*top:0[^}]*left:0/);
   });
 
   it("sizes panels from their insets so the body can scroll", () => {
