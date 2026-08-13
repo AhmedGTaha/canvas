@@ -54,6 +54,27 @@ function jsxAttribute(node: ts.JsxAttributes, name: string) {
   return ts.isJsxExpression(attribute.initializer) ? literal(attribute.initializer.expression) : null;
 }
 
+function validateCanvasIdAttributes(file: ts.SourceFile) {
+  const invalid = new Set<string>();
+  const counts = new Map<string, number>();
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxAttribute(node) && node.name.getText(file) === "data-canvas-id") {
+      const parent = node.parent;
+      const value = jsxAttribute(parent, "data-canvas-id");
+      if (value === null) invalid.add(node.initializer?.getText(file) ?? "<missing>");
+      else {
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+        if (!CANVAS_ID_PATTERN.test(value)) invalid.add(JSON.stringify(value));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (invalid.size) fail(`invalid data-canvas-id values: ${[...invalid].join(", ")}; expected static literals matching ${CANVAS_ID_PATTERN.source}`);
+  const duplicates = [...counts].filter(([, count]) => count > 1).map(([value]) => value);
+  if (duplicates.length) fail(`duplicate data-canvas-id values: ${duplicates.join(", ")}`);
+}
+
 /**
  * Single security/validation authority for every generated component Canvas stores.
  * Pages and Building Blocks share one policy so neither can be weakened in isolation.
@@ -65,6 +86,7 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
   const file = ts.createSourceFile(`generated-${input.kind}.tsx`, input.sourceCode, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
   const parseDiagnostics = (file as ts.SourceFile & { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
   if (parseDiagnostics.length) fail(`TSX syntax: ${parseDiagnostics[0]?.messageText}`);
+  validateCanvasIdAttributes(file);
   const media = new Set<string>(); const routes = new Set<string>(); const external = new Set<string>();
   const usages: GeneratedBlockUsage[] = []; const usageKeys = new Set<string>();
   const editableElements: EditableElement[] = []; const canvasIds = new Set<string>();
@@ -105,7 +127,6 @@ export async function validateGeneratedSource(input: GeneratedSourceValidationIn
       if (node.attributes.properties.some((item) => ts.isJsxAttribute(item) && item.name.getText() === "data-canvas-id")) {
         const canvasId = jsxAttribute(node.attributes, "data-canvas-id");
         if (!canvasId) fail("data-canvas-id must be a static value");
-        if (!CANVAS_ID_PATTERN.test(canvasId)) fail(`invalid Canvas element ID: ${canvasId}`);
         if (tag === "CanvasBlock") fail("Building Block references cannot carry a Canvas element ID");
         if (canvasIds.has(canvasId)) fail(`duplicate Canvas element ID: ${canvasId}`);
         canvasIds.add(canvasId);

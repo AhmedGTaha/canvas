@@ -42,5 +42,9 @@ describe("Building Block generation prompt", () => {
     expect(request.systemInstructions).toContain("browser defaults never determine its appearance");
     expect(request.systemInstructions).toContain("update automatically when that theme changes");
     expect(request.systemInstructions).toContain("Do not invent utility classes");
+    expect(request.systemInstructions).toContain("^[a-z0-9][a-z0-9-]{0,63}$");
+    expect(request.systemInstructions).toContain("Never use a variable, index, property access, template literal");
+    expect(request.systemInstructions).toContain("Do not assign it to every DOM element");
+    expect(request.systemInstructions).toContain("keep every existing data-canvas-id unchanged");
   });
 });

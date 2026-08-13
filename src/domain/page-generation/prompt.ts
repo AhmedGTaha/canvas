@@ -17,14 +17,16 @@ Never use fetch, network APIs, eval, Function, require, dynamic imports, server 
 Forms are visual/local-interaction only. If a backend feature was requested, build the valid frontend and disclose the limitation in summary.limitations.
 The response referencedMediaIds must exactly match CanvasImage mediaId values in the source.
 Before returning, inspect the complete sourceCode and remove every style= attribute, dynamic className, raw img, invented route, remote URL, unsupported import, and browser/network API. This is mandatory even when those constructs would normally be valid React.
+Keep summary.headline at 120 characters or fewer, include at most 6 summary.changes with each item at 200 characters or fewer, and at most 4 summary.limitations with each item at 200 characters or fewer. Shorten the wording before returning; never exceed these structured-response limits.
 
 Reuse existing Building Blocks instead of duplicating equivalent UI. When the project already has a suitable block — especially a global navbar or footer — reference it with <CanvasBlock blockId="<block UUID>" usageKey="<stable-page-key>" /> imported from @canvas/site-runtime rather than writing similar markup again.
 Only blockId values listed in existingBuildingBlocks may be used. Never invent a block UUID and never reference a block that has no active version.
 usageKey is a stable lowercase key unique within this page, such as "site-navbar" or "pricing-section". Keep the same usageKey when a block stays in the same place across updates.
 The response blockUsages must exactly match the CanvasBlock references in the source.
 
-Give every meaningful editable region a stable data-canvas-id: sections, hero, cards, headings, calls to action, images, and navigation regions. Do not put one on trivial wrapper or text nodes, and never on CanvasBlock.
-Canvas element IDs are lowercase letters, numbers, and hyphens, unique within the page, and describe the region ("hero-main", "pricing-card-pro"). Keep an existing ID unchanged whenever that region survives a modification, so selections stay stable. Optionally add a short human data-canvas-label such as "Pro pricing card".`;
+Assign data-canvas-id only to meaningful editable regions such as a hero, section, grid, important card, heading, call to action, image, or navigation region. Do not assign it to every DOM element, trivial wrappers, ordinary text nodes, or CanvasBlock.
+Every data-canvas-id must be a static quoted JSX string literal containing lowercase ASCII letters, numbers, and hyphens only. It must match exactly ^[a-z0-9][a-z0-9-]{0,63}$ and be unique within the complete generated page. Good examples: "hero", "features-grid", "pricing-card-1". Never duplicate an ID. Never use a variable, index, property access, template literal, concatenation, or other expression for an ID. For repeated elements rendered with map, put one static ID on their containing region instead of dynamic IDs on the repeated children; use explicit markup if individual selectable cards need unique static IDs.
+Optional data-canvas-label values must also be static quoted strings, never expressions. During modification, keep every existing data-canvas-id unchanged when its corresponding region survives, including when its text, layout, or styling changes. Remove an ID only when that region is removed.`;
 
 export function assemblePageGenerationRequest(input: { context: ProjectAIContext; userRequest: string; currentSource: string | null; selectedElement?: ResolvedElementSelection | null; imageParts: Array<{ mimeType: string; data: Uint8Array; mediaId: string; displayName: string }>; signal?: AbortSignal }): AIRequest {
   const modification = Boolean(input.currentSource);

@@ -19,6 +19,8 @@ import { assemblePageGenerationRequest } from "./prompt";
 import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
 import { observe } from "@/server/observability/events";
 import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
+import { repairGeneratedCanvasIds } from "@/domain/generated-source/canvas-id-repair";
+import { generatedSourceCorrectionRequest } from "@/domain/generated-source/correction";
 
 function summaryMessage(summary: PageChangeSummary) { return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n"); }
 
@@ -65,7 +67,8 @@ export class PageGenerationOrchestrationService {
       const imageParts = await Promise.all(selected.map(async (asset) => { const binary = await new MediaService().readBinary(initial.actorUserId, asset.id); if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable."); return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName }; }));
       const provider = this.providerResolver();
       
-      const response = await provider.generateStructured(assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal }), generatedPageResponseSchema);
+      const providerRequest = assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal });
+      let response = await provider.generateStructured(providerRequest, generatedPageResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
       await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
       
@@ -78,7 +81,18 @@ export class PageGenerationOrchestrationService {
       const availableBlockIds = new Set(context.blocks.filter((block) => block.currentVersionId).map((block) => block.id));
       const declaredBlockUsages = response.structuredData.blockUsages;
       const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(declaredBlockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
-      const manifest = await validateGeneratedPageSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages, blockSources });
+      let repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
+      let manifest: GeneratedPageManifest;
+      try {
+        manifest = await validateGeneratedPageSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages, blockSources });
+      } catch (error) {
+        if (!(error instanceof AIError) || error.code !== "AI_PROVIDER_INVALID_RESPONSE") throw error;
+        response = await provider.generateStructured(generatedSourceCorrectionRequest(providerRequest, response.text, error.diagnostic), generatedPageResponseSchema);
+        if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
+        await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
+        repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
+        manifest = await validateGeneratedPageSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages: response.structuredData.blockUsages, blockSources });
+      }
       
       if (selectedElement) {
         const { targetCanvasId, targetRemoved } = response.structuredData;
@@ -89,7 +103,7 @@ export class PageGenerationOrchestrationService {
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "applying", "Applying page update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
-      const completed = await this.commit({ jobId, sourceCode: response.structuredData.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
+      const completed = await this.commit({ jobId, sourceCode: repaired.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
       observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: performance.now() - startedAt });
       return completed;
     } catch (cause) {

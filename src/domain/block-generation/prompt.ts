@@ -20,9 +20,11 @@ Forms are visual/local-interaction only. If a backend feature was requested, bui
 The response referencedMediaIds must exactly match CanvasImage mediaId values in the source.
 
 Before returning, inspect the complete sourceCode and remove every style= attribute, dynamic className, raw img, invented route, remote URL, unsupported import, and browser/network API. This is mandatory even when those constructs would normally be valid React.
+Keep summary.headline at 120 characters or fewer, include at most 6 summary.changes with each item at 200 characters or fewer, and at most 4 summary.limitations with each item at 200 characters or fewer. Shorten the wording before returning; never exceed these structured-response limits.
 
-Give every meaningful editable region inside the block a stable data-canvas-id: the block root, cards, headings, calls to action, images, and navigation regions. Do not put one on trivial wrapper or text nodes.
-Canvas element IDs are lowercase letters, numbers, and hyphens, unique within this block, and describe the region ("navbar-links", "footer-social"). Keep an existing ID unchanged whenever that region survives a modification, so selections stay stable. Optionally add a short human data-canvas-label.`;
+Assign data-canvas-id only to meaningful editable regions inside the block, such as the block root, an important card, heading, call to action, image, or navigation region. Do not assign it to every DOM element, trivial wrappers, ordinary text nodes, or CanvasBlock.
+Every data-canvas-id must be a static quoted JSX string literal containing lowercase ASCII letters, numbers, and hyphens only. It must match exactly ^[a-z0-9][a-z0-9-]{0,63}$ and be unique within the complete generated block. Good examples: "hero", "features-grid", "pricing-card-1", "navbar-links". Never duplicate an ID. Never use a variable, index, property access, template literal, concatenation, or other expression for an ID. For repeated elements rendered with map, put one static ID on their containing region instead of dynamic IDs on the repeated children; use explicit markup if individual selectable cards need unique static IDs.
+Optional data-canvas-label values must also be static quoted strings, never expressions. During modification, keep every existing data-canvas-id unchanged when its corresponding region survives, including when its text, layout, or styling changes. Remove an ID only when that region is removed.`;
 
 export function assembleBlockGenerationRequest(input: {
   context: ProjectAIContext;

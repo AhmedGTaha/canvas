@@ -17,6 +17,8 @@ import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contrac
 import { assembleBlockGenerationRequest } from "./prompt";
 import { observe } from "@/server/observability/events";
 import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
+import { repairGeneratedCanvasIds } from "@/domain/generated-source/canvas-id-repair";
+import { generatedSourceCorrectionRequest } from "@/domain/generated-source/correction";
 
 function summaryMessage(summary: BlockChangeSummary) {
   return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n");
@@ -99,7 +101,8 @@ export class BlockGenerationOrchestrationService {
       }));
       const provider = this.providerResolver();
       
-      const response = await provider.generateStructured(assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal }), generatedBlockResponseSchema);
+      const providerRequest = assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal });
+      let response = await provider.generateStructured(providerRequest, generatedBlockResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
       // Provider metadata is useful even if deterministic validation rejects the candidate.
       // Invalid source itself remains ephemeral and is never activated or persisted.
@@ -110,7 +113,18 @@ export class BlockGenerationOrchestrationService {
       await this.lifecycle.transition(jobId, "validating", "Validating block");
       const approved = new Set(context.media.map(({ id }) => id));
       const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
-      const manifest = await validateGeneratedBlockSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
+      let repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
+      let manifest: GeneratedBlockManifest;
+      try {
+        manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
+      } catch (error) {
+        if (!(error instanceof AIError) || error.code !== "AI_PROVIDER_INVALID_RESPONSE") throw error;
+        response = await provider.generateStructured(generatedSourceCorrectionRequest(providerRequest, response.text, error.diagnostic), generatedBlockResponseSchema);
+        if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
+        await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
+        repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
+        manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
+      }
       
       if (selectedElement) {
         const { targetCanvasId, targetRemoved } = response.structuredData;
@@ -122,7 +136,7 @@ export class BlockGenerationOrchestrationService {
 
       await this.lifecycle.transition(jobId, "applying", "Applying block update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
-      const completed = await this.commit({ jobId, sourceCode: response.structuredData.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
+      const completed = await this.commit({ jobId, sourceCode: repaired.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
       observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: performance.now() - startedAt });
       return completed;
     } catch (cause) {

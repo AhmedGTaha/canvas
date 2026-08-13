@@ -151,17 +151,29 @@ describe("Canvas element IDs", () => {
 
   it("rejects duplicate IDs within one generated entity", async () => {
     await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(`<section data-canvas-id="hero-main"/><section data-canvas-id="hero-main"/>`), ...base, declaredMediaIds: [] }))
-      .rejects.toMatchObject({ diagnostic: expect.stringContaining("duplicate Canvas element ID") });
+      .rejects.toMatchObject({ diagnostic: expect.stringContaining("duplicate data-canvas-id values") });
   });
 
   it.each([
-    ["uppercase", `<section data-canvas-id="HeroMain"/>`, "invalid Canvas element ID"],
-    ["spaces", `<section data-canvas-id="hero main"/>`, "invalid Canvas element ID"],
-    ["path traversal", `<section data-canvas-id="../secret"/>`, "invalid Canvas element ID"],
-    ["dynamic value", `<section data-canvas-id={id}/>`, "data-canvas-id must be a static value"],
+    ["uppercase", `<section data-canvas-id="HeroMain"/>`, "invalid data-canvas-id values"],
+    ["spaces", `<section data-canvas-id="hero main"/>`, "invalid data-canvas-id values"],
+    ["path traversal", `<section data-canvas-id="../secret"/>`, "invalid data-canvas-id values"],
+    ["dynamic value", `<section data-canvas-id={id}/>`, "invalid data-canvas-id values"],
     ["dynamic label", `<section data-canvas-id="hero-main" data-canvas-label={name}/>`, "data-canvas-label must be a static string"],
   ])("rejects %s", async (_name, body, diagnostic) => {
     await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(body), ...base, declaredMediaIds: [] })).rejects.toMatchObject({ diagnostic: expect.stringContaining(diagnostic) });
+  });
+
+  it("lists every dynamic ID expression from the reproduced Gemini features response", async () => {
+    const body = `<section data-canvas-id="features-section"><div data-canvas-id="features-grid">{features.map((feature)=><article data-canvas-id={\`feature-card-\${feature.id}\`}><h3 data-canvas-id={\`feature-title-\${feature.id}\`}>{feature.title}</h3><p data-canvas-id={\`feature-description-\${feature.id}\`}>{feature.description}</p></article>)}</div></section>`;
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(body), ...base, declaredMediaIds: [] })).rejects.toMatchObject({
+      diagnostic: expect.stringMatching(/feature-card-.*feature-title-.*feature-description-/),
+    });
+  });
+
+  it("lists all duplicate IDs and never accepts them silently", async () => {
+    await expect(validateGeneratedSource({ kind: "page", sourceCode: wrap(`<section data-canvas-id="hero"/><section data-canvas-id="hero"/><article data-canvas-id="card-1"/><article data-canvas-id="card-1"/>`), ...base, declaredMediaIds: [] }))
+      .rejects.toMatchObject({ diagnostic: "duplicate data-canvas-id values: hero, card-1" });
   });
 
   it("rejects over-long labels and more selectable elements than the limit", async () => {
