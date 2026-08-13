@@ -3,6 +3,7 @@ import { db, type Database } from "@/server/db/client";
 import { buildingBlocks, changeSets, pageNodes, projectBrandSettings, projectThemeSettings, projects } from "@/server/db/schema";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { ChangeSetService, recordChangeSet, type TransactionLike } from "./change-set-service";
+import { CheckpointService } from "./checkpoint-service";
 import { applyRestorePlan, validateRestorePlan, type RestorePlan } from "./restore-engine";
 import { nothingToRedo, nothingToUndo, redoConflict, undoConflict } from "./errors";
 import type { ChangeSetItem } from "@/server/db/schema";
@@ -75,20 +76,31 @@ async function assertExpectedState(transaction: TransactionLike, projectId: stri
 }
 
 export class HistoryService {
-  constructor(private readonly database: Database = db, private readonly access = new ProjectAccessService(), private readonly changeSets = new ChangeSetService(database)) {}
+  constructor(private readonly database: Database = db, private readonly access = new ProjectAccessService(), private readonly changeSets = new ChangeSetService(database), private readonly checkpoints = new CheckpointService(database)) {}
 
-  /** Undo/Redo availability plus recent project history for the Builder. */
+  /**
+   * Undo/Redo availability, recent project history, and how much work has piled
+   * up since the last checkpoint.
+   *
+   * The pending count is answered here rather than derived in the browser from
+   * `history`, because that list is a capped window: once a project has more
+   * recent changes than it holds, counting its rows quietly under-reports.
+   */
   async state(userId: string, projectId: string) {
     await this.access.requireProjectAccess(userId, projectId);
-    const [undo, redo, history] = await Promise.all([
+    const lastCheckpointAt = await this.checkpoints.latestCreatedAt(projectId);
+    const [undo, redo, history, pendingChanges] = await Promise.all([
       this.changeSets.undoCandidate(projectId),
       this.changeSets.redoCandidate(projectId),
       this.changeSets.list(projectId),
+      this.changeSets.countSince(projectId, lastCheckpointAt),
     ]);
     return {
       undo: undo ? { id: undo.id, summary: undo.summary, operation: undo.operation } : null,
       redo: redo ? { id: redo.id, summary: redo.summary, operation: redo.operation } : null,
       history,
+      lastCheckpointAt,
+      pendingChanges,
     };
   }
 

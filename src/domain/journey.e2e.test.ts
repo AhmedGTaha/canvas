@@ -243,10 +243,20 @@ export default function Page(){return <main className="c-page"><section data-can
     expect(await new GeneratedPageContentProvider().get(state.projectId!, state.homeId!, node!.currentVersionId!).then((result) => result?.bundle)).toContain("Compact plan details");
   });
 
-  it("14. creates a named checkpoint", async () => {
+  it("14. creates a named checkpoint, which clears the pending-change count", async () => {
+    const before = await new HistoryService().state(state.ownerId!, state.projectId!);
+    expect(before.lastCheckpointAt).toBeNull();
+    // Every change so far is uncheckpointed, and there have been more than the
+    // capped history window would show.
+    expect(before.pendingChanges).toBeGreaterThan(0);
+
     const checkpoint = await new CheckpointService().create(state.ownerId!, { projectId: state.projectId!, name: "Before collaborator review" });
     expect(await new CheckpointService().list(state.ownerId!, state.projectId!)).toMatchObject([{ name: "Before collaborator review", pageCount: 2, blockCount: 1 }]);
     state.checkpointId = checkpoint.id;
+
+    const after = await new HistoryService().state(state.ownerId!, state.projectId!);
+    expect(after.lastCheckpointAt).not.toBeNull();
+    expect(after.pendingChanges).toBe(0);
   });
 
   it("15. invites a collaborator who accepts", async () => {
@@ -266,6 +276,8 @@ export default function Page(){return <main className="c-page"><section data-can
     const contactVersions = await new VersionRestoreService().listPageVersions(state.ownerId!, state.projectId!, state.contactId!);
     expect(contactVersions.versions[0]).toMatchObject({ actor: "Teammate", isCurrent: true });
     expect(contactVersions.versions).toHaveLength(2);
+    // A collaborator's work counts towards the project's pending changes too.
+    expect((await new HistoryService().state(state.ownerId!, state.projectId!)).pendingChanges).toBe(1);
   });
 
   it("17. browses version history, restores a version, then restores the checkpoint", async () => {

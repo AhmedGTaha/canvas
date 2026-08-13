@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, notInArray, sql as drizzleSql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, notInArray, sql as drizzleSql } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { auditEvents, changeSetItems, changeSets, users } from "@/server/db/schema";
 
@@ -104,6 +104,22 @@ export class ChangeSetService {
       id: changeSet.id, operation: changeSet.operation, summary: changeSet.summary, reversible: changeSet.reversible,
       undone: Boolean(changeSet.undoneAt), actor, createdAt: changeSet.createdAt,
     }));
+  }
+
+  /**
+   * How many changes this project has recorded since `since`, or in total when
+   * there is no `since`. Counted in the database rather than over `list()`,
+   * whose window is capped: a client counting rows would silently under-report
+   * once a project has more recent changes than that window holds.
+   *
+   * The caller has already authorized access to the project; the projectId
+   * filter here is what keeps the count inside that project.
+   */
+  async countSince(projectId: string, since: Date | null) {
+    const [row] = await this.database.select({ total: drizzleSql<number>`count(*)::int` })
+      .from(changeSets)
+      .where(since ? and(eq(changeSets.projectId, projectId), gt(changeSets.createdAt, since)) : eq(changeSets.projectId, projectId));
+    return row?.total ?? 0;
   }
 
   async entityHistory(projectId: string, entityType: ChangeSetEntityType, entityIds: string[]) {

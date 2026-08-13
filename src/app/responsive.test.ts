@@ -39,9 +39,14 @@ describe("responsive layout", () => {
   });
 
   it("keeps dialogs and panels inside the viewport on phones", () => {
-    for (const rule of [/\.dialog \{[^}]*width: min\(480px, calc\(100vw - 32px\)\)/, /\.history-panel \{[^}]*width: min\(560px, calc\(100vw - 32px\)\)/, /\.media-picker-dialog \{[^}]*width: min\(720px, calc\(100vw - 32px\)\)/]) {
+    for (const rule of [/\.dialog \{[^}]*width: min\(480px, calc\(100vw - 32px\)\)/, /\.media-picker-dialog \{[^}]*width: min\(720px, calc\(100vw - 32px\)\)/]) {
       expect(css).toMatch(rule);
     }
+    // History is no longer one of them: it lives in the sidebar, which scrolls
+    // as a whole, so its lists must not cap their own height and hide a second
+    // scrollbar inside it.
+    expect(css).not.toContain(".history-panel");
+    expect(css).toMatch(/\.history-list \{ display: grid; gap: 6px; \}/);
   });
 
   it("keeps the sidebar reachable and the preview usable on mobile", () => {

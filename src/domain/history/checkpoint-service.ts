@@ -68,6 +68,18 @@ export class CheckpointService {
     });
   }
 
+  /**
+   * When this project was last checkpointed, or null if it never was. Used to
+   * date the "changes since your last checkpoint" count. Callers authorize the
+   * project first; the projectId filter is what scopes the answer to it.
+   */
+  async latestCreatedAt(projectId: string) {
+    const [row] = await this.database.select({ createdAt: projectCheckpoints.createdAt })
+      .from(projectCheckpoints).where(eq(projectCheckpoints.projectId, projectId))
+      .orderBy(desc(projectCheckpoints.createdAt)).limit(1);
+    return row?.createdAt ?? null;
+  }
+
   async list(userId: string, projectId: string) {
     await this.access.requireProjectAccess(userId, projectId);
     const rows = await this.database.select({ checkpoint: projectCheckpoints, actor: users.displayName })

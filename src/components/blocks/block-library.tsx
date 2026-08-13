@@ -10,7 +10,9 @@ import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
 import { SelectedElementChip } from "@/components/builder/builder-workspace";
-import { HistoryControls } from "@/components/history/history-controls";
+import { HistoryMessages, UndoRedoControls, VersionList } from "@/components/history/history-controls";
+import { useHistoryController } from "@/components/history/use-history-controller";
+import type { HistoryController } from "@/components/history/use-history-controller";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import { AI_LIMITS } from "@/domain/ai/limits";
 import { BLOCK_MEDIA_ATTACHMENT_LIMIT } from "@/domain/generated-source/limits";
@@ -109,6 +111,10 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
       setPreviewError(cause instanceof Error ? cause.message : "Preview could not be prepared.");
     }
   }, [projectId]);
+
+  const onHistoryChanged = useCallback(() => { void reloadBlocks(); void refreshPreview(); }, [refreshPreview, reloadBlocks]);
+  const historyTarget = useMemo(() => (selected ? { kind: "block" as const, id: selected.id, name: selected.name } : null), [selected]);
+  const history = useHistoryController({ projectId, target: historyTarget, onChanged: onHistoryChanged });
 
   const loadBlockDetail = useCallback(async (blockId: string) => {
     const [state, detail] = await Promise.all([
@@ -218,7 +224,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
           {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · Version ${selected.currentVersionNumber}` : " · Not created yet"}</span> : <span>Select a block to preview it.</span>}
         </div>
         <div className="builder-toolbar-right">
-          <HistoryControls projectId={projectId} target={selected ? { kind: "block", id: selected.id, name: selected.name } : null} onChanged={() => { void reloadBlocks(); void refreshPreview(); }} />
+          <UndoRedoControls controller={history} dense />
           <Button type="button" variant={selectMode ? "secondary" : "ghost"} aria-pressed={selectMode} disabled={!selected} onClick={toggleSelectMode}><MousePointerClick size={15} />{selectMode ? "Selecting" : "Select element"}</Button>
           <div className="segmented compact" role="group" aria-label="Preview theme">
             <button type="button" className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><Sun size={14} />Light</button>
@@ -232,7 +238,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
         {previewStatus === "error" ? <div className="preview-error" role="alert"><h2>Preview could not be loaded.</h2><p>{previewError ?? "Return to Canvas and refresh the preview."}</p><Button type="button" onClick={() => void refreshPreview()}>Try again</Button></div> : null}
         <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Building Block"} preview`} /> : <div className="preview-loading"><Blocks size={20} />Select or create a Building Block.</div>}</div>
       </div>
-      {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy}
+      {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy} history={history}
         onRename={(name, kind) => void action(async () => { await request(`/api/projects/${projectId}/blocks/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, kind }) }); await reloadBlocks(); await refreshPreview(); })}
         onToggleGlobal={() => void action(async () => { await request(`/api/projects/${projectId}/blocks/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isGlobal: !selected.isGlobal }) }); await reloadBlocks(); await refreshPreview(); })}
         onDuplicate={() => void action(async () => { const copy = await request<BlockSummary>(`/api/projects/${projectId}/blocks/${selected.id}/duplicate`, { method: "POST" }); await reloadBlocks(); await refreshPreview(); return copy; }, (copy) => setSelectedId(copy.id))}
@@ -253,10 +259,14 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
   </div>;
 }
 
-function BlockDetails({ block, usages, busy, onRename, onToggleGlobal, onDuplicate, onArchive }: { block: BlockSummary; usages: BlockUsage[]; busy: boolean; onRename: (name: string, kind: string) => void; onToggleGlobal: () => void; onDuplicate: () => void; onArchive: () => void }) {
+function BlockDetails({ block, usages, busy, history, onRename, onToggleGlobal, onDuplicate, onArchive }: { block: BlockSummary; usages: BlockUsage[]; busy: boolean; history: HistoryController; onRename: (name: string, kind: string) => void; onToggleGlobal: () => void; onDuplicate: () => void; onArchive: () => void }) {
   const [name, setName] = useState(block.name);
   const [kind, setKind] = useState(block.kind);
+  const [showVersions, setShowVersions] = useState(false);
+  const { loadVersions } = history;
+  useEffect(() => { if (showVersions) loadVersions(); }, [loadVersions, showVersions]);
   return <div className="blocks-details">
+    <HistoryMessages controller={history} />
     <form className="blocks-details-form" action={() => onRename(name, kind)}>
       <Input label="Name" name={`block-name-${block.id}`} value={name} maxLength={120} onChange={(event) => setName(event.target.value)} />
       <Select label="Category" name={`block-kind-${block.id}`} value={kind} onChange={(event) => setKind(event.target.value)}>{[...new Set([...SUGGESTED_BLOCK_KINDS, kind])].map((value) => <option key={value} value={value}>{blockKindLabel(value)}</option>)}</Select>
@@ -271,6 +281,10 @@ function BlockDetails({ block, usages, busy, onRename, onToggleGlobal, onDuplica
       <h3>Used on</h3>
       {usages.length === 0 ? <p className="inline-empty">Not used on any page yet.</p> : <ul>{usages.map((usage) => <li key={`${usage.pageId}:${usage.usageKey}`}><span>{usage.pageName}</span><small>{usage.route ?? "—"}</small><em>{usage.resolution === "global" ? "Always current" : "Fixed version"}</em></li>)}</ul>}
     </div>
+    <details className="blocks-versions" open={showVersions} onToggle={(event) => setShowVersions(event.currentTarget.open)}>
+      <summary>Earlier versions</summary>
+      {showVersions ? <VersionList controller={history} /> : null}
+    </details>
   </div>;
 }
 

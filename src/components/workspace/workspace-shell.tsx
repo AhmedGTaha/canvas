@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bot, CircleAlert, FileText, LoaderCircle } from "lucide-react";
+import { Bot, CircleAlert, FileText, LoaderCircle, Save, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { signOutAction } from "@/app/actions/auth";
-import { HistoryControls, type HistoryApi } from "@/components/history/history-controls";
+import { shouldSuggestCheckpoint, useHistoryController } from "@/components/history/use-history-controller";
+import type { HistorySection } from "@/components/history/history-sidebar";
 import { ChangeReview } from "@/components/history/change-review";
 import { CommandPalette } from "@/components/commands/command-palette";
 import { TaskCenter } from "@/components/tasks/task-center";
@@ -87,18 +88,12 @@ export function WorkspaceShell({
   const [layout, setLayout] = useState<WorkspaceLayout>(DEFAULT_WORKSPACE_LAYOUT);
   const [createRequest, setCreateRequest] = useState<{ type: "page" | "folder"; key: number } | null>(null);
   const createKey = useRef(0);
-  const [history, setHistory] = useState<HistoryApi | null>(null);
+  const [historySection, setHistorySection] = useState<HistorySection>(null);
+  const [checkpointNudgeFrom, setCheckpointNudgeFrom] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [reviewJobId, setReviewJobId] = useState<string | null>(null);
   const [taskSummary, setTaskSummary] = useState<ProjectTask[]>([]);
-  // HistoryControls republishes its API whenever its own inputs change. Holding
-  // the previous object when nothing meaningful moved stops a publish from
-  // re-rendering this component, which would republish, and so on. The identity
-  // guard is what keeps that loop impossible rather than merely unlikely.
-  const publishHistoryApi = useCallback((api: HistoryApi) => {
-    setHistory((current) => (current && sameHistory(current, api) ? current : api));
-  }, []);
   const completedRefresh = useRef<string | null>(null);
   const pendingSelection = useRef<ElementSelection | null>(null);
 
@@ -242,6 +237,17 @@ export function WorkspaceShell({
     [currentPageId, currentPage?.name],
   );
   const onHistoryChanged = useCallback(() => { void refresh(); router.refresh(); }, [refresh, router]);
+  const history = useHistoryController({ projectId, target: historyTarget, onChanged: onHistoryChanged, withCheckpoints: true });
+
+  // Opening History means opening the sidebar section, not a dialog. The
+  // shortcuts, the command palette and the agent's "see history" link all land
+  // in the same place the sidebar shows.
+  const openHistorySection = useCallback((section: Exclude<HistorySection, null>) => {
+    setHistorySection(section);
+    selectActivity("history");
+  }, [selectActivity]);
+  const openVersions = useCallback(() => openHistorySection("versions"), [openHistorySection]);
+  const openCheckpoints = useCallback(() => openHistorySection("checkpoints"), [openHistorySection]);
 
   /* -------------------------------------------------------------- agent */
   // Selecting inside a shared Building Block retargets the composer at that
@@ -284,6 +290,9 @@ export function WorkspaceShell({
     if (!job || job.status !== "completed" || completedRefresh.current === job.id) return;
     completedRefresh.current = job.id;
     setPrompt(""); setSelectedMediaIds([]);
+    // Finishing a generation is the moment a checkpoint is worth offering, so a
+    // dismissal from before the job does not hide it again.
+    setCheckpointNudgeFrom(0);
     void refresh();
     router.refresh();
   }, [agentState?.job, refresh, router]);
@@ -333,13 +342,13 @@ export function WorkspaceShell({
 
   const commands = useMemo(() => createWorkspaceCommands({
     canManageProject, hasPage: Boolean(currentPageId), hasSelection: Boolean(selection), activeWork: taskSummary.some((task) => task.status === "active"),
-    canUndo: history?.canUndo ?? false, canRedo: history?.canRedo ?? false, explorerOpen: layout.primary, agentOpen: layout.agent,
-    openPanel, openPalette: () => setPaletteOpen(true), openTasks: () => setTaskCenterOpen(true), openHistory: () => history?.openVersions(), openCheckpoints: () => history?.openCheckpoints(), navigate: (href) => router.push(href),
+    canUndo: history.canUndo, canRedo: history.canRedo, explorerOpen: layout.primary, agentOpen: layout.agent,
+    openPanel, openPalette: () => setPaletteOpen(true), openTasks: () => setTaskCenterOpen(true), openHistory: openVersions, openCheckpoints, navigate: (href) => router.push(href),
     openWebsite: () => selectActivity("website"), openAssets: () => selectActivity("assets"), openDesign: () => selectActivity("design"), openSections: () => selectActivity("sections"), newPage: () => requestCreate("page"), newFolder: () => requestCreate("folder"),
-    toggleExplorer, toggleAgent, undo: () => history?.undo(), redo: () => history?.redo(), setTheme: changeTheme,
+    toggleExplorer, toggleAgent, undo: history.undo, redo: history.redo, setTheme: changeTheme,
     setDevice: (device) => dispatchView({ type: "SET_DEVICE", device }), refreshPreview: () => void refresh(), toggleFullScreen: () => dispatchView({ type: "TOGGLE_FULL_SCREEN" }),
     signOut: () => startTransition(() => { void signOutAction(); }),
-  }), [canManageProject, changeTheme, currentPageId, history, layout.agent, layout.primary, openPanel, refresh, requestCreate, router, selectActivity, selection, startTransition, taskSummary, toggleAgent, toggleExplorer]);
+  }), [canManageProject, changeTheme, currentPageId, history, layout.agent, layout.primary, openCheckpoints, openPanel, openVersions, refresh, requestCreate, router, selectActivity, selection, startTransition, taskSummary, toggleAgent, toggleExplorer]);
   const commandPages = useMemo<CommandPage[]>(() => nodes.map((node) => ({ id: node.id, name: node.name, slug: node.slug, routePath: node.routePath, type: node.type })), [nodes]);
 
   const loadTaskSummary = useCallback(async () => { try { const response = await fetch(`/api/projects/${projectId}/tasks`, { cache: "no-store" }); if (response.ok) setTaskSummary(((await response.json()) as { tasks: ProjectTask[] }).tasks); } catch { /* detailed recovery lives in the task center */ } }, [projectId]);
@@ -368,6 +377,7 @@ export function WorkspaceShell({
   }, [toggleAgent, toggleExplorer, view.fullScreen]);
 
   const built = target?.kind === "block" || currentPage?.contentStatus === "generated";
+  const showCheckpointNudge = shouldSuggestCheckpoint(history.pendingChanges, checkpointNudgeFrom);
   const agentTarget: AgentTarget = target
     ? target.kind === "block" ? { kind: "block", id: target.id, name: target.name } : { kind: "page", id: target.id, name: currentPage?.name ?? "this page" }
     : null;
@@ -387,7 +397,7 @@ export function WorkspaceShell({
     <div className="ws-body">
       <ActivityBar activity={layout.activity} sidebarOpen={layout.primary} onActivity={selectActivity} onSettings={() => openPanel("overview")} onHelp={() => openPanel("shortcuts")} />
       <aside className="ws-pane ws-pane-l" aria-label={`${layout.activity} tools`}>
-        <ContextSidebar activity={layout.activity} mediaAssets={mediaAssets} mediaFolders={mediaFolders} blocks={session.manifest.blocks} onOpenPanel={openPanel} onNewBlock={() => openPanel("blocks")} onHistory={() => history?.openVersions()} website={<Explorer projectId={projectId} nodes={nodes} currentPageId={currentPageId} routes={routesByPageId} onSelectPage={selectPage} onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }} onOpenPagesPanel={(nodeId) => openPanel("pages", nodeId ? { node: nodeId } : undefined)} onTreeChanged={onTreeChanged} createRequest={createRequest} />} />
+        <ContextSidebar activity={layout.activity} mediaAssets={mediaAssets} mediaFolders={mediaFolders} blocks={session.manifest.blocks} history={history} historySection={historySection} onOpenPanel={openPanel} onNewBlock={() => openPanel("blocks")} onHistorySection={setHistorySection} website={<Explorer projectId={projectId} nodes={nodes} currentPageId={currentPageId} routes={routesByPageId} onSelectPage={selectPage} onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }} onOpenPagesPanel={(nodeId) => openPanel("pages", nodeId ? { node: nodeId } : undefined)} onTreeChanged={onTreeChanged} createRequest={createRequest} />} />
         <button type="button" className="ws-resize ws-resize-r" aria-label="Resize project tools" onPointerDown={() => setResizing("explorer")} />
       </aside>
 
@@ -446,7 +456,7 @@ export function WorkspaceShell({
           onEditQueued={(item, value) => void editQueued(item, value)}
           onReview={setReviewJobId}
           onHide={toggleAgent}
-          onOpenHistory={() => history?.openVersions()}
+          onOpenHistory={openVersions}
         />
       </aside>
     </div>
@@ -456,39 +466,20 @@ export function WorkspaceShell({
       <span className="ws-sb-sep" /><span className="ws-sb-note">{currentPage?.name ?? "No page"}</span><span className="ws-sb-spacer" />
       {queuedFollowUps.filter((item) => item.status === "queued" || item.status === "paused").length ? <button type="button" className="ws-sb-btn" onClick={() => setTaskCenterOpen(true)}><Bot size={12} />{queuedFollowUps.filter((item) => item.status === "queued" || item.status === "paused").length} queued</button> : null}
       {taskSummary.some((task) => task.status === "active") ? <button type="button" className="ws-sb-btn" onClick={() => setTaskCenterOpen(true)}><LoaderCircle className="spin" size={12} />{taskSummary.filter((task) => task.status === "active").length} active</button> : null}
+      {showCheckpointNudge ? <span className="ws-sb-nudge" role="status">
+        <button type="button" className="ws-sb-btn" onClick={() => { setCheckpointNudgeFrom(history.pendingChanges); openCheckpoints(); }}><Save size={12} />{history.pendingChanges} changes since your last checkpoint — save one</button>
+        <button type="button" className="ws-sb-dismiss" aria-label="Dismiss the checkpoint suggestion" onClick={() => setCheckpointNudgeFrom(history.pendingChanges)}><X size={11} /></button>
+      </span> : null}
     </footer>
 
     <nav className="ws-mobile-switcher" aria-label="Workspace surface"><button type="button" aria-pressed={layout.mobileSurface === "tools"} onClick={() => showMobileSurface("tools")}><FileText size={15} />Tools</button><button type="button" aria-pressed={layout.mobileSurface === "preview"} onClick={() => showMobileSurface("preview")}><FileText size={15} />Preview</button><button type="button" aria-pressed={layout.mobileSurface === "agent"} onClick={() => showMobileSurface("agent")}><Bot size={15} />Agent</button></nav>
 
-    {/* Mounted for its logic and its History dialog; the visible controls live
-        in the status bar and the History menu. */}
-    <HistoryControls
-      projectId={projectId}
-      target={historyTarget}
-      onChanged={onHistoryChanged}
-      showCheckpoints
-      hideTrigger
-      onApi={publishHistoryApi}
-    />
     <CommandPalette projectId={projectId} userId={userId} open={paletteOpen} commands={commands} pages={commandPages} onClose={() => setPaletteOpen(false)} onPage={(page) => { if (page.type === "page") selectPage(page.id, page.routePath ?? undefined); else selectActivity("website"); }} />
     <TaskCenter projectId={projectId} open={taskCenterOpen} onClose={() => setTaskCenterOpen(false)} onReview={setReviewJobId} onOpenExport={() => openPanel("export")} onReopenAgent={() => { if (!layout.agent) toggleAgent(); }} />
-    <ChangeReview projectId={projectId} jobId={reviewJobId} onClose={() => setReviewJobId(null)} onOpenPage={(id, pageRoute) => { setReviewJobId(null); selectPage(id, pageRoute ?? undefined); }} onOpenBlock={() => { setReviewJobId(null); openPanel("blocks"); }} onHistory={() => { setReviewJobId(null); history?.openVersions(); }} onChanged={onHistoryChanged} />
+    <ChangeReview projectId={projectId} jobId={reviewJobId} onClose={() => setReviewJobId(null)} onOpenPage={(id, pageRoute) => { setReviewJobId(null); selectPage(id, pageRoute ?? undefined); }} onOpenBlock={() => { setReviewJobId(null); openPanel("blocks"); }} onHistory={() => { setReviewJobId(null); openVersions(); }} onChanged={onHistoryChanged} />
   </div>;
 }
 
-/** Two published History APIs are interchangeable when everything the chrome
- *  renders from them matches and the callbacks are the same functions. */
-function sameHistory(a: HistoryApi, b: HistoryApi) {
-  return a.canUndo === b.canUndo
-    && a.canRedo === b.canRedo
-    && a.undoLabel === b.undoLabel
-    && a.redoLabel === b.redoLabel
-    && a.busy === b.busy
-    && a.undo === b.undo
-    && a.redo === b.redo
-    && a.openVersions === b.openVersions
-    && a.openCheckpoints === b.openCheckpoints;
-}
 
 /** A friendly stand-in for the site's own domain in the address bar. */
 function hostLabel(companyName: string) {

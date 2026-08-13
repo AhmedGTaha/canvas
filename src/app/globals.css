@@ -443,9 +443,7 @@ select.input:disabled { cursor: not-allowed; }
 .history-inline-error, .history-inline-notice { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .7rem; }
 .history-inline-error { color: var(--danger); }
 .history-inline-notice { color: var(--muted); }
-.history-panel { width: min(560px, calc(100vw - 32px)); display: grid; gap: 14px; }
-.history-panel .segmented { margin: 0; }
-.history-list { max-height: 380px; display: grid; gap: 6px; overflow-y: auto; }
+.history-list { display: grid; gap: 6px; }
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r-lg); }
 .history-row.current { border-color: var(--focus-line); background: var(--focus-soft); }
 .history-row > div { min-width: 0; display: grid; gap: 2px; }
@@ -455,11 +453,12 @@ select.input:disabled { cursor: not-allowed; }
 .history-current-tag { color: var(--focus-strong); font-size: .67rem; font-weight: 700; }
 .history-checkpoint-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .history-checkpoint-form .input { height: 36px; font-size: .8rem; }
-.history-activity summary { color: var(--muted); cursor: pointer; font-size: .72rem; }
-.history-activity ul { display: grid; gap: 5px; margin: 9px 0 0; padding: 0; list-style: none; }
-.history-activity li { display: grid; gap: 1px; padding: 6px 8px; border-radius: var(--r); background: var(--surface-muted); }
-.history-activity li span { font-size: .72rem; }
-.history-activity li small { color: var(--muted); font-size: .65rem; }
+.history-activity-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.history-activity-list li { display: grid; gap: 1px; padding: 6px 8px; border-radius: var(--r); background: var(--surface-muted); }
+.history-activity-list li span { font-size: .72rem; }
+.history-activity-list li small { color: var(--muted); font-size: .65rem; }
+.blocks-versions > summary { color: var(--muted); cursor: pointer; font-size: .72rem; }
+.blocks-versions > .history-list { margin-top: 9px; }
 
 .builder-ai-scope { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: .62rem; font-weight: 650; }
 .builder-selection { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border: 1px solid var(--focus-line); border-radius: var(--r-lg); background: var(--focus-soft); }
