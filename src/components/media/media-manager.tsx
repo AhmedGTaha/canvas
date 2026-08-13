@@ -7,16 +7,19 @@ import { useRouter } from "next/navigation";
 import { mediaAction } from "@/app/actions/media";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/form-controls";
+import { uploadMediaFiles, type UploadStatus } from "./upload";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 
-type UploadStatus = { name: string; state: "uploading" | "done" | "error"; error?: string };
 type ListedMediaAsset = MediaAsset & { uploadedByName?: string };
 
-export function MediaManager({ projectId, initialFolders, initialAssets }: { projectId: string; initialFolders: MediaFolder[]; initialAssets: ListedMediaAsset[] }) {
+export function MediaManager({ projectId, initialFolders, initialAssets, initialAssetId }: { projectId: string; initialFolders: MediaFolder[]; initialAssets: ListedMediaAsset[]; initialAssetId?: string }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [folderId, setFolderId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Picking a thumbnail in the Assets sidebar opens the panel on that image,
+  // in the folder it lives in, rather than at the top of the library.
+  const opened = initialAssetId ? initialAssets.find((asset) => asset.id === initialAssetId) : undefined;
+  const [folderId, setFolderId] = useState<string | null>(opened?.folderId ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(opened?.id ?? null);
   const [search, setSearch] = useState("");
   const [newFolder, setNewFolder] = useState("");
   const [notice, setNotice] = useState<string>();
@@ -41,16 +44,7 @@ export function MediaManager({ projectId, initialFolders, initialAssets }: { pro
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
-    const list = [...files];
-    setUploads(list.map((file) => ({ name: file.name, state: "uploading" })));
-    await Promise.all(list.map(async (file, index) => {
-      const data = new FormData(); data.set("file", file); if (folderId) data.set("folderId", folderId);
-      try {
-        const response = await fetch(`/api/projects/${projectId}/media`, { method: "POST", body: data });
-        const result = await response.json() as { error?: string };
-        setUploads((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, state: response.ok ? "done" : "error", error: result.error } : item));
-      } catch { setUploads((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, state: "error", error: "Network error." } : item)); }
-    }));
+    await uploadMediaFiles(projectId, [...files], folderId, setUploads);
     router.refresh();
     if (fileRef.current) fileRef.current.value = "";
   }
@@ -63,7 +57,7 @@ export function MediaManager({ projectId, initialFolders, initialAssets }: { pro
         <button type="button" aria-label={`Delete ${item.name}`} onClick={() => { if (window.confirm(`Delete ${item.name} and all media inside it?`)) void act({ projectId, intent: "delete-folder", folderId: item.id }); }}><Trash2 size={13} /></button>
       </div>)}</div>
       {currentFolder ? <FolderDetails key={currentFolder.id} projectId={projectId} folder={currentFolder} folders={initialFolders} act={act} /> : null}
-      <form className="media-new-folder" onSubmit={(event) => { event.preventDefault(); void act({ projectId, intent: "create-folder", parentId: folderId, name: newFolder }).then((ok) => { if (ok) setNewFolder(""); }); }}><input className="input" value={newFolder} onChange={(event) => setNewFolder(event.target.value)} placeholder={folderId ? "New subfolder" : "New folder"} maxLength={120} /><Button type="submit" variant="secondary" aria-label="Create folder" disabled={!newFolder.trim()}><Plus size={15} /></Button></form>
+      <form className="media-new-folder" onSubmit={(event) => { event.preventDefault(); void act({ projectId, intent: "create-folder", parentId: folderId, name: newFolder }).then((ok) => { if (ok) setNewFolder(""); }); }}><input className="input" value={newFolder} aria-label={folderId ? "New subfolder name" : "New folder name"} onChange={(event) => setNewFolder(event.target.value)} placeholder={folderId ? "New subfolder" : "New folder"} maxLength={120} /><Button type="submit" variant="secondary" aria-label="Create folder" disabled={!newFolder.trim()}><Plus size={15} /></Button></form>
     </aside>
     <section className="media-library card">
       <nav className="media-breadcrumbs" aria-label="Media folder path"><button type="button" onClick={() => setFolderId(null)}>Media</button>{breadcrumbs.map((folder) => <span key={folder.id}>/ <button type="button" onClick={() => setFolderId(folder.id)}>{folder.name}</button></span>)}</nav><div className="media-toolbar"><div><p className="eyebrow">{currentFolder ? "Folder" : "Library"}</p><h2>{currentFolder?.name ?? "Root media"}</h2></div><div className="media-toolbar-actions"><label className="tree-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search all media" aria-label="Search media" /></label><input ref={fileRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => void upload(event.target.files)} /><Button type="button" onClick={() => fileRef.current?.click()}><Upload size={15} />Upload images</Button></div></div>

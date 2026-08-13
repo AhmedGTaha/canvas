@@ -17,6 +17,7 @@ vi.mock("@/app/actions/media", () => ({ mediaAction: vi.fn(() => Promise.resolve
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push, replace, back, refresh }), redirect }));
 
 const { Explorer } = await import("./explorer");
+const { ContextSidebar } = await import("./context-sidebar");
 const { FeaturePanel } = await import("./feature-panel");
 const { MediaManager } = await import("@/components/media/media-manager");
 const { closedPanelHref, notePanelPushed, panelHref, resetPanelHistory, takePanelPushed } = await import("./panel-url");
@@ -261,6 +262,91 @@ describe("project tool panels", () => {
     expect(screen.getByText("logo.png: done")).toBeDefined();
     for (const spy of [push, replace, back]) expect(spy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+});
+
+/*
+ * Sidebar-first: anything doable in the sidebar belongs there, and a row that
+ * names one thing must open that thing rather than the tool's front page.
+ */
+describe("sidebar-first project tools", () => {
+  const controller = {
+    busy: false, canUndo: false, canRedo: false, undoLabel: "Nothing to undo", redoLabel: "Nothing to redo",
+    pendingChanges: 0, hasCheckpoint: false, activity: [], versions: null, checkpoints: null, target: null,
+    undo: vi.fn(), redo: vi.fn(), loadVersions: vi.fn(), loadCheckpoints: vi.fn(),
+    restoreVersion: vi.fn(), restoreCheckpoint: vi.fn(), saveCheckpoint: vi.fn(),
+  };
+  const asset = { id: "asset-1", displayName: "Hero photo", altText: "", folderId: null } as never;
+  const blocks = {
+    "block-1": { id: "block-1", name: "Primary navbar", kind: "navbar", isGlobal: true, activeVersionId: "v1", contentStatus: "generated" as const },
+    "block-2": { id: "block-2", name: "Site footer", kind: "footer", isGlobal: false, activeVersionId: null, contentStatus: "unbuilt" as const },
+  };
+
+  function renderSidebar(activity: "assets" | "design" | "sections", overrides: { mediaAssets?: unknown[] } = {}) {
+    const onOpenPanel = vi.fn();
+    render(<ContextSidebar
+      projectId="p1"
+      activity={activity}
+      mediaAssets={(overrides.mediaAssets ?? [asset]) as never}
+      mediaFolders={[]}
+      blocks={blocks}
+      website={<div />}
+      history={controller as never}
+      historySection={null}
+      onOpenPanel={onOpenPanel}
+      onNewBlock={vi.fn()}
+      onHistorySection={vi.fn()}
+    />);
+    return { onOpenPanel };
+  }
+
+  beforeEach(() => { for (const spy of [push, replace, back, refresh]) spy.mockClear(); });
+
+  it("uploads images from the sidebar without opening a panel", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { onOpenPanel } = renderSidebar("assets");
+
+    const field = document.querySelector<HTMLInputElement>("input[type=file]")!;
+    Object.defineProperty(field, "files", { value: [new File(["binary"], "hero.png", { type: "image/png" })] });
+    await act(async () => { fireEvent.change(field); });
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/p1/media", expect.objectContaining({ method: "POST" }));
+    expect(screen.getByText(/hero\.png: done/)).toBeDefined();
+    // The whole point: the most common thing anyone does with media needs no popup.
+    expect(onOpenPanel).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("offers uploading even when there is nothing in the library yet", () => {
+    renderSidebar("assets", { mediaAssets: [] });
+    expect(screen.getByRole("button", { name: "Upload images", hidden: true })).toBeDefined();
+  });
+
+  it("opens each tool on the thing the row names", () => {
+    const assets = renderSidebar("assets");
+    fireEvent.click(screen.getByTitle("Hero photo"));
+    expect(assets.onOpenPanel).toHaveBeenCalledWith("media", { asset: "asset-1" });
+    cleanup();
+
+    const design = renderSidebar("design");
+    fireEvent.click(screen.getByText("Brand identity"));
+    fireEvent.click(screen.getByText("Theme"));
+    // Both rows used to open Brand at the top, which made the second one pointless.
+    expect(design.onOpenPanel).toHaveBeenNthCalledWith(1, "brand", { section: "identity" });
+    expect(design.onOpenPanel).toHaveBeenNthCalledWith(2, "brand", { section: "theme" });
+    cleanup();
+
+    const sections = renderSidebar("sections");
+    fireEvent.click(screen.getByText("Site footer"));
+    expect(sections.onOpenPanel).toHaveBeenCalledWith("blocks", { block: "block-2" });
+  });
+
+  it("carries nothing from one tool's view into the next", () => {
+    const opened = panelHref(new URL("https://canvas.test/projects/p?page=home&tool=blocks&block=block-2"), "media", { asset: "asset-1" });
+    expect(opened).toBe("/projects/p?page=home&tool=media&asset=asset-1");
+    expect(closedPanelHref(new URL(`https://canvas.test${opened}`))).toBe("/projects/p?page=home");
   });
 });
 

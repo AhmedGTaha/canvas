@@ -34,6 +34,15 @@ describe("feature panel", () => {
     expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("Brand & design");
   });
 
+  it("puts focus on the panel, not on the button that closes it", () => {
+    const { container } = renderPanel();
+    const dialog = container.querySelector("dialog")!;
+    // Otherwise showModal() lands on the first focusable descendant, which is
+    // always the close button: the first thing announced would be how to leave.
+    expect(document.activeElement).toBe(dialog);
+    expect(dialog.tabIndex).toBe(-1);
+  });
+
   it("steps back when the workspace opened the tool, so the browser's back button agrees", () => {
     notePanelPushed();
     renderPanel();

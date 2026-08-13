@@ -15,6 +15,7 @@ import { ThemeEditor } from "@/components/theme/theme-editor";
 import { Card } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { PanelLink } from "@/components/workspace/panel-link";
+import { PanelSection } from "@/components/workspace/panel-section";
 import { type PanelName } from "@/components/workspace/panel-names";
 import { ProjectInstructionService } from "@/domain/ai/instruction-service";
 import { BuildingBlockService } from "@/domain/blocks/service";
@@ -37,7 +38,7 @@ export type PanelView = { title: string; description?: string; size: "wide" | "d
  * tool opened from the menu bar, from a bookmark, or after a reload is always
  * the same render over the same workspace.
  */
-export async function resolvePanel(projectId: string, name: PanelName, options: { nodeId?: string } = {}): Promise<PanelView> {
+export async function resolvePanel(projectId: string, name: PanelName, options: { nodeId?: string; blockId?: string; assetId?: string; section?: string } = {}): Promise<PanelView> {
   const user = await requireAuthenticatedUser();
 
   if (name === "shortcuts") {
@@ -78,7 +79,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
       title: "Images",
       description: "Upload and organize the images this website can use.",
       size: "wide",
-      body: <MediaManager projectId={project.id} initialFolders={library.folders} initialAssets={library.assets} />,
+      body: <MediaManager projectId={project.id} initialFolders={library.folders} initialAssets={library.assets} initialAssetId={options.assetId} />,
     };
   }
 
@@ -99,7 +100,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
       title: "Reusable sections",
       description: "Navbars, footers, cards and other sections you can use on many pages at once.",
       size: "wide",
-      body: <BlockLibrary projectId={project.id} initialBlocks={blocks} initialSession={session} initialPreviewError={previewError} initialInstanceId={randomUUID()} mediaAssets={media.assets} mediaFolders={media.folders} />,
+      body: <BlockLibrary projectId={project.id} initialBlocks={blocks} initialBlockId={options.blockId} initialSession={session} initialPreviewError={previewError} initialInstanceId={randomUUID()} mediaAssets={media.assets} mediaFolders={media.folders} />,
     };
   }
 
@@ -118,7 +119,9 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
       description: "The identity, colours, type and spacing shared by every page.",
       size: "wide",
       body: <div className="brand-page-stack">
+        <PanelSection focus={options.section === "identity"} />
         <BrandLogoSettings projectId={project.id} assets={media.assets} folders={media.folders} initialPrimaryId={brand.primaryLogoMediaId} initialAlternateId={brand.alternateLogoMediaId} />
+        <PanelSection focus={options.section === "theme"} />
         <ThemeEditor
           projectId={project.id}
           initialBrand={{ companyName: brand.companyName, companyDescription: brand.companyDescription, brandNotes: brand.brandNotes, revision: brand.revision }}

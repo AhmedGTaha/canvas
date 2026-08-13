@@ -24,7 +24,15 @@ export function FeaturePanel({ title, description, size = "wide", actions, child
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog?.isConnected) return;
-    if (!dialog.open) dialog.showModal();
+    if (!dialog.open) {
+      dialog.showModal();
+      // showModal() otherwise puts focus on the first focusable descendant,
+      // which in every panel is the close button — so the first thing a screen
+      // reader announces on opening a tool is how to leave it. Focusing the
+      // dialog announces its heading instead, and Tab still walks the panel
+      // from the top.
+      dialog.focus();
+    }
     // A modal <dialog> that is removed from the DOM while still open is not
     // guaranteed to release the page from its inert state, which leaves the
     // whole workspace unclickable. Any unmount that is not a close() — a link
@@ -47,6 +55,7 @@ export function FeaturePanel({ title, description, size = "wide", actions, child
   return <dialog
     className={`ws-panel ws-panel-${size}`}
     ref={ref}
+    tabIndex={-1}
     aria-labelledby={headingId}
     onCancel={(event) => { event.preventDefault(); close(); }}
     onClick={(event) => { if (event.target === ref.current) close(); }}

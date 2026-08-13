@@ -10,9 +10,12 @@
  * happen rather than being patched case by case.
  */
 
-/** The parameters that describe an open tool. Everything else on the URL — the
- *  page being previewed, say — belongs to the workspace and must survive. */
-export const PANEL_PARAMS = ["tool", "node"] as const;
+/**
+ * The parameters that describe an open tool: which tool, and what it should be
+ * showing. Everything else on the URL — the page being previewed, say — belongs
+ * to the workspace and must survive opening and closing a tool.
+ */
+export const PANEL_PARAMS = ["tool", "node", "block", "asset", "section"] as const;
 
 /** Same-document navigations the workspace performs itself, so a close knows
  *  whether going back lands on the workspace or somewhere else entirely. */
@@ -34,8 +37,9 @@ export function resetPanelHistory() { pushedPanels = 0; }
 /** The current URL with `name` opened, preserving every unrelated parameter. */
 export function panelHref(url: URL, name: string, query: Record<string, string> = {}) {
   const next = new URL(url.href);
+  // Whatever the previous tool was showing does not carry over to this one.
+  for (const key of PANEL_PARAMS) next.searchParams.delete(key);
   next.searchParams.set("tool", name);
-  next.searchParams.delete("node");
   for (const [key, value] of Object.entries(query)) next.searchParams.set(key, value);
   return `${next.pathname}${next.search}`;
 }

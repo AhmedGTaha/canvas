@@ -41,13 +41,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return value;
 }
 
-export function BlockLibrary({ projectId, initialBlocks, initialSession, initialPreviewError, initialInstanceId, mediaAssets, mediaFolders }: { projectId: string; initialBlocks: BlockSummary[]; initialSession: PreviewSession | null; initialPreviewError?: string; initialInstanceId: string; mediaAssets: MediaAsset[]; mediaFolders: MediaFolder[] }) {
+export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initialSession, initialPreviewError, initialInstanceId, mediaAssets, mediaFolders }: { projectId: string; initialBlocks: BlockSummary[]; initialBlockId?: string; initialSession: PreviewSession | null; initialPreviewError?: string; initialInstanceId: string; mediaAssets: MediaAsset[]; mediaFolders: MediaFolder[] }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const createDialog = useRef<HTMLDialogElement>(null);
   const [blocks, setBlocks] = useState(initialBlocks);
   const [session, setSession] = useState(initialSession);
   const [instanceId, setInstanceId] = useState(initialInstanceId);
-  const [selectedId, setSelectedId] = useState<string | null>(initialBlocks[0]?.id ?? null);
+  // The Reusable Sections sidebar opens the panel on the section that was
+  // clicked; without it every row landed on whichever block happened to sort
+  // first, and the row you picked meant nothing.
+  const [selectedId, setSelectedId] = useState<string | null>(
+    (initialBlockId && initialBlocks.some((block) => block.id === initialBlockId) ? initialBlockId : initialBlocks[0]?.id) ?? null,
+  );
   const [search, setSearch] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [previewStatus, setPreviewStatus] = useState<"loading" | "ready" | "error">(initialPreviewError ? "error" : "loading");

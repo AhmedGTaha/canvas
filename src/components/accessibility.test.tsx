@@ -134,6 +134,21 @@ describe("Canvas UI accessibility", () => {
     expect(document.getElementById(describedBy!)?.textContent).toBe("Describe the project.");
   });
 
+  it("gives every field its own id, so two unnamed fields do not share one label", () => {
+    // Brand renders three unnamed fields side by side. When the id fell back to
+    // the element type, all three labels pointed at the first control and the
+    // other two had no accessible name at all.
+    render(<>
+      <Textarea label="Company description" rows={2} />
+      <Textarea label="Brand notes" rows={2} />
+      <Input label="Company name" />
+      <Input label="Tagline" />
+    </>);
+    const fields = ["Company description", "Brand notes", "Company name", "Tagline"].map((label) => screen.getByLabelText(label));
+    expect(new Set(fields.map((field) => field.id)).size).toBe(fields.length);
+    for (const field of fields) expect(field.id).toBeTruthy();
+  });
+
   it("announces loading, empty, and error states to assistive technology", () => {
     const { container } = render(<>
       <LoadingState label="Loading projects…" />

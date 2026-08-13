@@ -30,9 +30,9 @@ export async function generateMetadata({ params }: { params: Promise<{ projectId
  * open tool, so a reload, a bookmark, or a refresh triggered from inside a
  * panel all take this same path and all still show the website underneath.
  */
-export default async function ProjectWorkspacePage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ page?: string; tool?: string; node?: string }> }) {
+export default async function ProjectWorkspacePage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ page?: string; tool?: string; node?: string; block?: string; asset?: string; section?: string }> }) {
   const { projectId } = await params;
-  const { page, tool, node } = await searchParams;
+  const { page, tool, node, block, asset, section } = await searchParams;
   const user = await requireAuthenticatedUser();
 
   let access;
@@ -76,7 +76,7 @@ export default async function ProjectWorkspacePage({ params, searchParams }: { p
 
   // An unrecognised tool name is ignored rather than treated as a missing page:
   // a stale link should still open the website, not a 404.
-  const view = tool && isPanelName(tool) ? await resolvePanel(projectId, tool, { nodeId: node }) : null;
+  const view = tool && isPanelName(tool) ? await resolvePanel(projectId, tool, { nodeId: node, blockId: block, assetId: asset, section }) : null;
 
   return <>
     <WorkspaceShell
