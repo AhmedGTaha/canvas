@@ -82,6 +82,15 @@ describe("browser compatibility", () => {
     for (const feature of RISKY_CSS) expect(css, `globals.css uses ${feature.name}`).not.toMatch(feature.pattern);
   });
 
+  it("never branches on the platform while rendering", () => {
+    // `navigator` does not exist during SSR, so reading it to build rendered
+    // text produces one string on the server and another on the client, which
+    // React reports as a hydration mismatch. Shortcut hints name both modifiers.
+    for (const pattern of [/navigator\.platform/, /navigator\.userAgent/, /navigator\.maxTouchPoints/]) {
+      expect(appCode, `client code branches on ${pattern.source} during render`).not.toMatch(pattern);
+    }
+  });
+
   it("avoids JavaScript APIs outside the supported browser matrix", () => {
     for (const feature of RISKY_JS) expect(appCode, `client code uses ${feature.name}`).not.toMatch(feature.pattern);
   });

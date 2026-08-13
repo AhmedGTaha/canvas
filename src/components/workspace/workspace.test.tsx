@@ -1,16 +1,18 @@
 /** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // The explorer calls a server action and Next's router; neither exists in jsdom.
-vi.mock("@/app/actions/pages", () => ({ pageTreeAction: vi.fn(async () => ({})) }));
+type TreeResult = { error?: string; success?: string; createdNodeId?: string };
+const pageTreeAction = vi.fn((...args: [TreeResult, FormData]): Promise<TreeResult> => { void args; return Promise.resolve({ success: "Changes saved.", createdNodeId: "new-page" }); });
+vi.mock("@/app/actions/pages", () => ({ pageTreeAction }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), back: vi.fn(), refresh: vi.fn() }) }));
 
 const { Explorer } = await import("./explorer");
 const { MenuBar } = await import("./menu-bar");
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); pageTreeAction.mockClear(); });
 
 const NOW = new Date("2026-01-01T00:00:00Z");
 function node(overrides: Record<string, unknown>) {
@@ -34,6 +36,7 @@ function renderExplorer(overrides: Partial<Parameters<typeof Explorer>[0]> = {})
   const onSelectPage = vi.fn();
   const onEditWithAgent = vi.fn();
   const onOpenPagesPanel = vi.fn();
+  const onTreeChanged = vi.fn();
   render(<Explorer
     projectId="p"
     nodes={NODES}
@@ -42,9 +45,10 @@ function renderExplorer(overrides: Partial<Parameters<typeof Explorer>[0]> = {})
     onSelectPage={onSelectPage}
     onEditWithAgent={onEditWithAgent}
     onOpenPagesPanel={onOpenPagesPanel}
+    onTreeChanged={onTreeChanged}
     {...overrides}
   />);
-  return { onSelectPage, onEditWithAgent, onOpenPagesPanel };
+  return { onSelectPage, onEditWithAgent, onOpenPagesPanel, onTreeChanged };
 }
 
 describe("website explorer", () => {
@@ -110,6 +114,43 @@ describe("website explorer", () => {
     renderExplorer();
     fireEvent.click(screen.getByRole("button", { name: "New page" }));
     expect(screen.getByLabelText("Rename New page")).toBeDefined();
+  });
+
+  it("hands the new page's id up so the workspace can open it without a reload", async () => {
+    const { onTreeChanged } = renderExplorer();
+    fireEvent.click(screen.getByRole("button", { name: "New page" }));
+    const field = screen.getByLabelText("Rename New page");
+    fireEvent.change(field, { target: { value: "Pricing" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(onTreeChanged).toHaveBeenCalled());
+
+    const submitted = pageTreeAction.mock.calls[0]![1];
+    expect(submitted.get("intent")).toBe("create");
+    expect(submitted.get("name")).toBe("Pricing");
+    // The id is what lets the workspace mint a session containing the page and
+    // open it; without it the preview manifest stays stale until a full reload.
+    expect(onTreeChanged).toHaveBeenCalledWith("new-page");
+  });
+
+  it("reports edits that create nothing with no id to open", async () => {
+    pageTreeAction.mockResolvedValueOnce({ success: "Changes saved." });
+    const { onTreeChanged } = renderExplorer();
+    fireEvent.keyDown(screen.getByText("Contact"), { key: "F2" });
+    const field = screen.getByLabelText("Rename Contact");
+    fireEvent.change(field, { target: { value: "Contact us" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(onTreeChanged).toHaveBeenCalledWith(undefined));
+  });
+
+  it("surfaces a failed edit instead of reporting a change", async () => {
+    pageTreeAction.mockResolvedValueOnce({ error: "That name is already used." });
+    const { onTreeChanged } = renderExplorer();
+    fireEvent.keyDown(screen.getByText("Contact"), { key: "F2" });
+    const field = screen.getByLabelText("Rename Contact");
+    fireEvent.change(field, { target: { value: "Home" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("That name is already used."));
+    expect(onTreeChanged).not.toHaveBeenCalled();
   });
 
   it("offers a way forward when the website has no pages", () => {

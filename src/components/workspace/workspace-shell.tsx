@@ -31,8 +31,6 @@ const AGENT_RANGE = [300, 640] as const;
 type Layout = { explorer: boolean; agent: boolean; explorerWidth: number; agentWidth: number };
 const DEFAULT_LAYOUT: Layout = { explorer: true, agent: true, explorerWidth: 262, agentWidth: 384 };
 
-const modifier = () => (typeof navigator !== "undefined" && /Mac|iP(hone|ad)/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl+");
-
 /**
  * The Canvas project workspace.
  *
@@ -180,17 +178,56 @@ export function WorkspaceShell({
   function toggleSelectMode() { const next = !selectMode; setSelectMode(next); send({ type: "CANVAS_SET_SELECT_MODE", enabled: next }); if (!next) clearSelection(); }
   function clearSelection() { pendingSelection.current = null; setSelection(null); send({ type: "CANVAS_CLEAR_SELECTION" }); }
 
-  const refresh = useCallback(async () => {
+  /**
+   * Mints a new preview session and reloads the frame from it.
+   *
+   * `openPageId` lands the frame directly on that page rather than posting a
+   * navigation afterwards, which would race the new frame's load. It is how a
+   * page that did not exist a moment ago becomes the one you are editing.
+   */
+  const refresh = useCallback(async (openPageId?: string) => {
     setStatus("loading"); setError(undefined);
     try {
       const response = await fetch(`/api/projects/${projectId}/preview-session`, { method: "POST" });
       const value = await response.json() as PreviewSession & { error?: string };
       if (!response.ok) throw new Error(value.error || "Preview could not be prepared.");
-      const retained = value.manifest.routes[route] ? route : initialPreviewRoute(value.manifest, currentPageId);
+      const opened = openPageId ? value.manifest.pages.find((page) => page.pageId === openPageId) : null;
+      const retained = opened?.canonicalRoute ?? (value.manifest.routes[route] ? route : initialPreviewRoute(value.manifest, currentPageId));
       const nextInstance = crypto.randomUUID();
+      pendingSelection.current = null;
+      setSelection(null);
       setSession(value); setRoute(retained); setInstanceId(nextInstance); setFrameSrc(makeSrc(value.token, retained, view.theme, nextInstance));
     } catch (cause) { setStatus("error"); setError(cause instanceof Error ? cause.message : "Preview could not be prepared."); }
   }, [currentPageId, makeSrc, projectId, route, view.theme]);
+
+  /*
+   * The preview manifest is a snapshot taken when the session was minted, so it
+   * does not learn about a new, renamed or deleted page on its own — which is
+   * why creating a page used to need a full browser reload before it could be
+   * opened. `nodes` is a live prop, so whenever the tree really changes, mint a
+   * fresh session to match it. This covers every route that edits pages: the
+   * explorer, the Pages panel, and anything added later.
+   */
+  const treeSignature = useMemo(
+    () => nodes.map((node) => `${node.id}:${node.name}:${node.routePath ?? ""}:${node.parentId ?? ""}:${node.position}:${node.isHomepage}`).join("|"),
+    [nodes],
+  );
+  const syncedSignature = useRef(treeSignature);
+  const pendingOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (syncedSignature.current === treeSignature) return;
+    syncedSignature.current = treeSignature;
+    const open = pendingOpen.current;
+    pendingOpen.current = null;
+    void refresh(open ?? undefined);
+  }, [refresh, treeSignature]);
+
+  /** Called by the explorer after it changes the tree. */
+  const onTreeChanged = useCallback((createdNodeId?: string) => {
+    // Remembered across the refresh so the new page is the one that opens.
+    pendingOpen.current = createdNodeId ?? null;
+    router.refresh();
+  }, [router]);
 
   const historyTarget = useMemo(
     () => (currentPageId ? { kind: "page" as const, id: currentPageId, name: currentPage?.name } : null),
@@ -277,17 +314,17 @@ export function WorkspaceShell({
 
   const routesByPageId = useMemo(() => Object.fromEntries(session.manifest.pages.map((page) => [page.pageId, page.canonicalRoute])), [session.manifest.pages]);
   const selectPage = useCallback((pageId: string, pageRoute: string | undefined) => {
-    if (pageRoute) navigate(pageRoute);
-    else router.refresh(); // a brand-new page is not in the current manifest yet
-    void pageId;
-  }, [navigate, router]);
+    // A page with no route yet means the manifest is behind the tree; minting a
+    // session that includes it opens it rather than doing nothing.
+    if (pageRoute) navigate(pageRoute); else void refresh(pageId);
+  }, [navigate, refresh]);
 
   const runPageAction = useCallback((values: Record<string, string>) => {
     const data = new FormData();
     data.set("projectId", projectId);
     for (const [key, value] of Object.entries(values)) data.set(key, value);
-    void pageTreeAction({}, data).then(() => router.refresh());
-  }, [projectId, router]);
+    void pageTreeAction({}, data).then((result) => onTreeChanged(result.createdNodeId));
+  }, [onTreeChanged, projectId]);
 
   /* ---------------------------------------------------------- shortcuts */
   useEffect(() => {
@@ -304,7 +341,11 @@ export function WorkspaceShell({
   }, [toggleAgent, toggleExplorer, view.fullScreen]);
 
   /* --------------------------------------------------------- menu model */
-  const key = modifier();
+  const canUndo = history?.canUndo ?? false;
+  const canRedo = history?.canRedo ?? false;
+  // Written the same way for every platform: resolving the real modifier needs
+  // `navigator`, which the server does not have.
+  const SHORTCUT = { explorer: "Ctrl / ⌘ + B", agent: "Ctrl / ⌘ + J" };
   const pageEntries: MenuEntry[] = currentNode ? [
     { kind: "separator" },
     { kind: "caption", label: currentNode.name },
@@ -349,15 +390,15 @@ export function WorkspaceShell({
       { kind: "item", label: "Dark", icon: <Moon size={14} />, checked: view.theme === "dark", onSelect: () => changeTheme("dark") },
     ] },
     { id: "history", label: "History", entries: [
-      { kind: "item", label: history?.canUndo ? history.undoLabel : "Nothing to undo", icon: <Undo2 size={14} />, disabled: !history?.canUndo, onSelect: () => history?.undo() },
-      { kind: "item", label: history?.canRedo ? history.redoLabel : "Nothing to redo", icon: <Redo2 size={14} />, disabled: !history?.canRedo, onSelect: () => history?.redo() },
+      { kind: "item", label: canUndo ? history!.undoLabel : "Nothing to undo", icon: <Undo2 size={14} />, disabled: !canUndo, onSelect: () => history?.undo() },
+      { kind: "item", label: canRedo ? history!.redoLabel : "Nothing to redo", icon: <Redo2 size={14} />, disabled: !canRedo, onSelect: () => history?.redo() },
       { kind: "separator" },
       { kind: "item", label: "Version history…", icon: <RefreshCw size={14} />, onSelect: () => history?.openVersions() },
       { kind: "item", label: "Checkpoints…", icon: <Save size={14} />, title: "Save the whole website so you can come back to it", onSelect: () => history?.openCheckpoints() },
     ] },
     { id: "view", label: "View", entries: [
-      { kind: "item", label: "Website explorer", icon: <PanelLeft size={14} />, keys: `${key}B`, checked: layout.explorer, onSelect: toggleExplorer },
-      { kind: "item", label: "Website Agent", icon: <PanelRight size={14} />, keys: `${key}J`, checked: layout.agent, onSelect: toggleAgent },
+      { kind: "item", label: "Website explorer", icon: <PanelLeft size={14} />, keys: SHORTCUT.explorer, checked: layout.explorer, onSelect: toggleExplorer },
+      { kind: "item", label: "Website Agent", icon: <PanelRight size={14} />, keys: SHORTCUT.agent, checked: layout.agent, onSelect: toggleAgent },
       { kind: "separator" },
       { kind: "caption", label: "Preview size" },
       { kind: "item", label: "Desktop", icon: <Monitor size={14} />, checked: view.device === "desktop", onSelect: () => dispatchView({ type: "SET_DEVICE", device: "desktop" }) },
@@ -406,6 +447,7 @@ export function WorkspaceShell({
           onSelectPage={selectPage}
           onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }}
           onOpenPagesPanel={() => openPanel("pages")}
+          onTreeChanged={onTreeChanged}
         />
         <button type="button" className="ws-resize ws-resize-r" aria-label="Resize the explorer" onPointerDown={() => setResizing("explorer")} />
       </aside>
@@ -455,11 +497,11 @@ export function WorkspaceShell({
     </div>
 
     <footer className="ws-statusbar">
-      <button type="button" className="ws-sb-btn" aria-pressed={layout.explorer} title={`Show or hide the website explorer (${key}B)`} onClick={toggleExplorer}><PanelLeft size={12} aria-hidden="true" /><span className="ws-desktop-only">Explorer</span></button>
-      <button type="button" className="ws-sb-btn" aria-pressed={layout.agent} title={`Show or hide the Website Agent (${key}J)`} onClick={toggleAgent}><PanelRight size={12} aria-hidden="true" /><span className="ws-desktop-only">Agent</span></button>
+      <button type="button" className="ws-sb-btn" aria-pressed={layout.explorer} title={`Show or hide the website explorer (${SHORTCUT.explorer})`} onClick={toggleExplorer}><PanelLeft size={12} aria-hidden="true" /><span className="ws-desktop-only">Explorer</span></button>
+      <button type="button" className="ws-sb-btn" aria-pressed={layout.agent} title={`Show or hide the Website Agent (${SHORTCUT.agent})`} onClick={toggleAgent}><PanelRight size={12} aria-hidden="true" /><span className="ws-desktop-only">Agent</span></button>
       <span className="ws-sb-sep" />
-      <button type="button" className="ws-sb-btn" disabled={!history?.canUndo} title={history?.undoLabel} onClick={() => history?.undo()}><Undo2 size={12} aria-hidden="true" />Undo</button>
-      <button type="button" className="ws-sb-btn" disabled={!history?.canRedo} title={history?.redoLabel} onClick={() => history?.redo()}><Redo2 size={12} aria-hidden="true" />Redo</button>
+      <button type="button" className="ws-sb-btn" disabled={!canUndo} title={history?.undoLabel} onClick={() => history?.undo()}><Undo2 size={12} aria-hidden="true" />Undo</button>
+      <button type="button" className="ws-sb-btn" disabled={!canRedo} title={history?.redoLabel} onClick={() => history?.redo()}><Redo2 size={12} aria-hidden="true" />Redo</button>
       <span className="ws-sb-sep" />
       <button type="button" className="ws-sb-btn" onClick={() => history?.openVersions()}>History</button>
       <span className="ws-sb-spacer" />

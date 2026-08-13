@@ -2,7 +2,6 @@
 
 import { ChevronDown, ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, FolderClosed, FolderOpen, FolderPlus, House, ListTree, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { pageTreeAction } from "@/app/actions/pages";
 import { Menu } from "@/components/ui/menu";
 import { buildPageTree, type PageTreeNode } from "@/domain/pages/tree";
@@ -29,12 +28,13 @@ export type ExplorerProps = {
   /** Opens the page and reveals the agent panel, focused on it. */
   onEditWithAgent: (pageId: string, route: string | undefined) => void;
   onOpenPagesPanel: () => void;
+  /** Reports a committed tree change; the id is set when a node was created. */
+  onTreeChanged: (createdNodeId?: string) => void;
 };
 
 type Draft = { parentId: string | null; type: "page" | "folder" };
 
-export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage, onEditWithAgent, onOpenPagesPanel }: ExplorerProps) {
-  const router = useRouter();
+export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage, onEditWithAgent, onOpenPagesPanel, onTreeChanged }: ExplorerProps) {
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -49,10 +49,12 @@ export function Explorer({ projectId, nodes, currentPageId, routes, onSelectPage
     setError(undefined);
     startTransition(async () => {
       const result = await pageTreeAction({}, data);
+      // The workspace owns the refresh: the tree alone is not enough, the
+      // preview session has to be re-minted before a new page can be opened.
       if (result.error) setError(result.error);
-      else router.refresh();
+      else onTreeChanged(result.createdNodeId);
     });
-  }, [projectId, router]);
+  }, [onTreeChanged, projectId]);
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();

@@ -49,14 +49,32 @@ describe("Canvas UI accessibility", () => {
     }
   });
 
-  it("keeps every hard-coded UI text color above the AA threshold", () => {
-    // Any literal color used for text must still be legible on white or the app canvas.
-    const declarations = [...css.matchAll(/color:\s*(#[0-9a-fA-F]{6})/g)].map((match) => match[1]!);
-    const exempt = new Set(["#ffffff", "#fff"]);
-    for (const color of new Set(declarations)) {
-      if (exempt.has(color.toLowerCase())) continue;
-      const best = Math.max(contrast(color, token("surface")), contrast(color, token("background")), contrast(color, "#eff6ff"), contrast(color, "#edf8f2"), contrast(color, "#fff2f0"), contrast(color, token("accent")));
-      expect(best, `${color} has no legible background`).toBeGreaterThanOrEqual(4.5);
+  it("defines no color outside the token palette", () => {
+    // Every color in the stylesheets resolves through a token, so the palette
+    // below is the whole palette — there is no second, drifting one hiding in a
+    // component rule. The tokens themselves are the only literals.
+    const workspaceCss = readFileSync("src/app/workspace.css", "utf8");
+    const afterTokens = css.slice(css.indexOf("* { box-sizing: border-box; }"));
+    for (const [name, sheet] of [["globals.css", afterTokens], ["workspace.css", workspaceCss]] as const) {
+      const literals = [...sheet.matchAll(/#[0-9a-fA-F]{3,6}\b/g)].map((match) => match[0]);
+      expect(literals, `${name} hard-codes ${literals.join(", ")} instead of using a token`).toHaveLength(0);
+    }
+  });
+
+  it("keeps every text token above the AA threshold on the surface it sits on", () => {
+    const pairs: Array<[string, string, string]> = [
+      ["strong muted text", token("muted-strong"), token("surface")],
+      ["strong muted text on canvas", token("muted-strong"), token("background")],
+      ["soft muted text", token("muted-soft"), token("surface")],
+      ["soft muted text on canvas", token("muted-soft"), token("background")],
+      ["muted text on a sunken surface", token("muted"), token("surface-muted")],
+      ["selected tree row", token("focus-strong"), token("focus-soft")],
+      ["danger text on its surface", token("danger"), token("danger-soft")],
+      ["success text on its surface", token("success"), token("success-soft")],
+      ["draft badge", token("warning-ink"), token("warning-soft")],
+    ];
+    for (const [name, foreground, over] of pairs) {
+      expect(contrast(foreground, over), `${name} (${foreground} on ${over})`).toBeGreaterThanOrEqual(4.5);
     }
   });
 
