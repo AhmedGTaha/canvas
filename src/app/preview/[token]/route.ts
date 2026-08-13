@@ -16,6 +16,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
   const nonce = randomBytes(18).toString("base64url");
   const canvasOrigin = process.env.APP_URL || new URL(request.url).origin;
   const headers = { ...previewSecurityHeaders(nonce, canvasOrigin), "Content-Type": "text/html; charset=utf-8" };
+  let errorContext: { sessionId: string; instanceId: string; parentOrigin: string; route: string; pageId: string | null } | undefined;
   try {
     const { token } = await params;
     const url = new URL(request.url);
@@ -23,6 +24,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
     const { payload, manifest } = await new PreviewManifestService().fromToken(token);
 
     if (query.block) {
+      errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route: "/", pageId: null };
       const entry = manifest.blocks[query.block];
       if (!entry) throw previewNotFound("block is not part of this project preview");
       const compiled = entry.activeVersionId ? await new BuildingBlockContentProvider().getActive(payload.projectId, entry.id) : null;
@@ -32,6 +34,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
 
     const route = query.route ? normalizePreviewRoute(query.route) : initialPreviewRoute(manifest);
     const page = manifest.pages.find((item) => item.pageId === manifest.routes[route]?.pageId);
+    errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route, pageId: page?.pageId ?? null };
     const generated = page?.currentVersionId ? await new GeneratedPageContentProvider().get(payload.projectId, page.pageId, page.currentVersionId) : null;
     const html = renderPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialRoute: route, initialMode: query.mode ?? "light", generatedBundle: generated?.bundle });
     return new Response(html, { headers });
@@ -41,6 +44,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
     const preview = error instanceof PreviewError ? error : null;
     observe.previewSessionFailed({ code: errorCode(error), reason: preview?.detail });
     const status = preview?.previewCode === "PREVIEW_NOT_CONFIGURED" ? 500 : preview?.previewCode === "PREVIEW_COMPILE_FAILED" ? 422 : 403;
-    return new Response(renderPreviewErrorDocument({ nonce, message: preview?.message ?? "This preview could not be loaded. Return to Canvas and refresh the preview." }), { status, headers });
+    const code = preview?.previewCode ?? "PREVIEW_UNAVAILABLE";
+    return new Response(renderPreviewErrorDocument({
+      nonce,
+      message: preview?.message ?? "This preview could not be loaded. Return to Canvas and refresh the preview.",
+      diagnostic: errorContext ? { ...errorContext, code } : undefined,
+    }), { status, headers });
   }
 }

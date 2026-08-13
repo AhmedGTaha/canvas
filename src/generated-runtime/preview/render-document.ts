@@ -23,7 +23,7 @@ function navigate(next){const normalized=normalize(next);if(normalized===route)r
 document.addEventListener("click",event=>{const link=event.target.closest("a[href]");if(!link)return;const href=link.getAttribute("href");if(!href||href.startsWith("#"))return;if(href.startsWith("/")&&manifest.routes[normalize(href)]){event.preventDefault();navigate(href)}});
 addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;const data=event.data;if(!data||data.sessionId!==sessionId||data.instanceId!==config.instanceId)return;if(handleSelectionMessage(data))return;if(data.type==="CANVAS_NAVIGATE"&&typeof data.route==="string")navigate(data.route);else if(data.type==="CANVAS_SET_THEME"&&(data.mode==="light"||data.mode==="dark")){mode=data.mode;applyTheme()}else if(data.type==="CANVAS_REFRESH")location.reload()});
 function previewRoute(){return route}
-function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\/\/[^\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
+function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\\/\\/[^\\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
 function reportPreviewFailure(detail){send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:previewRoute(),pageId:currentPageId(),message:"This part of your website could not be displayed.",detail})}
 addEventListener("error",event=>reportPreviewFailure(previewDetail(event)));
 addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route})})()</script>${input.generatedBundle ? `<script nonce="${input.nonce}">${safeScript(input.generatedBundle)}</script>` : ""}</body></html>`;
@@ -47,7 +47,7 @@ function render(){document.documentElement.dataset.theme=mode;root.replaceChildr
 document.addEventListener("click",event=>{const link=event.target.closest("a[href]");if(link)event.preventDefault()});
 addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;const data=event.data;if(!data||data.sessionId!==sessionId||data.instanceId!==config.instanceId)return;if(handleSelectionMessage(data))return;if(data.type==="CANVAS_SET_THEME"&&(data.mode==="light"||data.mode==="dark")){mode=data.mode;document.documentElement.dataset.theme=mode}else if(data.type==="CANVAS_REFRESH")location.reload()});
 function previewRoute(){return "/"}
-function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\/\/[^\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
+function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\\/\\/[^\\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
 function reportPreviewFailure(detail){send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:previewRoute(),pageId:currentPageId(),message:"This part of your website could not be displayed.",detail})}
 addEventListener("error",event=>reportPreviewFailure(previewDetail(event)));
 addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route:"/"})})()</script>${input.blockBundle ? `<script nonce="${input.nonce}">${safeScript(input.blockBundle)}</script>` : ""}</body></html>`;
@@ -89,8 +89,16 @@ const selectionCss = `.canvas-block-host{display:contents}#generated-root [data-
  * language instead of a generic failure, under the same CSP as every other Preview
  * response, and contains no markup supplied by generated code.
  */
-export function renderPreviewErrorDocument(input: { nonce: string; message: string }) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview unavailable</title><style nonce="${input.nonce}">body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fafafa;color:#27272a;font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.error{max-width:420px;padding:28px;text-align:center}.error h1{margin:0 0 8px;font-size:16px}.error p{margin:0;color:#6b7280}</style></head><body><div class="error" role="alert"><h1>Preview unavailable</h1><p>${escapeHtml(input.message)}</p></div></body></html>`;
+export function renderPreviewErrorDocument(input: {
+  nonce: string;
+  message: string;
+  diagnostic?: { code: string; sessionId: string; instanceId: string; parentOrigin: string; route: string; pageId: string | null };
+}) {
+  const code = input.diagnostic?.code;
+  const script = input.diagnostic
+    ? `<script nonce="${input.nonce}">parent.postMessage(${serialized({ type: "CANVAS_PREVIEW_ERROR", sessionId: input.diagnostic.sessionId, instanceId: input.diagnostic.instanceId, code: input.diagnostic.code, route: input.diagnostic.route, pageId: input.diagnostic.pageId, message: input.message })},${serialized(new URL(input.diagnostic.parentOrigin).origin)})</script>`
+    : "";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview unavailable</title><style nonce="${input.nonce}">body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fafafa;color:#27272a;font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.error{max-width:420px;padding:28px;text-align:center}.error h1{margin:0 0 8px;font-size:16px}.error p{margin:0;color:#6b7280}.error code{display:inline-block;margin-top:10px;color:#52525b;font-size:12px}</style></head><body><div class="error" role="alert"><h1>Preview unavailable</h1><p>${escapeHtml(input.message)}</p>${code ? `<code>${escapeHtml(code)}</code>` : ""}</div>${script}</body></html>`;
 }
 
 function safeScript(value: string) { return value.replace(/<\/script/gi, "<\\/script").replace(/<!--/g, "<\\!--"); }

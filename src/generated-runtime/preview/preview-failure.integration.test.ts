@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import { Script } from "node:vm";
+import { JSDOM } from "jsdom";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { db, sql } from "@/server/db/client";
-import { buildingBlockVersions, buildingBlocks, mediaAssets, pageNodes, pageVersions, projectBrandSettings, users } from "@/server/db/schema";
+import { buildingBlockVersions, buildingBlocks, mediaAssets, pageNodes, projectBrandSettings, users } from "@/server/db/schema";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { ProjectService } from "@/domain/projects/service";
 import { PageTreeService } from "@/domain/pages/service";
@@ -25,6 +27,21 @@ import { setTelemetrySink } from "@/server/observability/telemetry";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const PREVIEW_SECRET = "preview-failure-suite-secret-value-long-enough";
 const MEDIA_PLACEHOLDER = "__MEDIA_ID__";
+
+function expectPreviewScriptsToParse(document: string) {
+  const scripts = [...document.matchAll(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g)].map((match) => match[1]!);
+  expect(scripts.length).toBeGreaterThan(0);
+  for (const script of scripts) expect(() => new Script(script)).not.toThrow();
+}
+
+async function expectPreviewScriptsToRender(document: string, text: string) {
+  const dom = new JSDOM(document, { runScripts: "outside-only", url: "http://localhost/preview" });
+  const scripts = [...document.matchAll(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g)].map((match) => match[1]!);
+  for (const script of scripts) dom.window.eval(script);
+  await new Promise<void>((resolve) => dom.window.setTimeout(resolve, 50));
+  expect(dom.window.document.getElementById("generated-root")?.textContent).toContain(text);
+  dom.window.close();
+}
 
 /**
  * Verbatim shape of a real Gemini-generated Building Block: namespace React import,
@@ -142,6 +159,8 @@ describe.sequential("Preview failure handling", () => {
     const document = renderBlockPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, blockBundle: compiled!.bundle });
     expect(document).toContain("generated-root");
     expect(document).toContain("Get Started");
+    expectPreviewScriptsToParse(document);
+    await expectPreviewScriptsToRender(document, "Get Started");
     // The referenced Media resolves through the manifest, not a storage key.
     expect(session.manifest.media[mediaId]?.previewUrl).toMatch(/^\/api\/preview\/media\//);
     expect(document).not.toContain(version!.sourceCode);
@@ -162,6 +181,8 @@ describe.sequential("Preview failure handling", () => {
     const document = renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generatedBundle: generated!.bundle });
     expect(document).toContain("generated-root");
     expect(document).toContain("Get Started");
+    expectPreviewScriptsToParse(document);
+    await expectPreviewScriptsToRender(document, "Get Started");
   });
 
   it("compiles Preview through the same authority that validates a generated version", async () => {
@@ -243,5 +264,17 @@ describe.sequential("Preview failure handling", () => {
     expect(document).toContain('role="alert"');
     expect(document).toContain('nonce="nonce"');
     expect(document).not.toContain("<script");
+
+    const sessionId = "preview-session-id";
+    const instanceId = randomUUID();
+    const reported = renderPreviewErrorDocument({
+      nonce: "nonce",
+      message: "Canvas could not display this content.",
+      diagnostic: { code: "PREVIEW_COMPILE_FAILED", sessionId, instanceId, parentOrigin: "http://localhost:3000", route: "/", pageId: null },
+    });
+    expect(reported).toContain("PREVIEW_COMPILE_FAILED");
+    expect(reported).toContain("parent.postMessage");
+    expect(reported).toContain(sessionId);
+    expect(reported).toContain(instanceId);
   });
 });

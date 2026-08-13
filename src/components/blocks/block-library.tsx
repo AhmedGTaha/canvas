@@ -82,7 +82,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
         const restore = pendingSelection.current;
         if (restore) post({ type: "CANVAS_SELECT_ELEMENT", canvasId: restore.canvasId, blockId: restore.blockId }, session.manifest.previewSessionId, instanceId);
       }
-      else if (message.type === "CANVAS_PREVIEW_ERROR") { setPreviewStatus("error"); setPreviewError(message.detail ? `${message.message} (${message.detail})` : message.message); }
+      else if (message.type === "CANVAS_PREVIEW_ERROR") { setPreviewStatus("error"); setPreviewError(`${message.message} (${message.detail ?? message.code})`); }
       else if (message.type === "CANVAS_ELEMENT_SELECTED") { const { type, sessionId, instanceId: _instance, ...value } = message; void type; void sessionId; void _instance; pendingSelection.current = value; setSelection(value); }
       else if (message.type === "CANVAS_ELEMENT_CLEARED") { pendingSelection.current = null; setSelection(null); }
     };
