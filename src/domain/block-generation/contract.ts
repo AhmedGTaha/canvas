@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { changeSummaryProperty, generatedSourceProperty, mediaIdsProperty, schemaVersionProperty, targetCanvasIdProperty, targetRemovedProperty } from "@/domain/generated-source/response-schema";
 import { BLOCK_MEDIA_ATTACHMENT_LIMIT, GENERATED_SOURCE_MAX_BYTES } from "@/domain/generated-source/limits";
 import { pageChangeSummarySchema } from "@/domain/page-generation/contract";
 
@@ -22,12 +23,11 @@ export type GeneratedBlockResponse = z.infer<typeof generatedBlockResponseSchema
 export const generatedBlockResponseJsonSchema = {
   type: "object", additionalProperties: false, required: ["schemaVersion", "sourceCode", "referencedMediaIds", "summary"],
   properties: {
-    schemaVersion: { type: "integer", const: 1 }, sourceCode: { type: "string", maxLength: BLOCK_SOURCE_MAX_BYTES },
-    referencedMediaIds: { type: "array", maxItems: 20, items: { type: "string", format: "uuid" } },
-    targetCanvasId: { type: "string", maxLength: 64, nullable: true },
-    targetRemoved: { type: "boolean" },
-    summary: { type: "object", additionalProperties: false, required: ["headline", "changes", "limitations"], properties: {
-      headline: { type: "string", maxLength: 120 }, changes: { type: "array", maxItems: 6, items: { type: "string", maxLength: 200 } }, limitations: { type: "array", maxItems: 4, items: { type: "string", maxLength: 200 } },
-    } },
+    schemaVersion: schemaVersionProperty,
+    sourceCode: generatedSourceProperty,
+    referencedMediaIds: mediaIdsProperty,
+    targetCanvasId: targetCanvasIdProperty,
+    targetRemoved: targetRemovedProperty,
+    summary: changeSummaryProperty,
   },
 } as const;

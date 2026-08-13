@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { changeSummaryProperty, generatedSourceProperty, mediaIdsProperty, schemaVersionProperty, targetCanvasIdProperty, targetRemovedProperty } from "@/domain/generated-source/response-schema";
 
 export const PAGE_SOURCE_MAX_BYTES = 102_400;
 export const PAGE_MEDIA_ATTACHMENT_LIMIT = 5;
@@ -32,14 +33,22 @@ export type PageChangeSummary = z.infer<typeof pageChangeSummarySchema>;
 export const generatedPageResponseJsonSchema = {
   type: "object", additionalProperties: false, required: ["schemaVersion", "sourceCode", "referencedMediaIds", "summary"],
   properties: {
-    schemaVersion: { type: "integer", const: 1 }, sourceCode: { type: "string", maxLength: PAGE_SOURCE_MAX_BYTES },
-    referencedMediaIds: { type: "array", maxItems: 20, items: { type: "string", format: "uuid" } },
-    blockUsages: { type: "array", maxItems: PAGE_BLOCK_USAGE_LIMIT, items: { type: "object", additionalProperties: false, required: ["blockId", "usageKey"], properties: { blockId: { type: "string", format: "uuid" }, usageKey: { type: "string", maxLength: 64 } } } },
-    targetCanvasId: { type: "string", maxLength: 64, nullable: true },
-    targetRemoved: { type: "boolean" },
-    summary: { type: "object", additionalProperties: false, required: ["headline", "changes", "limitations"], properties: {
-      headline: { type: "string", maxLength: 120 }, changes: { type: "array", maxItems: 6, items: { type: "string", maxLength: 200 } }, limitations: { type: "array", maxItems: 4, items: { type: "string", maxLength: 200 } },
-    } },
+    schemaVersion: schemaVersionProperty,
+    sourceCode: generatedSourceProperty,
+    referencedMediaIds: mediaIdsProperty,
+    blockUsages: {
+      type: "array", maxItems: PAGE_BLOCK_USAGE_LIMIT,
+      items: {
+        type: "object", additionalProperties: false, required: ["blockId", "usageKey"],
+        properties: {
+          blockId: { type: "string", description: "A Building Block UUID from existingBuildingBlocks, exactly as supplied." },
+          usageKey: { type: "string", description: "Stable lowercase key, unique within this page, using letters, numbers, and hyphens." },
+        },
+      },
+      description: "Every CanvasBlock reference in the source, and nothing else.",
+    },
+    targetCanvasId: targetCanvasIdProperty,
+    targetRemoved: targetRemovedProperty,
+    summary: changeSummaryProperty,
   },
 } as const;
-

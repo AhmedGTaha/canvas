@@ -1,27 +1,96 @@
-import { GoogleGenAI } from "@google/genai";
+import { ApiError, GoogleGenAI } from "@google/genai";
 import { AIError, type AIProvider, type AIRequest, type AIResponse, type StructuredValidator } from "@/domain/ai/provider";
 
+/** HTTP status of a provider failure, from the SDK error or a status-like shape. */
 function errorStatus(error: unknown) {
+  if (error instanceof ApiError && Number.isInteger(error.status)) return error.status;
   if (!error || typeof error !== "object") return undefined;
-  const value = error as { status?: number; code?: number; message?: string };
-  return value.status ?? value.code ?? (value.message?.match(/\b(401|403|429|5\d\d)\b/) ? Number(value.message.match(/\b(401|403|429|5\d\d)\b/)?.[1]) : undefined);
+  const value = error as { status?: unknown; code?: unknown; message?: unknown };
+  if (Number.isInteger(value.status)) return value.status as number;
+  if (Number.isInteger(value.code)) return value.code as number;
+  const message = typeof value.message === "string" ? value.message : "";
+  const match = /\b(400|401|403|404|408|413|429|5\d\d)\b/.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : "";
+}
+/** Short, non-sensitive diagnostic for logs. Never includes credentials. */
+function diagnostic(error: unknown) {
+  return messageOf(error).replace(/key=[^&\s]+/gi, "key=[redacted]").slice(0, 200) || undefined;
 }
 
+/**
+ * Maps a Gemini failure onto Canvas's normalized AI error model. Retryable failures are
+ * transient only; configuration and request problems fail fast so a bad model name or
+ * malformed schema is not retried three times behind a misleading message.
+ */
 export function normalizeGeminiError(error: unknown): AIError {
   if (error instanceof AIError) return error;
   if (error instanceof DOMException && error.name === "AbortError") return new AIError("AI_JOB_CANCELLED", "The AI request was cancelled.");
   const status = errorStatus(error);
-  if (status === 401 || status === 403) return new AIError("AI_PROVIDER_AUTH_FAILED", "AI provider authentication failed.");
-  if (status === 429) return new AIError("AI_PROVIDER_RATE_LIMITED", "Canvas AI is busy right now. Try again shortly.", true);
-  if (status && status >= 500) return new AIError("AI_PROVIDER_UNAVAILABLE", "Canvas AI is temporarily unavailable. Try again shortly.", true);
-  if (error instanceof Error && /timeout/i.test(error.message)) return new AIError("AI_PROVIDER_TIMEOUT", "Canvas took too long to generate this page. Try again.", true);
-  return new AIError("AI_PROVIDER_UNAVAILABLE", "Canvas AI is temporarily unavailable. Try again shortly.", true);
+  const message = messageOf(error);
+  const detail = diagnostic(error);
+
+  if (status === 401 || status === 403 || /API key not valid|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(message)) {
+    return new AIError("AI_PROVIDER_AUTH_FAILED", "Canvas AI is not set up correctly. Check the AI configuration for this environment.", false, undefined, detail);
+  }
+  if (status === 404 || /is not found|not supported|NOT_FOUND/i.test(message)) {
+    return new AIError("AI_NOT_CONFIGURED", "The configured AI model is unavailable. Check the AI configuration for this environment.", false, undefined, detail);
+  }
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(message)) {
+    return new AIError("AI_PROVIDER_RATE_LIMITED", "Canvas AI is busy right now. Try again shortly.", true, retryDelayMs(error));
+  }
+  if (status === 413 || /token count|too large|exceeds the maximum/i.test(message)) {
+    return new AIError("AI_CONTEXT_TOO_LARGE", "This request is too large for Canvas AI. Try a shorter request or fewer attachments.", false, undefined, detail);
+  }
+  if (status === 408 || status === 504 || /timeout|timed out|ETIMEDOUT/i.test(message)) {
+    return new AIError("AI_PROVIDER_TIMEOUT", "Canvas took too long to generate this. Try again.", true, undefined, detail);
+  }
+  if (status && status >= 500) {
+    return new AIError("AI_PROVIDER_UNAVAILABLE", "Canvas AI is temporarily unavailable. Try again shortly.", true, undefined, detail);
+  }
+  if (status === 400 || /INVALID_ARGUMENT|FAILED_PRECONDITION/i.test(message)) {
+    // A rejected request will be rejected identically on every retry.
+    return new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not complete this AI request. Try again.", false, undefined, detail);
+  }
+  return new AIError("AI_PROVIDER_UNAVAILABLE", "Canvas AI is temporarily unavailable. Try again shortly.", true, undefined, detail);
 }
 
+function retryDelayMs(error: unknown) {
+  const match = /retryDelay"?\s*[:=]\s*"?(\d+)s/i.exec(messageOf(error));
+  return match ? Number(match[1]) * 1000 : undefined;
+}
+
+/** Finish reasons that mean the response is unusable even when text came back. */
+const UNUSABLE_FINISH: Record<string, string> = {
+  MAX_TOKENS: "The AI response was cut short. Try a smaller or simpler request.",
+  SAFETY: "Canvas AI could not complete this request. Try rephrasing it.",
+  RECITATION: "Canvas AI could not complete this request. Try rephrasing it.",
+  PROHIBITED_CONTENT: "Canvas AI could not complete this request. Try rephrasing it.",
+  SPII: "Canvas AI could not complete this request. Try rephrasing it.",
+  BLOCKLIST: "Canvas AI could not complete this request. Try rephrasing it.",
+  MALFORMED_FUNCTION_CALL: "Canvas AI returned an unusable response. Try again.",
+};
+
+/** Strips a stray markdown fence if the model wraps its JSON despite the MIME type. */
+function unwrapJson(text: string) {
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/i.exec(text.trim());
+  return (fenced ? fenced[1]! : text).trim();
+}
+
+/**
+ * Gemini adapter for the Canvas provider abstraction. It only turns a provider-neutral
+ * `AIRequest` into a Gemini call and back; it never reads Canvas persistence, never
+ * mutates state, and never logs or returns the API key.
+ */
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
   private readonly client: GoogleGenAI;
-  constructor(apiKey: string, readonly model: string, private readonly timeoutMs: number) { this.client = new GoogleGenAI({ apiKey }); }
+
+  constructor(apiKey: string, readonly model: string, private readonly timeoutMs: number) {
+    this.client = new GoogleGenAI({ apiKey });
+  }
 
   private async generate(request: AIRequest, structured = false): Promise<AIResponse> {
     const controller = new AbortController();
@@ -29,36 +98,71 @@ export class GeminiProvider implements AIProvider {
     const abort = () => controller.abort(request.signal?.reason);
     request.signal?.addEventListener("abort", abort, { once: true });
     try {
+      // Project context travels as data inside the first user turn, never as instructions.
       const context = request.structuredContext === undefined ? "" : `\n\n<canvas_project_context>\n${JSON.stringify(request.structuredContext)}\n</canvas_project_context>`;
       const contents = request.messages.map((message, index) => ({
         role: message.role === "assistant" ? "model" as const : "user" as const,
-        parts: message.parts.map((part) => part.type === "text" ? { text: index === 0 ? part.text + context : part.text } : { inlineData: { mimeType: part.mimeType, data: Buffer.from(part.data).toString("base64") } }),
+        parts: message.parts.map((part) => part.type === "text"
+          ? { text: index === 0 ? part.text + context : part.text }
+          // Canvas Media is sent inline as bytes: no storage URL or credential leaves Canvas.
+          : { inlineData: { mimeType: part.mimeType, data: Buffer.from(part.data).toString("base64") } }),
       }));
-      const response = await this.client.models.generateContent({ model: this.model, contents, config: {
-        systemInstruction: request.systemInstructions,
-        temperature: request.temperature,
-        maxOutputTokens: request.maxOutputTokens,
-        responseMimeType: structured ? "application/json" : undefined,
-        responseJsonSchema: structured ? request.responseSchema : undefined,
-        abortSignal: controller.signal,
-      } });
+
+      const response = await this.client.models.generateContent({
+        model: this.model,
+        contents,
+        config: {
+          systemInstruction: request.systemInstructions,
+          temperature: request.temperature,
+          maxOutputTokens: request.maxOutputTokens,
+          responseMimeType: structured ? "application/json" : undefined,
+          responseJsonSchema: structured ? request.responseSchema : undefined,
+          abortSignal: controller.signal,
+        },
+      });
+
+      const finishReason = response.candidates?.[0]?.finishReason as string | undefined;
       const text = response.text?.trim();
-      if (!text) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "The AI provider returned an empty response.");
-      return { text, provider: this.name, model: this.model, providerRequestId: response.responseId, finishReason: response.candidates?.[0]?.finishReason,
-        usage: response.usageMetadata ? { inputTokens: response.usageMetadata.promptTokenCount, outputTokens: response.usageMetadata.candidatesTokenCount, totalTokens: response.usageMetadata.totalTokenCount, cachedTokens: response.usageMetadata.cachedContentTokenCount } : undefined };
+      if (finishReason && finishReason !== "STOP" && UNUSABLE_FINISH[finishReason]) {
+        throw new AIError("AI_PROVIDER_INVALID_RESPONSE", UNUSABLE_FINISH[finishReason]!, false, undefined, `finishReason: ${finishReason}`);
+      }
+      if (!text) {
+        const blockReason = response.promptFeedback?.blockReason;
+        throw new AIError("AI_PROVIDER_INVALID_RESPONSE", blockReason ? "Canvas AI could not complete this request. Try rephrasing it." : "Canvas AI returned an empty response. Try again.", false, undefined, blockReason ? `blockReason: ${blockReason}` : "empty response");
+      }
+      return {
+        text, provider: this.name, model: this.model,
+        providerRequestId: response.responseId, finishReason,
+        usage: response.usageMetadata ? {
+          inputTokens: response.usageMetadata.promptTokenCount,
+          outputTokens: response.usageMetadata.candidatesTokenCount,
+          totalTokens: response.usageMetadata.totalTokenCount,
+          cachedTokens: response.usageMetadata.cachedContentTokenCount,
+        } : undefined,
+      };
     } catch (error) {
       if (controller.signal.aborted) {
         if (request.signal?.aborted) throw new AIError("AI_JOB_CANCELLED", "The AI request was cancelled.");
-        throw new AIError("AI_PROVIDER_TIMEOUT", "Canvas took too long to generate this page. Try again.", true);
+        throw new AIError("AI_PROVIDER_TIMEOUT", "Canvas took too long to generate this. Try again.", true);
       }
       throw normalizeGeminiError(error);
-    } finally { clearTimeout(timeout); request.signal?.removeEventListener("abort", abort); }
+    } finally {
+      clearTimeout(timeout);
+      request.signal?.removeEventListener("abort", abort);
+    }
   }
 
   generateText(request: AIRequest) { return this.generate(request); }
-  async generateStructured<T>(request: AIRequest, validator: StructuredValidator<T>) {
+
+  /** Parses and validates structured output. Zod stays the contract authority. */
+  async generateStructured<T>(request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const result = await this.generate(request, true);
-    try { return { ...result, structuredData: validator.parse(JSON.parse(result.text)) }; }
-    catch { throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "The AI provider returned an invalid structured response."); }
+    let parsed: unknown;
+    try { parsed = JSON.parse(unwrapJson(result.text)); }
+    catch { throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas AI returned an unreadable response. Try again.", false, undefined, "response was not valid JSON"); }
+    try { return { ...result, structuredData: validator.parse(parsed) }; }
+    catch (error) {
+      throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas AI returned a response Canvas could not use. Try again.", false, undefined, `schema mismatch: ${messageOf(error).slice(0, 160)}`);
+    }
   }
 }

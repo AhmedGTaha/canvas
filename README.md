@@ -58,7 +58,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 | `npm test` | Full test suite |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint (zero warnings allowed) |
-| `npm run test:ai-provider` | Optional paid smoke check against the real AI provider |
+| `npm run test:ai-provider` | Optional paid smoke check against the real Gemini API (needs `GEMINI_API_KEY`) |
 
 Extra test switches:
 
@@ -86,13 +86,32 @@ scoped Preview token. Object keys are never exposed to clients.
 
 ## AI provider
 
-Canvas boots and runs without AI credentials; generation fails safely with a plain
-message. To enable it set `AI_PROVIDER=gemini`, a server-only `GEMINI_API_KEY`, and
-optionally `AI_MODEL` and `AI_PROVIDER_TIMEOUT_MS`, then run `npm run worker`.
+Canvas uses the Google Gemini API through the GA [`@google/genai`](https://www.npmjs.com/package/@google/genai)
+SDK. Set a server-only `GEMINI_API_KEY` (create one at
+[Google AI Studio](https://aistudio.google.com/apikey)) and optionally `GEMINI_MODEL`,
+then run `npm run worker`.
 
-The provider adapter never reads Canvas persistence. Context is assembled by the Project
-Context Builder from authorized project data only, and the orchestration service is the
-only component that persists results.
+```env
+GEMINI_API_KEY=your-key
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+The key is read only on the server, in `src/server/ai/config.ts`. It is never prefixed
+with `NEXT_PUBLIC_`, sent to the browser or Preview, written to the database, included in
+telemetry, or packaged into an export; the export validator fails the build if it ever
+appears in generated output. Only the provider name and model are recorded on job rows.
+
+Canvas boots and runs without credentials: every screen keeps working and AI requests
+fail with “AI is not configured for this environment.” rather than crashing.
+
+The provider adapter never reads Canvas persistence and never mutates state. Every
+result flows through the same pipeline: Gemini → structured response → Zod validation →
+source/security validation → restricted compile → immutable version → transactional
+activation. Selected Media is sent inline as bytes, so no storage key or signed URL
+leaves Canvas. Provider failures are normalized (`AI_NOT_CONFIGURED`,
+`AI_PROVIDER_AUTH_FAILED`, `AI_PROVIDER_RATE_LIMITED`, `AI_CONTEXT_TOO_LARGE`,
+`AI_PROVIDER_TIMEOUT`, `AI_PROVIDER_UNAVAILABLE`, `AI_PROVIDER_INVALID_RESPONSE`), and
+only transient classes are retried.
 
 ## Environment variables
 
@@ -108,9 +127,9 @@ only component that persists results.
 | `PREVIEW_TOKEN_TTL_SECONDS` | No | Preview session lifetime (30–900); defaults to `300`. |
 | `INVITE_TTL_DAYS` | No | Invitation lifetime; defaults to `7`. |
 | `LEASE_DURATION_SECONDS` | No | Editing lease lifetime; defaults to `60`. |
+| `GEMINI_API_KEY` | For AI only | Server-only Gemini credential. Never exposed to clients. |
+| `GEMINI_MODEL` | No | Gemini model; defaults to `gemini-2.5-flash`. |
 | `AI_PROVIDER` | No | Provider selection; `gemini` (default). |
-| `GEMINI_API_KEY` | For AI only | Server-only provider credential. |
-| `AI_MODEL` | No | Model name; defaults to `gemini-2.5-flash`. |
 | `AI_PROVIDER_TIMEOUT_MS` | No | Provider timeout; defaults to `120000`. |
 | `CANVAS_EXPORT_BUILD` | No | `typecheck` (default) or `full` to run a real `next build` per export. |
 | `CANVAS_METRICS_TOKEN` | No | Enables `GET /api/internal/metrics` for callers with this bearer token. |

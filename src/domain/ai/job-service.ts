@@ -8,6 +8,13 @@ import { createBlockJobSchema } from "@/domain/blocks/schemas";
 import { elementNotFound, findEditableElement, type ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 import { observe } from "@/server/observability/events";
+import { aiProviderDescriptor } from "@/server/ai/config";
+
+/** Provider and model recorded on a job row. Never includes credentials. */
+function aiProviderRecord() {
+  const { provider, model } = aiProviderDescriptor();
+  return { provider, providerModel: model };
+}
 
 export type GenerationJobStatus = typeof generationJobs.$inferSelect.status;
 const TERMINAL: GenerationJobStatus[] = ["completed", "failed", "cancelled"];
@@ -41,7 +48,7 @@ export class GenerationJobService {
       const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
       if (!message) throw new Error("User message insert failed.");
       const targetType = conversation.pageId ? "page" as const : "project" as const;
-      const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType, targetId: conversation.pageId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash", contextMetadata: { selectedMediaIds: parsed.selectedMediaIds } }).returning();
+      const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType, targetId: conversation.pageId, promptMessageId: message.id, ...aiProviderRecord(), contextMetadata: { selectedMediaIds: parsed.selectedMediaIds } }).returning();
       if (!job) throw new Error("Generation job insert failed.");
       await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.job_created", entityType: "generation_job", entityId: job.id });
@@ -78,7 +85,7 @@ export class GenerationJobService {
         const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = page.currentVersionId ? "page_modify" as const : "page_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash", contextMetadata: selectedElement ? { selectedElement } : null }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
@@ -124,7 +131,7 @@ export class GenerationJobService {
         const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = block.currentVersionId ? "block_modify" as const : "block_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, provider: (process.env.AI_PROVIDER ?? "gemini").toLowerCase(), providerModel: process.env.AI_MODEL || "gemini-2.5-flash", contextMetadata: selectedElement ? { selectedElement } : null }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
