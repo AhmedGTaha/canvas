@@ -3,7 +3,7 @@ import type { ExportFailure } from "./export-validator";
 
 export type ExportErrorCode =
   | "EXPORT_VALIDATION_FAILED" | "EXPORT_BUILD_FAILED" | "EXPORT_ACTIVE"
-  | "EXPORT_NOT_FOUND" | "EXPORT_NOT_READY" | "EXPORT_FAILED";
+  | "EXPORT_NOT_FOUND" | "EXPORT_NOT_READY" | "EXPORT_FAILED" | "EXPORT_EXPIRED";
 
 /** Normalized, user-safe export failures. Storage keys and stack traces never leak. */
 export class ExportError extends DomainError {
@@ -15,6 +15,7 @@ export class ExportError extends DomainError {
 
 export const exportActive = () => new ExportError("EXPORT_ACTIVE", "CONFLICT", "This project is already being exported. Wait for it to finish.");
 export const exportNotFound = () => new ExportError("EXPORT_NOT_FOUND", "NOT_FOUND", "That export is not part of this project.");
+export const exportExpired = () => new ExportError("EXPORT_EXPIRED", "NOT_FOUND", "This download has expired. Start a new export to get a fresh ZIP.");
 export const exportNotReady = () => new ExportError("EXPORT_NOT_READY", "CONFLICT", "This export is not ready to download yet.");
 export const exportValidationFailed = (failures: ExportFailure[]) =>
   new ExportError("EXPORT_VALIDATION_FAILED", "VALIDATION", "This website is not ready to export yet. Fix the issues listed and try again.", failures);

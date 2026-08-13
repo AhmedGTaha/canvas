@@ -6,6 +6,7 @@ import { ChangeSetService, recordChangeSet, type TransactionLike } from "./chang
 import { applyRestorePlan, validateRestorePlan, type RestorePlan } from "./restore-engine";
 import { nothingToRedo, nothingToUndo, redoConflict, undoConflict } from "./errors";
 import type { ChangeSetItem } from "@/server/db/schema";
+import { observe } from "@/server/observability/events";
 
 type Direction = "undo" | "redo";
 type Expectation = { entityType: "page" | "building_block" | "project"; entityId: string | null; versionId: string | null; state: Record<string, unknown> | null };
@@ -122,7 +123,7 @@ export class HistoryService {
       await transaction.update(changeSets)
         .set(direction === "undo" ? { undoneAt: new Date(), undoneByChangeSetId: record.id } : { undoneAt: null, undoneByChangeSetId: null })
         .where(and(eq(changeSets.id, candidate.id), eq(changeSets.projectId, projectId)));
-      console.info(JSON.stringify({ event: `history.${direction}`, projectId, changeSetId: candidate.id, replayId: record.id }));
+      observe.historyAction(direction, { projectId, changeSetId: candidate.id });
       return { changeSet: record, source: { id: candidate.id, summary: candidate.summary, operation: candidate.operation } };
     });
   }

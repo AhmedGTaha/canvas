@@ -1,6 +1,7 @@
 import { sql } from "@/server/db/client";
 import { DomainError } from "@/domain/shared/errors";
 import { sha256 } from "@/domain/shared/crypto";
+import { observe } from "@/server/observability/events";
 
 export async function consumeRateLimit(scope: string, subject: string, options: { attempts?: number; windowMinutes?: number } = {}) {
   const attempts = options.attempts ?? 8;
@@ -21,6 +22,7 @@ export async function consumeRateLimit(scope: string, subject: string, options: 
     RETURNING attempt_count
   `;
   if (entry && entry.attempt_count > attempts) {
+    observe.authFailed("rate_limited", { scope });
     throw new DomainError("RATE_LIMITED", "Too many attempts. Try again in a few minutes.");
   }
 }

@@ -7,6 +7,7 @@ import { AIError } from "./provider";
 import { createBlockJobSchema } from "@/domain/blocks/schemas";
 import { elementNotFound, findEditableElement, type ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
+import { observe } from "@/server/observability/events";
 
 export type GenerationJobStatus = typeof generationJobs.$inferSelect.status;
 const TERMINAL: GenerationJobStatus[] = ["completed", "failed", "cancelled"];
@@ -44,7 +45,7 @@ export class GenerationJobService {
       if (!job) throw new Error("Generation job insert failed.");
       await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.job_created", entityType: "generation_job", entityId: job.id });
-      console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId }));
+      observe.generationJob("created", { jobId: job.id, projectId: parsed.projectId, operation: "assistant" });
       return { job, message };
     });
   }
@@ -82,7 +83,7 @@ export class GenerationJobService {
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
         await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.page_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, pageId: page.id, mediaCount: selectedIds.length, selectedCanvasId: selectedElement?.canvasId ?? null } });
-        console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId, pageId: page.id, operation }));
+        observe.generationJob("created", { jobId: job.id, projectId: parsed.projectId, operation, targetId: page.id });
         return { job, message, conversation };
       });
     } catch (error) {
@@ -128,7 +129,7 @@ export class GenerationJobService {
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
         await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.block_generation_requested", entityType: "generation_job", entityId: job.id, metadata: { operation, blockId: block.id, mediaCount: selectedIds.length, selectedCanvasId: selectedElement?.canvasId ?? null } });
-        console.info(JSON.stringify({ event: "ai.job.created", jobId: job.id, projectId: parsed.projectId, blockId: block.id, operation }));
+        observe.generationJob("created", { jobId: job.id, projectId: parsed.projectId, operation, targetId: block.id });
         return { job, message, conversation };
       });
     } catch (error) {

@@ -1,0 +1,55 @@
+import { emit, errorCode, metrics } from "./telemetry";
+
+/**
+ * The operational event vocabulary. Callers use these helpers instead of ad-hoc log
+ * lines so event names, fields, and metric counters stay consistent across domains.
+ * No helper accepts prompt text, tokens, storage keys, or credentials.
+ */
+export const observe = {
+  authFailed(reason: "invalid_credentials" | "rate_limited" | "invalid_session" | "invalid_invite", fields: { scope?: string } = {}) {
+    metrics.count("auth.failure", { reason });
+    emit("auth.failed", { reason, ...fields }, "warn");
+  },
+  accessDenied(fields: { userId?: string; projectId?: string; resource: string; reason: string }) {
+    metrics.count("access.denied", { resource: fields.resource });
+    emit("access.denied", fields, "warn");
+  },
+  permissionChanged(action: "member_added" | "member_removed" | "role_changed" | "ownership_transferred", fields: { projectId: string; actorUserId?: string; subjectUserId?: string }) {
+    metrics.count("permission.changed", { action });
+    emit("permission.changed", { action, ...fields });
+  },
+  inviteLifecycle(action: "created" | "revoked" | "accepted" | "rejected", fields: { projectId?: string; inviteId?: string; reason?: string }) {
+    metrics.count("invite.lifecycle", { action });
+    emit(`invite.${action}`, fields, action === "rejected" ? "warn" : "info");
+  },
+  generationJob(action: "created" | "started" | "completed" | "failed" | "cancelled" | "retried", fields: { jobId: string; projectId: string; operation?: string; targetId?: string | null; reason?: string; durationMs?: number }) {
+    metrics.count("generation.job", { action, operation: fields.operation });
+    if (typeof fields.durationMs === "number") metrics.observe("generation.duration_ms", fields.durationMs, { operation: fields.operation });
+    emit(`generation.${action}`, fields, action === "failed" ? "error" : "info");
+  },
+  validationFailed(kind: "page" | "block" | "export" | "restore", fields: { projectId?: string; jobId?: string; entityId?: string; reason?: string; diagnostic?: string }) {
+    metrics.count("validation.failure", { kind });
+    emit("validation.failed", { kind, ...fields }, "warn");
+  },
+  previewCompileFailed(fields: { projectId: string; pageId?: string; versionId?: string; reason?: string }) {
+    metrics.count("preview.compile_failure");
+    emit("preview.compile_failed", fields, "error");
+  },
+  historyAction(action: "undo" | "redo" | "page_restore" | "block_restore" | "checkpoint_created" | "checkpoint_restored" | "conflict", fields: { projectId: string; changeSetId?: string; entityId?: string; reason?: string }) {
+    metrics.count("history.action", { action });
+    emit(`history.${action}`, fields, action === "conflict" ? "warn" : "info");
+  },
+  exportJob(action: "created" | "started" | "validated" | "completed" | "failed", fields: { exportId: string; projectId: string; reason?: string; fileCount?: number; bytes?: number; durationMs?: number }) {
+    metrics.count("export.job", { action });
+    if (typeof fields.durationMs === "number") metrics.observe("export.duration_ms", fields.durationMs, { outcome: action });
+    emit(`export.${action}`, fields, action === "failed" ? "error" : "info");
+  },
+  storageFailure(operation: "put" | "get" | "delete" | "exists", error: unknown, fields: { projectId?: string } = {}) {
+    metrics.count("storage.failure", { operation });
+    emit("storage.failed", { operation, reason: errorCode(error), ...fields }, "error");
+  },
+  maintenance(action: "leases_expired" | "jobs_recovered" | "exports_pruned" | "temp_cleaned", fields: { count: number; durationMs?: number }) {
+    metrics.count("maintenance.action", { action }, fields.count);
+    emit(`maintenance.${action}`, fields);
+  },
+};

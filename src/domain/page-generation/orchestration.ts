@@ -17,6 +17,7 @@ import { elementInvalid, elementStale, findEditableElement, readResolvedSelectio
 import { generatedPageResponseSchema, type PageChangeSummary } from "./contract";
 import { assemblePageGenerationRequest } from "./prompt";
 import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
+import { observe } from "@/server/observability/events";
 
 function summaryMessage(summary: PageChangeSummary) { return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n"); }
 
@@ -26,6 +27,7 @@ export class PageGenerationOrchestrationService {
   private async cancellation(jobId: string) { const job = await this.current(jobId); if (!job) return true; if (!job.cancelRequestedAt && job.status !== "cancelled") return false; if (!(["completed", "failed", "cancelled"] as string[]).includes(job.status)) await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." }); return true; }
 
   async process(jobId: string) {
+    const startedAt = performance.now();
     const initial = await this.current(jobId);
     if (!initial || !["page_generate", "page_modify"].includes(initial.operation) || !initial.targetId || !initial.conversationId || !initial.promptMessageId) return initial ?? null;
     if (["completed", "failed", "cancelled"].includes(initial.status) || await this.cancellation(jobId)) return this.current(jobId);
@@ -55,19 +57,19 @@ export class PageGenerationOrchestrationService {
       const context = await this.contextBuilder.build({ projectId: initial.projectId, actorUserId: initial.actorUserId, target: { type: "page", id: initial.targetId }, selectedMediaIds: contextMediaIds, conversationId: initial.conversationId, operation: initial.operation });
       const fingerprint = createHash("sha256").update(`${context.fingerprint}:${initial.basePageVersionId ?? "unbuilt"}`).digest("hex");
       await this.database.update(generationJobs).set({ contextFingerprint: fingerprint, contextMetadata: { ...context.composition, basePageVersionId: initial.basePageVersionId, selectedMediaCount: selected.length, selectedElement } }).where(eq(generationJobs.id, jobId));
-      console.info(JSON.stringify({ event: "ai.page_context.prepared", jobId, pageId: initial.targetId, ...context.composition }));
+      observe.generationJob("started", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId });
       if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "generating", "Generating page");
       const imageParts = await Promise.all(selected.map(async (asset) => { const binary = await new MediaService().readBinary(initial.actorUserId, asset.id); if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable."); return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName }; }));
       const provider = this.providerResolver();
-      console.info(JSON.stringify({ event: "ai.provider.request_started", jobId, provider: provider.name, model: provider.model, operation: initial.operation }));
+      
       const response = await provider.generateStructured(assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal }), generatedPageResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
-      console.info(JSON.stringify({ event: "ai.provider.request_completed", jobId, provider: response.provider, model: response.model, operation: initial.operation }));
+      
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "validating", "Validating page");
-      console.info(JSON.stringify({ event: "ai.source_validation.started", jobId }));
+      
       const approved = new Set(context.media.map(({ id }) => id)); const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
       // Only Building Blocks declared in the assembled context, active in this project,
       // and already generated may be referenced. Anything else is a rejected reference.
@@ -75,7 +77,7 @@ export class PageGenerationOrchestrationService {
       const declaredBlockUsages = response.structuredData.blockUsages;
       const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(declaredBlockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
       const manifest = await validateGeneratedPageSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages, blockSources });
-      console.info(JSON.stringify({ event: "ai.source_validation.completed", jobId, sourceHash: manifest.sourceHash }));
+      
       if (selectedElement) {
         const { targetCanvasId, targetRemoved } = response.structuredData;
         if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
@@ -86,7 +88,7 @@ export class PageGenerationOrchestrationService {
       await this.lifecycle.transition(jobId, "applying", "Applying page update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
       const completed = await this.commit({ jobId, sourceCode: response.structuredData.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
-      console.info(JSON.stringify({ event: "ai.page_version.committed", jobId, pageId: initial.targetId, versionId: completed.resultPageVersionId }));
+      observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: performance.now() - startedAt });
       return completed;
     } catch (cause) {
       const error = cause instanceof DomainError && cause.code === "ACCESS_DENIED" ? new AIError("AI_PAGE_CONFLICT", "You no longer have access to update this page.") : safeAIError(cause);
@@ -94,7 +96,7 @@ export class PageGenerationOrchestrationService {
       if (!current || ["completed", "failed", "cancelled"].includes(current.status)) return current ?? null;
       if (current.cancelRequestedAt || error.code === "AI_JOB_CANCELLED") await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." });
       else if (error.retryable && current.attemptCount < 3) await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + 1_000 * 2 ** Math.max(0, current.attemptCount - 1)), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
-      else { await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message }); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code } }); console.error(JSON.stringify({ event: "ai.page_generation.failed", jobId, errorCode: error.code, diagnostic: error.diagnostic })); }
+      else { await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message }); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt }); if (error.code === "AI_PROVIDER_INVALID_RESPONSE") observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: error.diagnostic }); }
       return this.current(jobId);
     } finally {
       if (heartbeat) clearInterval(heartbeat);
@@ -121,7 +123,7 @@ export class PageGenerationOrchestrationService {
       if (job.status !== "applying" || !job.targetId || !job.conversationId) throw new AIError("AI_INTERNAL_ERROR", "Generation job is not ready to apply.");
       const [page] = await transaction.select().from(pageNodes).where(and(eq(pageNodes.id, job.targetId), eq(pageNodes.projectId, job.projectId), eq(pageNodes.type, "page"), isNull(pageNodes.deletedAt))).for("update");
       if (!page) throw new AIError("AI_PAGE_STALE", "This page changed while Canvas was working. Try your request again using the latest version.");
-      if (page.currentVersionId !== job.basePageVersionId) { console.warn(JSON.stringify({ event: "ai.page_stale_rejected", jobId: job.id, pageId: page.id })); throw new AIError("AI_PAGE_STALE", "This page changed while Canvas was working. Try your request again using the latest version."); }
+      if (page.currentVersionId !== job.basePageVersionId) { observe.validationFailed("page", { projectId: job.projectId, jobId: job.id, entityId: page.id, reason: "AI_PAGE_STALE" }); throw new AIError("AI_PAGE_STALE", "This page changed while Canvas was working. Try your request again using the latest version."); }
       const [existing] = await transaction.select().from(pageVersions).where(eq(pageVersions.generationJobId, job.id)).limit(1);
       if (existing) return (await transaction.update(generationJobs).set({ status: "completed", progressStage: "Completed", resultPageVersionId: existing.id, finishedAt: new Date() }).where(eq(generationJobs.id, job.id)).returning())[0]!;
       const [latest] = await transaction.select({ versionNumber: pageVersions.versionNumber }).from(pageVersions).where(and(eq(pageVersions.projectId, job.projectId), eq(pageVersions.pageId, page.id))).orderBy(desc(pageVersions.versionNumber)).limit(1);

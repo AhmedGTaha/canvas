@@ -3,6 +3,7 @@ import { ProjectAccessService } from "@/server/permissions/project-access";
 import { projectIdSchema } from "@/domain/projects/schemas";
 import { removeCollaboratorSchema } from "./schemas";
 import { MembershipRepository } from "./membership-repository";
+import { observe } from "@/server/observability/events";
 
 export class MembershipService {
   constructor(
@@ -24,6 +25,7 @@ export class MembershipService {
     if (project.ownerUserId === collaboratorUserId) throw new DomainError("ACCESS_DENIED", "The project owner cannot be removed.");
     const removed = await this.memberships.remove(projectId, collaboratorUserId, userId);
     if (!removed) throw new DomainError("NOT_FOUND", "Collaborator not found.");
+    observe.permissionChanged("member_removed", { projectId: project.id, actorUserId: userId, subjectUserId: collaboratorUserId });
     return removed;
   }
 }

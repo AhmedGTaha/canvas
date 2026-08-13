@@ -4,6 +4,7 @@ import Image from "next/image";
 import { Blocks, Check, CircleAlert, Copy, Globe, LoaderCircle, Moon, MousePointerClick, Plus, RefreshCw, Search, Send, Sparkles, Sun, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input, Select } from "@/components/ui/form-controls";
 import { MultiMediaPicker } from "@/components/media/media-picker";
 import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
@@ -236,8 +237,8 @@ export function BlockLibrary({ projectId, initialBlocks, initialSession, initial
       <div className="dialog-panel">
         <div className="dialog-header"><div><h2>New Building Block</h2><p>Name it now, then describe it to Canvas.</p></div><Button variant="ghost" aria-label="Close dialog" onClick={() => createDialog.current?.close()}><X size={18} /></Button></div>
         <form action={(form) => void createBlock(form)}>
-          <label className="field"><span className="field-label">Name</span><input className="input" name="name" maxLength={120} required placeholder="Global Navbar" /></label>
-          <label className="field"><span className="field-label">Category</span><select className="input" name="kind" defaultValue="section">{SUGGESTED_BLOCK_KINDS.map((kind) => <option key={kind} value={kind}>{blockKindLabel(kind)}</option>)}</select></label>
+          <Input label="Name" name="name" maxLength={120} required placeholder="Global Navbar" />
+          <Select label="Category" name="kind" defaultValue="section">{SUGGESTED_BLOCK_KINDS.map((kind) => <option key={kind} value={kind}>{blockKindLabel(kind)}</option>)}</Select>
           <label className="checkbox-field"><input type="checkbox" name="isGlobal" /><span>Share across pages — every page using it stays up to date automatically.</span></label>
           <div className="form-actions"><Button type="button" variant="secondary" onClick={() => createDialog.current?.close()}>Cancel</Button><Button type="submit" disabled={busy}>Create</Button></div>
         </form>
@@ -251,8 +252,8 @@ function BlockDetails({ block, usages, busy, onRename, onToggleGlobal, onDuplica
   const [kind, setKind] = useState(block.kind);
   return <div className="blocks-details">
     <form className="blocks-details-form" action={() => onRename(name, kind)}>
-      <label className="field"><span className="field-label">Name</span><input className="input" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></label>
-      <label className="field"><span className="field-label">Category</span><select className="input" value={kind} onChange={(event) => setKind(event.target.value)}>{[...new Set([...SUGGESTED_BLOCK_KINDS, kind])].map((value) => <option key={value} value={value}>{blockKindLabel(value)}</option>)}</select></label>
+      <Input label="Name" name={`block-name-${block.id}`} value={name} maxLength={120} onChange={(event) => setName(event.target.value)} />
+      <Select label="Category" name={`block-kind-${block.id}`} value={kind} onChange={(event) => setKind(event.target.value)}>{[...new Set([...SUGGESTED_BLOCK_KINDS, kind])].map((value) => <option key={value} value={value}>{blockKindLabel(value)}</option>)}</Select>
       <Button type="submit" variant="secondary" disabled={busy || (name === block.name && kind === block.kind)}>Save</Button>
     </form>
     <div className="blocks-details-actions">

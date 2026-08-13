@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "db:migrate": "tsx --env-file=.env src/server/db/migrate.ts",
     "worker": "tsx --env-file=.env src/server/jobs/worker.ts",
-    "test:ai-provider": "tsx --env-file=.env src/server/ai/smoke.ts"
+    "test:ai-provider": "tsx --env-file=.env src/server/ai/smoke.ts",
+    "maintenance": "tsx --env-file=.env src/server/jobs/maintenance.ts"
   },
   "dependencies": {
     "@google/genai": "^2.16.0",

@@ -1,6 +1,7 @@
 import { DomainError } from "@/domain/shared/errors";
 import { MembershipRepository } from "@/domain/collaboration/membership-repository";
 import { ProjectRepository } from "@/domain/projects/repository";
+import { observe } from "@/server/observability/events";
 
 export type EffectiveProjectRole = "owner" | "collaborator";
 
@@ -23,12 +24,16 @@ export class ProjectAccessService {
     if (project.ownerUserId === userId) return { project, role: "owner" as const };
     const membership = await this.memberships.find(projectId, userId);
     if (membership?.role === "collaborator") return { project, role: "collaborator" as const };
+    observe.accessDenied({ userId, projectId, resource: "project", reason: "not_a_member" });
     throw new DomainError("ACCESS_DENIED", "You do not have access to this project.");
   }
 
   async requireProjectOwner(userId: string, projectId: string) {
     const access = await this.requireProjectAccess(userId, projectId);
-    if (access.role !== "owner") throw new DomainError("ACCESS_DENIED", "Only the project owner can manage access.");
+    if (access.role !== "owner") {
+      observe.accessDenied({ userId, projectId, resource: "project_ownership", reason: "not_owner" });
+      throw new DomainError("ACCESS_DENIED", "Only the project owner can manage access.");
+    }
     return access.project;
   }
 }

@@ -7,6 +7,7 @@ import { projectIdSchema } from "@/domain/projects/schemas";
 import { recordChangeSet, type TransactionLike } from "./change-set-service";
 import { applyRestorePlan, validateRestorePlan, type RestorePlan } from "./restore-engine";
 import { checkpointNotFound } from "./errors";
+import { observe } from "@/server/observability/events";
 
 export const createCheckpointSchema = z.object({
   projectId: projectIdSchema,
@@ -62,7 +63,7 @@ export class CheckpointService {
         { entityType: "project" as const, entityId: null, versionId: null, entityState: { currentInstructionId: captured.currentInstructionId, theme: captured.theme, brand: captured.brand } },
       ];
       await transaction.insert(projectCheckpointItems).values(items.map((item, position) => ({ ...item, checkpointId: checkpoint.id, projectId: parsed.projectId, position })));
-      console.info(JSON.stringify({ event: "history.checkpoint_created", projectId: parsed.projectId, checkpointId: checkpoint.id, itemCount: items.length }));
+      observe.historyAction("checkpoint_created", { projectId: parsed.projectId, entityId: checkpoint.id });
       return checkpoint;
     });
   }
@@ -156,7 +157,7 @@ export class CheckpointService {
         projectId, actorUserId: userId, operation: "checkpoint_restore",
         summary: `Restored checkpoint “${checkpoint.name}”`, items: changeItems,
       });
-      console.info(JSON.stringify({ event: "history.checkpoint_restored", projectId, checkpointId, changeSetId: changeSet.id, pages: plan.pages.length, blocks: plan.blocks.length, skipped: skipped.length }));
+      observe.historyAction("checkpoint_restored", { projectId, changeSetId: changeSet.id, entityId: checkpointId });
       return { changeSet, checkpoint, restored: { pages: plan.pages.length, blocks: plan.blocks.length }, skipped };
     });
   }

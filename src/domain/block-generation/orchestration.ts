@@ -15,6 +15,7 @@ import { recordChangeSet } from "@/domain/history/change-set-service";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
 import { assembleBlockGenerationRequest } from "./prompt";
+import { observe } from "@/server/observability/events";
 
 function summaryMessage(summary: BlockChangeSummary) {
   return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n");
@@ -46,6 +47,7 @@ export class BlockGenerationOrchestrationService {
   }
 
   async process(jobId: string) {
+    const startedAt = performance.now();
     const initial = await this.current(jobId);
     if (!initial || !["block_generate", "block_modify"].includes(initial.operation) || !initial.targetId || !initial.conversationId || !initial.promptMessageId) return initial ?? null;
     if (["completed", "failed", "cancelled"].includes(initial.status) || await this.cancellation(jobId)) return this.current(jobId);
@@ -84,7 +86,7 @@ export class BlockGenerationOrchestrationService {
       const context = await this.contextBuilder.build({ projectId: initial.projectId, actorUserId: initial.actorUserId, target: { type: "building_block", id: initial.targetId }, selectedMediaIds: contextMediaIds, conversationId: initial.conversationId, operation: initial.operation });
       const fingerprint = createHash("sha256").update(`${context.fingerprint}:${initial.baseBlockVersionId ?? "unbuilt"}`).digest("hex");
       await this.database.update(generationJobs).set({ contextFingerprint: fingerprint, contextMetadata: { ...context.composition, baseBlockVersionId: initial.baseBlockVersionId, selectedMediaCount: selected.length, selectedElement } }).where(eq(generationJobs.id, jobId));
-      console.info(JSON.stringify({ event: "ai.block_context.prepared", jobId, blockId: initial.targetId, ...context.composition }));
+      observe.generationJob("started", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId });
       if (leaseLost) throw new AIError("AI_BLOCK_CONFLICT", "This Building Block is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
 
@@ -95,17 +97,17 @@ export class BlockGenerationOrchestrationService {
         return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName };
       }));
       const provider = this.providerResolver();
-      console.info(JSON.stringify({ event: "ai.provider.request_started", jobId, provider: provider.name, model: provider.model, operation: initial.operation }));
+      
       const response = await provider.generateStructured(assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal }), generatedBlockResponseSchema);
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
-      console.info(JSON.stringify({ event: "ai.provider.request_completed", jobId, provider: response.provider, model: response.model, operation: initial.operation }));
+      
       if (await this.cancellation(jobId)) return this.current(jobId);
 
       await this.lifecycle.transition(jobId, "validating", "Validating block");
       const approved = new Set(context.media.map(({ id }) => id));
       const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
       const manifest = await validateGeneratedBlockSource({ sourceCode: response.structuredData.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
-      console.info(JSON.stringify({ event: "ai.block_source_validation.completed", jobId, sourceHash: manifest.sourceHash }));
+      
       if (selectedElement) {
         const { targetCanvasId, targetRemoved } = response.structuredData;
         if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
@@ -117,7 +119,7 @@ export class BlockGenerationOrchestrationService {
       await this.lifecycle.transition(jobId, "applying", "Applying block update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
       const completed = await this.commit({ jobId, sourceCode: response.structuredData.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
-      console.info(JSON.stringify({ event: "ai.block_version.committed", jobId, blockId: initial.targetId, versionId: completed.resultBlockVersionId }));
+      observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: performance.now() - startedAt });
       return completed;
     } catch (cause) {
       const error = cause instanceof DomainError && cause.code === "ACCESS_DENIED" ? new AIError("AI_BLOCK_CONFLICT", "You no longer have access to update this Building Block.") : safeAIError(cause);
@@ -128,7 +130,8 @@ export class BlockGenerationOrchestrationService {
       else {
         await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message });
         await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.block_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code } });
-        console.error(JSON.stringify({ event: "ai.block_generation.failed", jobId, errorCode: error.code, diagnostic: error.diagnostic }));
+        observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt });
+        if (error.code === "AI_PROVIDER_INVALID_RESPONSE") observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: error.diagnostic });
       }
       return this.current(jobId);
     } finally {
@@ -148,7 +151,7 @@ export class BlockGenerationOrchestrationService {
       const [block] = await transaction.select().from(buildingBlocks).where(and(eq(buildingBlocks.id, job.targetId), eq(buildingBlocks.projectId, job.projectId), isNull(buildingBlocks.deletedAt))).for("update");
       if (!block) throw new AIError("AI_BLOCK_STALE", "This Building Block changed while Canvas was working. Try your request again using the latest version.");
       if (block.currentVersionId !== job.baseBlockVersionId) {
-        console.warn(JSON.stringify({ event: "ai.block_stale_rejected", jobId: job.id, blockId: block.id }));
+        observe.validationFailed("block", { projectId: job.projectId, jobId: job.id, entityId: block.id, reason: "AI_BLOCK_STALE" });
         throw new AIError("AI_BLOCK_STALE", "This Building Block changed while Canvas was working. Try your request again using the latest version.");
       }
       // Worker retries reuse the version already written for this job instead of

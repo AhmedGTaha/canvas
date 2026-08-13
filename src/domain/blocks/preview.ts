@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { buildingBlockVersions, buildingBlocks } from "@/server/db/schema";
 import { compileGeneratedBlock } from "./validation";
+import { observe } from "@/server/observability/events";
 
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 50;
@@ -23,7 +24,11 @@ export class BuildingBlockContentProvider {
     if (!row) return null;
     let bundle = cache.get(row.version.id);
     if (!bundle) {
-      bundle = await compileGeneratedBlock(row.version.sourceCode);
+      try { bundle = await compileGeneratedBlock(row.version.sourceCode); }
+      catch (error) {
+        observe.previewCompileFailed({ projectId, versionId: row.version.id, reason: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+        return null;
+      }
       if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
       cache.set(row.version.id, bundle);
     }

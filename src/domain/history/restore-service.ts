@@ -6,6 +6,7 @@ import { DomainError } from "@/domain/shared/errors";
 import { recordChangeSet } from "./change-set-service";
 import { applyRestorePlan, validateRestorePlan } from "./restore-engine";
 import { HistoryError, versionNotFound } from "./errors";
+import { observe } from "@/server/observability/events";
 
 function summaryHeadline(changeSummary: unknown) {
   if (!changeSummary || typeof changeSummary !== "object") return null;
@@ -69,7 +70,7 @@ export class VersionRestoreService {
         summary: `Restored ${page.name} to version ${version.versionNumber}`,
         items: [{ entityType: "page", entityId: pageId, beforeVersionId: page.currentVersionId, afterVersionId: version.id }],
       });
-      console.info(JSON.stringify({ event: "history.page_version_restored", projectId, pageId, versionId: version.id, changeSetId: changeSet.id }));
+      observe.historyAction("page_restore", { projectId, changeSetId: changeSet.id, entityId: pageId });
       return { changeSet, version };
     });
   }
@@ -94,7 +95,7 @@ export class VersionRestoreService {
         summary: `Restored ${block.name} to version ${version.versionNumber}`,
         items: [{ entityType: "building_block", entityId: blockId, beforeVersionId: block.currentVersionId, afterVersionId: version.id }],
       });
-      console.info(JSON.stringify({ event: "history.block_version_restored", projectId, blockId, versionId: version.id, changeSetId: changeSet.id }));
+      observe.historyAction("block_restore", { projectId, changeSetId: changeSet.id, entityId: blockId });
       return { changeSet, version };
     });
   }

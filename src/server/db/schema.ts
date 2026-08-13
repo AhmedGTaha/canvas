@@ -405,6 +405,7 @@ export const exportJobs = pgTable("export_jobs", {
   artifactFileName: varchar("artifact_file_name", { length: 160 }),
   artifactBytes: bigint("artifact_bytes", { mode: "number" }),
   artifactFileCount: integer("artifact_file_count"),
+  artifactPrunedAt: timestamp("artifact_pruned_at", { withTimezone: true, mode: "date" }),
   claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
   workerId: varchar("worker_id", { length: 120 }),
   attemptCount: integer("attempt_count").notNull().default(0),

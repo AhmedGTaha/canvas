@@ -7,6 +7,7 @@ import { normalizeEmail } from "./email";
 import { signInSchema, signUpSchema } from "./schemas";
 import { createSecureToken, sha256 } from "@/domain/shared/crypto";
 import { clearRateLimit, consumeRateLimit } from "@/server/rate-limit/service";
+import { observe } from "@/server/observability/events";
 
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -51,10 +52,12 @@ export async function authenticate(input: unknown) {
 
   if (!record) {
     await hash(parsed.password, { algorithm: 2, memoryCost: 19456, timeCost: 3, parallelism: 1 });
+    observe.authFailed("invalid_credentials");
     throw new DomainError("ACCESS_DENIED", "Email or password is incorrect.");
   }
 
   if (!(await verify(record.passwordHash, parsed.password))) {
+    observe.authFailed("invalid_credentials");
     throw new DomainError("ACCESS_DENIED", "Email or password is incorrect.");
   }
   await clearRateLimit("sign-in", normalizedEmail);

@@ -9,7 +9,8 @@ import { ExportValidator, type ExportFailure, type ExportValidationReport } from
 import { ProjectAssembler } from "./project-assembler";
 import { BuildValidator } from "./build-validator";
 import { ZipPackager } from "./zip-packager";
-import { ExportError, exportActive, exportBuildFailed, exportNotFound, exportNotReady, exportValidationFailed } from "./errors";
+import { ExportError, exportActive, exportBuildFailed, exportExpired, exportNotFound, exportNotReady, exportValidationFailed } from "./errors";
+import { observe } from "@/server/observability/events";
 
 export type ExportJobStatus = typeof exportJobs.$inferSelect.status;
 const ACTIVE_STATUSES: ExportJobStatus[] = ["queued", "validating", "assembling", "building", "packaging"];
@@ -36,7 +37,7 @@ export class ExportService {
       const [job] = await this.database.insert(exportJobs).values({ projectId, actorUserId: userId }).returning();
       if (!job) throw new Error("Export job insert did not return a record.");
       await this.database.insert(auditEvents).values({ projectId, userId, action: "export.requested", entityType: "export_job", entityId: job.id });
-      console.info(JSON.stringify({ event: "export.job.created", jobId: job.id, projectId }));
+      observe.exportJob("created", { exportId: job.id, projectId });
       return job;
     } catch (error) {
       const code = (error as { cause?: { code?: string } }).cause?.code;
@@ -68,6 +69,7 @@ export class ExportService {
     await this.access.requireProjectAccess(userId, projectId);
     const [job] = await this.database.select().from(exportJobs).where(and(eq(exportJobs.id, exportId), eq(exportJobs.projectId, projectId))).limit(1);
     if (!job) throw exportNotFound();
+    if (job.status === "completed" && job.artifactPrunedAt) throw exportExpired();
     if (job.status !== "completed" || !job.artifactStorageKey) throw exportNotReady();
     return { bytes: await this.storage.get(job.artifactStorageKey), fileName: job.artifactFileName ?? "website.zip" };
   }
@@ -79,7 +81,8 @@ export class ExportService {
       createdAt: job.createdAt, finishedAt: job.finishedAt,
       errorCode: job.errorCode, errorMessage: job.errorMessage,
       validation: validation ? { ok: validation.ok, checks: validation.checks, failures: validation.failures, pageCount: validation.pageCount, blockCount: validation.blockCount, mediaCount: validation.mediaCount } : null,
-      artifact: job.status === "completed" ? { fileName: job.artifactFileName, bytes: job.artifactBytes, fileCount: job.artifactFileCount } : null,
+      artifact: job.status === "completed" && !job.artifactPrunedAt ? { fileName: job.artifactFileName, bytes: job.artifactBytes, fileCount: job.artifactFileCount } : null,
+      expired: job.status === "completed" && Boolean(job.artifactPrunedAt),
     };
   }
 
@@ -96,6 +99,7 @@ export class ExportService {
    * user-safe reason and no downloadable artifact.
    */
   async process(exportId: string) {
+    const startedAt = performance.now();
     const [job] = await this.database.select().from(exportJobs).where(eq(exportJobs.id, exportId)).limit(1);
     if (!job || !ACTIVE_STATUSES.includes(job.status)) return job ?? null;
     try {
@@ -103,7 +107,8 @@ export class ExportService {
       const state = await loadExportState(job.projectId, this.database);
       const report = await this.validator.validate(state);
       await this.database.update(exportJobs).set({ validation: report }).where(eq(exportJobs.id, exportId));
-      if (!report.ok) throw exportValidationFailed(report.failures);
+      if (!report.ok) { observe.validationFailed("export", { projectId: job.projectId, jobId: exportId, reason: report.failures[0]?.code }); throw exportValidationFailed(report.failures); }
+      observe.exportJob("validated", { exportId, projectId: job.projectId, fileCount: report.pageCount });
 
       await this.transition(exportId, "assembling", "Building the project files");
       const assembled = await this.assembler.assemble(state);
@@ -125,14 +130,14 @@ export class ExportService {
         artifactStorageKey: storageKey, artifactFileName: fileName, artifactBytes: archive.length, artifactFileCount: assembled.files.length,
       });
       await this.database.insert(auditEvents).values({ projectId: job.projectId, userId: job.actorUserId, action: "export.completed", entityType: "export_job", entityId: exportId, metadata: { fileCount: assembled.files.length, bytes: archive.length } });
-      console.info(JSON.stringify({ event: "export.job.completed", jobId: exportId, projectId: job.projectId, files: assembled.files.length, bytes: archive.length }));
+      observe.exportJob("completed", { exportId, projectId: job.projectId, fileCount: assembled.files.length, bytes: archive.length, durationMs: performance.now() - startedAt });
       return completed;
     } catch (error) {
       const failure = error instanceof ExportError ? error : new ExportError("EXPORT_FAILED", "VALIDATION", "Canvas could not export this website. Try again.");
-      if (!(error instanceof ExportError)) console.error(JSON.stringify({ event: "export.job.failed", jobId: exportId, message: error instanceof Error ? error.message : "unknown" }));
+
       const failed = await this.transition(exportId, "failed", "Failed", { errorCode: failure.exportCode, errorMessage: failure.message.slice(0, 500) });
       await this.database.insert(auditEvents).values({ projectId: job.projectId, userId: job.actorUserId, action: "export.failed", entityType: "export_job", entityId: exportId, metadata: { errorCode: failure.exportCode } });
-      console.info(JSON.stringify({ event: "export.job.failed", jobId: exportId, projectId: job.projectId, errorCode: failure.exportCode }));
+      observe.exportJob("failed", { exportId, projectId: job.projectId, reason: failure.exportCode, durationMs: performance.now() - startedAt });
       return failed;
     }
   }
@@ -144,7 +149,9 @@ export async function claimExportJob(workerId: string) {
     UPDATE export_jobs SET status = 'validating', progress_stage = 'Checking your website', claimed_at = now(),
       worker_id = ${workerId}, attempt_count = attempt_count + 1, started_at = COALESCE(started_at, now())
     WHERE id = (SELECT id FROM export_jobs
-      WHERE (status = 'queued' AND available_at <= now()) AND attempt_count < 2
+      WHERE ((status = 'queued' AND available_at <= now())
+             OR (status IN ('validating', 'assembling', 'building', 'packaging') AND claimed_at < now() - interval '15 minutes'))
+        AND attempt_count < 2
       ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT 1)
     RETURNING id`;
   if (!rows[0]) return null;

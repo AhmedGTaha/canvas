@@ -18,12 +18,12 @@ type ThemeLike = {
 
 const variable = (name: string, value: string | number) => `--${name}:${value}`;
 
-/** `--color-*` declarations for one colour scheme. */
+/** `--color-*` declarations for one color scheme. */
 export function themeColorDeclarations(theme: ThemeLike | ResolvedDesignTokens, mode: "light" | "dark") {
   return Object.entries(theme.colors[mode]).map(([key, value]) => variable(`color-${key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)}`, value)).join(";");
 }
 
-/** Non-colour design tokens (radius, spacing, shadows, typography, borders). */
+/** Non-color design tokens (radius, spacing, shadows, typography, borders). */
 export function themeScaleDeclarations(theme: ThemeLike | ResolvedDesignTokens) {
   return [
     ...Object.entries(theme.radius).map(([key, value]) => variable(`radius-${key}`, value)),
@@ -33,7 +33,7 @@ export function themeScaleDeclarations(theme: ThemeLike | ResolvedDesignTokens) 
   ].join(";");
 }
 
-/** Project design tokens as CSS custom properties for both colour schemes. */
+/** Project design tokens as CSS custom properties for both color schemes. */
 export function generatedThemeCss(theme: ThemeLike | ResolvedDesignTokens) {
   return `:root{${themeScaleDeclarations(theme)}}:root[data-theme=light]{${themeColorDeclarations(theme, "light")}}:root[data-theme=dark]{${themeColorDeclarations(theme, "dark")}}`;
 }

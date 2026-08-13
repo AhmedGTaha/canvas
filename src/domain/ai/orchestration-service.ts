@@ -8,6 +8,7 @@ import { assembleProviderRequest } from "./prompt-assembler";
 import { GenerationJobLifecycle, safeAIError } from "./job-service";
 import { PageGenerationOrchestrationService } from "@/domain/page-generation/orchestration";
 import { BlockGenerationOrchestrationService } from "@/domain/block-generation/orchestration";
+import { observe } from "@/server/observability/events";
 
 const MAX_ATTEMPTS = 3;
 
@@ -18,11 +19,12 @@ export class AIOrchestrationService {
   private async cancelIfRequested(jobId: string) {
     const job = await this.current(jobId);
     if (!job) return true;
-    if (job.cancelRequestedAt && job.status !== "cancelled") { await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." }); console.info(JSON.stringify({ event: "ai.job.cancelled", jobId })); return true; }
+    if (job.cancelRequestedAt && job.status !== "cancelled") { await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." }); observe.generationJob("cancelled", { jobId, projectId: job.projectId }); return true; }
     return job.status === "cancelled";
   }
 
   async process(jobId: string) {
+    const startedAt = performance.now();
     const job = await this.current(jobId);
     if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return job ?? null;
     if (job.operation === "page_generate" || job.operation === "page_modify") return new PageGenerationOrchestrationService(this.database, this.contextBuilder, this.lifecycle, this.providerResolver).process(jobId);
@@ -35,13 +37,13 @@ export class AIOrchestrationService {
       const target: ProjectContextTarget = job.targetType === "page" && job.targetId ? { type: "page", id: job.targetId } : { type: "project" };
       const context = await this.contextBuilder.build({ projectId: job.projectId, actorUserId: job.actorUserId, target, selectedMediaIds: metadata.selectedMediaIds, conversationId: job.conversationId, operation: "project_assistant" });
       await this.database.update(generationJobs).set({ contextFingerprint: context.fingerprint, contextMetadata: { ...metadata, ...context.composition } }).where(eq(generationJobs.id, jobId));
-      console.info(JSON.stringify({ event: "ai.context.prepared", jobId, ...context.composition }));
+      observe.generationJob("started", { jobId, projectId: job.projectId, operation: "assistant" });
       if (await this.cancelIfRequested(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "generating", "Contacting AI");
       const provider = this.providerResolver();
-      console.info(JSON.stringify({ event: "ai.provider.request_started", jobId, provider: provider.name, model: provider.model }));
+      
       const response = await provider.generateText(assembleProviderRequest(context, prompt.content));
-      console.info(JSON.stringify({ event: "ai.provider.request_completed", jobId, provider: response.provider, model: response.model }));
+      
       if (await this.cancelIfRequested(jobId)) return this.current(jobId);
       const completed = await this.database.transaction(async (transaction) => {
         const [locked] = await transaction.select().from(generationJobs).where(eq(generationJobs.id, jobId)).for("update");
@@ -61,7 +63,7 @@ export class AIOrchestrationService {
         if (!updated) throw new Error("Generation job finalization failed.");
         return updated;
       });
-      console.info(JSON.stringify({ event: completed?.status === "cancelled" ? "ai.job.cancelled" : "ai.job.completed", jobId }));
+      observe.generationJob(completed?.status === "cancelled" ? "cancelled" : "completed", { jobId, projectId: job.projectId, operation: "assistant", durationMs: performance.now() - startedAt });
       return completed;
     } catch (cause) {
       const error = safeAIError(cause);
@@ -74,7 +76,7 @@ export class AIOrchestrationService {
         await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + delay), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
       } else {
         await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message });
-        console.error(JSON.stringify({ event: "ai.job.failed", jobId, errorCode: error.code }));
+        observe.generationJob("failed", { jobId, projectId: current.projectId, operation: "assistant", reason: error.code, durationMs: performance.now() - startedAt });
       }
       return this.current(jobId);
     }

@@ -5,6 +5,7 @@ import { ProjectAccessService } from "@/server/permissions/project-access";
 import { consumeRateLimit } from "@/server/rate-limit/service";
 import { acceptInviteSchema, createInviteSchema, inviteTokenSchema, revokeInviteSchema } from "./schemas";
 import { InvitationRepository } from "./invitation-repository";
+import { observe } from "@/server/observability/events";
 
 export class InvitationService {
   constructor(
@@ -17,6 +18,7 @@ export class InvitationService {
     await consumeRateLimit("invite-preview", token, { attempts: 60, windowMinutes: 15 });
     const record = await this.invitations.findByTokenHash(sha256(token));
     if (!record || record.invite.revokedAt || record.invite.expiresAt <= new Date() || record.project.status !== "active") {
+      observe.inviteLifecycle("rejected", { projectId: record?.project.id, inviteId: record?.invite.id, reason: !record ? "unknown" : record.invite.revokedAt ? "revoked" : record.invite.expiresAt <= new Date() ? "expired" : "project_inactive" });
       throw new DomainError("NOT_FOUND", "Invitation is invalid or no longer available.");
     }
     return { projectId: record.project.id, projectName: record.project.name, expiresAt: record.invite.expiresAt };
@@ -35,18 +37,23 @@ export class InvitationService {
     const token = createSecureToken();
     const expiresAt = new Date(Date.now() + collaborationConfig.inviteLifetimeDays * 24 * 60 * 60 * 1000);
     const invite = await this.invitations.createReplacingActive(projectId, userId, sha256(token), expiresAt);
+    observe.inviteLifecycle("created", { projectId, inviteId: invite.id });
     return { invite, token };
   }
 
   async revoke(userId: string, input: unknown) {
     const { projectId, inviteId } = revokeInviteSchema.parse(input);
     await this.access.requireProjectOwner(userId, projectId);
+    observe.inviteLifecycle("revoked", { projectId, inviteId });
     return this.invitations.revoke(projectId, inviteId, userId);
   }
 
   async accept(userId: string, input: unknown) {
     const { token } = acceptInviteSchema.parse(input);
     await consumeRateLimit("invite-accept", userId, { attempts: 20, windowMinutes: 15 });
-    return this.invitations.accept(sha256(token), userId);
+    const result = await this.invitations.accept(sha256(token), userId);
+    observe.inviteLifecycle("accepted", { projectId: result.id });
+    observe.permissionChanged("member_added", { projectId: result.id, subjectUserId: userId });
+    return result;
   }
 }

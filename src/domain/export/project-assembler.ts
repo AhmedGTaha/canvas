@@ -202,7 +202,7 @@ export class ProjectAssembler {
       `- \`components/pages/\` — the content of each page`,
       `- \`components/blocks/\` — reusable sections such as a navbar or footer, imported by every page that uses them`,
       `- \`public/assets/\` — the images used by this website`,
-      `- \`styles/globals.css\` — your theme colours, spacing, typography, and shared classes`,
+      `- \`styles/globals.css\` — your theme colors, spacing, typography, and shared classes`,
       ``,
       `## This website is frontend-only`,
       ``,

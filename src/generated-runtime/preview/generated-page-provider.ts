@@ -3,6 +3,7 @@ import { db, type Database } from "@/server/db/client";
 import { pageNodes, pageVersions } from "@/server/db/schema";
 import { compileGeneratedPage } from "@/domain/page-generation/validator";
 import { resolvePageBlockModules } from "@/domain/blocks/usages";
+import { observe } from "@/server/observability/events";
 
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 50;
@@ -18,7 +19,13 @@ export class GeneratedPageContentProvider {
     const key = [row.version.id, ...modules.map((module) => `${module.blockId}@${module.versionId}`).sort()].join("|");
     let bundle = cache.get(key);
     if (!bundle) {
-      bundle = await compileGeneratedPage(row.version.sourceCode, modules.map(({ blockId, sourceCode }) => ({ blockId, sourceCode })));
+      try {
+        bundle = await compileGeneratedPage(row.version.sourceCode, modules.map(({ blockId, sourceCode }) => ({ blockId, sourceCode })));
+      } catch (error) {
+        // Preview stays recoverable: the caller renders the safe placeholder shell.
+        observe.previewCompileFailed({ projectId, pageId, versionId, reason: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+        return null;
+      }
       if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
       cache.set(key, bundle);
     }
