@@ -24,6 +24,9 @@ describe("workspace chrome", () => {
     render(<TitleBar workspaceName="Studio" projectName="Site" pageName="Home" userName="Alex Smith" canShare activeTasks={0} failedTasks={0} agentOpen onSearch={vi.fn()} onShare={vi.fn()} onTasks={vi.fn()} onToggleAgent={vi.fn()} onSignOut={vi.fn()} />);
     // Workspace, website, page — the page is the thing edits apply to.
     for (const text of ["Studio", "Site", "Home"]) expect(screen.getByText(text)).toBeDefined();
+    // The agent is named, not just drawn: on a laptop it is the only labelled
+    // way back to the panel the website is built from.
+    expect(screen.getByRole("button", { name: "Hide the agent" }).textContent).toContain("Agent");
     fireEvent.click(screen.getByRole("button", { name: /Account menu/ }));
     for (const name of ["Your websites", "Workspaces", "Account", "Sign out"]) {
       expect(screen.getByRole("menuitem", { name })).toBeDefined();
@@ -35,7 +38,7 @@ describe("workspace chrome", () => {
     render(<PreviewStage
       frame={{ current: null }} frameSrc="/preview/token" sandboxTitle="Preview" device="desktop" route="/" host="site.test"
       pages={[{ id: "home", name: "Home", route: "/" }, { id: "about", name: "About", route: "/about" }]}
-      status="ready" selectMode={false} fullScreen={false} theme="light" zoom={100} fit={false} canBack canForward={false}
+      status="ready" selectMode={false} fullScreen={false} theme="light" zoom={100} fit={false} workLabel="Website up to date" canBack canForward={false}
       onBack={vi.fn()} onForward={vi.fn()} onPage={page} onDevice={device} onZoom={zoom} onFit={vi.fn()} onTheme={vi.fn()}
       onSelectMode={vi.fn()} onRefresh={vi.fn()} onFullScreen={vi.fn()}
     />);
@@ -52,10 +55,46 @@ describe("workspace chrome", () => {
     expect(screen.getByRole("status").textContent).toContain("up to date");
   });
 
+  it("keeps fit from shrinking the website below reading size", () => {
+    // 520px of canvas cannot show a 1440px desktop frame whole: fitting it
+    // exactly produced 34%, which is a picture of a page rather than a page.
+    class Narrow { observe() {} disconnect() {} }
+    vi.stubGlobal("ResizeObserver", Narrow);
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, value: 520 });
+    render(<PreviewStage
+      frame={{ current: null }} frameSrc="/preview/token" sandboxTitle="Preview" device="desktop" route="/" host="site.test"
+      pages={[{ id: "home", name: "Home", route: "/" }]}
+      status="ready" selectMode={false} fullScreen={false} theme="light" zoom={100} fit workLabel="Website up to date"
+      canBack={false} canForward={false}
+      onBack={vi.fn()} onForward={vi.fn()} onPage={vi.fn()} onDevice={vi.fn()} onZoom={vi.fn()} onFit={vi.fn()} onTheme={vi.fn()}
+      onSelectMode={vi.fn()} onRefresh={vi.fn()} onFullScreen={vi.fn()}
+    />);
+    const zoom = screen.getByRole("button", { name: /Fit stops at/ });
+    expect(Number(zoom.textContent?.replace("%", ""))).toBeGreaterThanOrEqual(60);
+    // And it says what to do about the part that no longer fits.
+    expect(zoom.getAttribute("title")).toContain("Tablet");
+    Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+  });
+
+  it("says the same thing about the work as the rest of the workspace", () => {
+    render(<PreviewStage
+      frame={{ current: null }} frameSrc="/preview/token" sandboxTitle="Preview" device="desktop" route="/" host="site.test"
+      pages={[{ id: "home", name: "Home", route: "/" }]}
+      status="ready" selectMode={false} fullScreen={false} theme="light" zoom={100} fit={false} workLabel="Building your website…" building
+      canBack={false} canForward={false}
+      onBack={vi.fn()} onForward={vi.fn()} onPage={vi.fn()} onDevice={vi.fn()} onZoom={vi.fn()} onFit={vi.fn()} onTheme={vi.fn()}
+      onSelectMode={vi.fn()} onRefresh={vi.fn()} onFullScreen={vi.fn()}
+    />);
+    // The live region, and the cover over the runtime's "ready to be built"
+    // placeholder, both carry the phase the status bar is showing.
+    for (const region of screen.getAllByRole("status")) expect(region.textContent).toContain("Building your website");
+    expect(screen.getByRole("heading", { name: "Building your website…" })).toBeDefined();
+  });
+
   it("offers a way to start when the website has no pages", () => {
     render(<PreviewStage
       frame={{ current: null }} frameSrc="/preview/token" sandboxTitle="Preview" device="desktop" route="/" host="site.test"
-      pages={[]} status="ready" selectMode={false} fullScreen={false} theme="light" zoom={100} fit
+      pages={[]} status="ready" selectMode={false} fullScreen={false} theme="light" zoom={100} workLabel="Website up to date" fit
       canBack={false} canForward={false}
       empty={<><h2>This website has no pages yet</h2><button type="button">Create your first page</button></>}
       onBack={vi.fn()} onForward={vi.fn()} onPage={vi.fn()} onDevice={vi.fn()} onZoom={vi.fn()} onFit={vi.fn()} onTheme={vi.fn()}

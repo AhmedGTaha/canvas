@@ -80,8 +80,12 @@ describe("History in the sidebar", () => {
   it("badges Checkpoints with the changes made since the last one", async () => {
     await mount();
     const checkpoints = screen.getByRole("button", { name: /Checkpoints/ });
-    expect(checkpoints.querySelector(".ws-side-badge")!.textContent).toBe("6");
-    expect(checkpoints.textContent).toContain("6 changes since your last checkpoint");
+    // The count lives in the badge and is named there; the line beside it says
+    // what the count is about rather than repeating the number.
+    const badge = checkpoints.querySelector(".ws-side-badge")!;
+    expect(badge.textContent).toBe("6");
+    expect(badge.getAttribute("aria-label")).toBe("6 unsaved changes");
+    expect(checkpoints.textContent).toContain("Unsaved since your last checkpoint");
     expect(calls.some(({ url }) => url.endsWith("/history"))).toBe(true);
   });
 

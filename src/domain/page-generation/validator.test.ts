@@ -31,7 +31,7 @@ export default function GeneratedPage(){const [open,setOpen]=useState(false);ret
     ["javascript link", `export default function Page(){return <a href="javascript:alert(1)">x</a>}`],
     ["unknown route", `export default function Page(){return <a href="/pricing">x</a>}`],
     ["dynamic import", `export default async function Page(){await import("react");return <main/>}`],
-  ])("rejects %s", async (_name, sourceCode) => { await expect(validateGeneratedPageSource({ sourceCode, ...context, declaredMediaIds: [] })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" }); });
+  ])("rejects %s", async (_name, sourceCode) => { await expect(validateGeneratedPageSource({ sourceCode, ...context, declaredMediaIds: [] })).rejects.toMatchObject({ code: "AI_GENERATED_SOURCE_INVALID" }); });
 
   it("rejects hallucinated and mismatched Media IDs", async () => {
     const foreign = "22222222-2222-4222-8222-222222222222";

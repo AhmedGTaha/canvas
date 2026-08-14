@@ -11,6 +11,16 @@ const DEVICES: Array<{ id: Device; label: string; width: number; icon: typeof Mo
   { id: "mobile", label: "Phone", width: 390, icon: Smartphone },
 ];
 const CANVAS_PADDING = 28;
+/*
+ * How small "fit" is allowed to make the website.
+ *
+ * Fitting a 1440px desktop frame into the column left between a sidebar and the
+ * agent produced 34% on a 1280px laptop: the whole page was visible and none of
+ * it was readable, on the one surface the product is actually about. Fit now
+ * stops at a size body text survives and the canvas scrolls instead — and the
+ * device presets, which are narrower by design, are the way to see it all.
+ */
+const MIN_FIT_ZOOM = 60;
 
 /**
  * The website, and the controls for looking at it.
@@ -21,12 +31,16 @@ const CANVAS_PADDING = 28;
  * route are stated once, in the address bar, which is also how you switch page.
  */
 export function PreviewStage({
-  frame, frameSrc, sandboxTitle, device, route, host, pages, status, error, selectMode, fullScreen, theme, zoom, fit,
+  frame, frameSrc, sandboxTitle, device, route, host, pages, status, error, selectMode, fullScreen, theme, zoom, fit, workLabel, building,
   canBack, canForward, empty, onBack, onForward, onPage, onDevice, onZoom, onFit, onTheme, onSelectMode, onRefresh, onFullScreen, onFrameLoad,
 }: {
   frame: RefObject<HTMLIFrameElement | null>; frameSrc: string; sandboxTitle: string; device: Device; route: string; host: string;
   pages: Array<{ id: string; name: string; route: string }>;
   status: "loading" | "ready" | "error"; error?: string; selectMode: boolean; fullScreen: boolean; theme: "light" | "dark"; zoom: number; fit: boolean;
+  /** What the rest of the workspace is saying about this website right now. */
+  workLabel: string;
+  /** The page in view is being written by the agent and has nothing to show yet. */
+  building?: boolean;
   canBack: boolean; canForward: boolean; empty?: ReactNode;
   onBack: () => void; onForward: () => void; onPage: (route: string) => void; onDevice: (device: Device) => void; onZoom: (zoom: number) => void;
   onFit: () => void; onTheme: (theme: "light" | "dark") => void; onSelectMode: () => void; onRefresh: () => void; onFullScreen: () => void; onFrameLoad?: () => void;
@@ -57,15 +71,23 @@ export function PreviewStage({
   }, []);
 
   const preset = DEVICES.find((item) => item.id === device)!;
-  const fitted = availableWidth === null ? 100 : Math.min(100, Math.max(20, ((availableWidth - CANVAS_PADDING) / preset.width) * 100));
+  const raw = availableWidth === null ? 100 : Math.min(100, ((availableWidth - CANVAS_PADDING) / preset.width) * 100);
+  const fitted = Math.max(MIN_FIT_ZOOM, raw);
   const effectiveZoom = fit ? fitted : zoom;
   const scale = effectiveZoom / 100;
   // Zoomed past the space available, the canvas scrolls rather than clipping.
   const viewportWidth = Math.round(preset.width * scale);
-  const statusText = status === "loading" ? "Loading the website"
-    : status === "error" ? "The website preview is unavailable"
-    : selectMode ? "Selection mode is on. Choose a part of the website."
-    : "The website is up to date";
+  const overflows = availableWidth !== null && viewportWidth > availableWidth - CANVAS_PADDING;
+  const smaller = DEVICES[DEVICES.indexOf(preset) + 1];
+  const zoomHint = fit
+    ? raw < MIN_FIT_ZOOM
+      ? `Fit stops at ${MIN_FIT_ZOOM}% so the text stays readable. Scroll to see the rest${smaller ? `, or switch to ${smaller.label} for a narrower layout` : ""}`
+      : "Zoom: fit to the space available"
+    : "Zoom";
+  // The same sentence the status bar and the title bar are showing, so the
+  // preview never contradicts them; selection mode is the one thing this
+  // region knows that they do not.
+  const statusText = status === "ready" && selectMode ? "Selection mode is on. Choose a part of the website." : workLabel;
 
   return <section className="ws-stage" aria-label="Website preview">
     <div className="ws-stage-bar">
@@ -91,7 +113,7 @@ export function PreviewStage({
       <div className="ws-tool-divider" />
       <div className="ws-tool-group ws-zoom" role="group" aria-label="Zoom">
         <ToolButton label="Zoom out" disabled={effectiveZoom <= 50 && !fit} onClick={() => onZoom(Math.max(50, Math.round(effectiveZoom / 10) * 10 - 10))}><Minus size={14} /></ToolButton>
-        <button type="button" className="ws-zoom-value" title={fit ? "Zoom: fit to the space available" : "Zoom"} onClick={onFit}>{Math.round(effectiveZoom)}%</button>
+        <button type="button" className="ws-zoom-value" title={zoomHint} aria-label={`${Math.round(effectiveZoom)}% — ${zoomHint}`} onClick={onFit}>{Math.round(effectiveZoom)}%</button>
         <ToolButton label="Zoom in" disabled={effectiveZoom >= 150} onClick={() => onZoom(Math.min(150, Math.round(effectiveZoom / 10) * 10 + 10))}><Plus size={14} /></ToolButton>
         <ToolButton label="Fit the website to the space" pressed={fit} onClick={onFit}><Scan size={14} /></ToolButton>
       </div>
@@ -111,12 +133,24 @@ export function PreviewStage({
 
     <div className="ws-preview-live" role="status" aria-live="polite">{statusText}</div>
 
-    <div className="ws-canvas" ref={canvas}>
+    <div className={`ws-canvas${overflows ? " ws-canvas-wide" : ""}`} ref={canvas}>
       {status === "error" ? <div className="ws-stage-overlay" role="alert">
         <div className="ws-stage-msg">
           <h2>The website preview could not be loaded</h2>
           <p>{error ?? "Your pages and content are safe. Reload the preview to try again."}</p>
           <button type="button" className="button button-primary" onClick={onRefresh}><RefreshCw size={14} />Reload the website</button>
+        </div>
+      </div> : null}
+
+      {/* A page being written for the first time still renders the runtime's
+          "ready to be built" placeholder, which reads as an invitation to do
+          the thing that is already happening. This covers it while the agent
+          works, and says the same words as the status bar. */}
+      {status !== "error" && !empty && building ? <div className="ws-stage-overlay">
+        <div className="ws-stage-msg" role="status">
+          <LoaderCircle className="spin" size={22} aria-hidden="true" />
+          <h2>{workLabel}</h2>
+          <p>Canvas is writing this page. It appears here as soon as it is ready.</p>
         </div>
       </div> : null}
 

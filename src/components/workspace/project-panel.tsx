@@ -53,7 +53,9 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
     const { project, role, owner } = access;
     return {
       title: "Website settings",
-      description: project.description || "No description yet. Add one to say what this website is for.",
+      // Only says "add one" where adding one is possible: the description is
+      // set when the website is created, and nothing here edits it.
+      description: project.description || "No description yet.",
       size: "drawer",
       actions: role === "owner" ? <RenameProjectDialog id={project.id} name={project.name} /> : undefined,
       body: <>

@@ -11,7 +11,9 @@ import { Input, Textarea } from "@/components/ui/form-controls";
 import { projectThemeCssVariables, resolveProjectDesignTokens } from "@/domain/theme/resolver";
 import type { BrandSettingsInput, SemanticColorTokens, ThemeSettingsInput } from "@/domain/theme/schemas";
 
-type SaveStatus = "Saved" | "Saving" | "Error";
+/* Idle renders nothing: a tick reading "Saved" on a form nobody has edited
+   reports a save that never happened. */
+type SaveStatus = "Idle" | "Saved" | "Saving" | "Error";
 const COLOR_FIELDS: Array<{ key: keyof SemanticColorTokens; label: string }> = [
   { key: "primary", label: "Primary" }, { key: "secondary", label: "Secondary" }, { key: "accent", label: "Accent" },
   { key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "text", label: "Text" },
@@ -26,6 +28,7 @@ const SCALE_FIELDS: Array<{ key: Exclude<keyof ThemeSettingsInput, "lightTokens"
 ];
 
 function SaveIndicator({ status, error }: { status: SaveStatus; error?: string }) {
+  if (status === "Idle") return null;
   return <span className={`save-indicator save-${status.toLowerCase()}`} title={error}>{status === "Saving" ? <LoaderCircle className="spin" size={14} /> : status === "Error" ? <CircleAlert size={14} /> : <Check size={14} />}{status}{error ? <span className="sr-only">: {error}</span> : null}</span>;
 }
 
@@ -47,8 +50,8 @@ export function ThemeEditor({ projectId, initialBrand, initialTheme, recoveredFr
   const [brand, setBrand] = useState<BrandSettingsInput>({ companyName: initialBrand.companyName, companyDescription: initialBrand.companyDescription, brandNotes: initialBrand.brandNotes });
   const [theme, setTheme] = useState<ThemeSettingsInput>({ lightTokens: initialTheme.lightTokens, darkTokens: initialTheme.darkTokens, radiusScale: initialTheme.radiusScale, spacingScale: initialTheme.spacingScale, shadowScale: initialTheme.shadowScale, fontScale: initialTheme.fontScale, borderScale: initialTheme.borderScale });
   const [mode, setMode] = useState<"light" | "dark">("light");
-  const [brandStatus, setBrandStatus] = useState<SaveStatus>("Saved");
-  const [themeStatus, setThemeStatus] = useState<SaveStatus>("Saved");
+  const [brandStatus, setBrandStatus] = useState<SaveStatus>("Idle");
+  const [themeStatus, setThemeStatus] = useState<SaveStatus>("Idle");
   const [brandError, setBrandError] = useState<string | undefined>();
   const [themeError, setThemeError] = useState<string | undefined>(recoveredFromInvalidState ? "Stored theme values were invalid. Safe defaults are shown; edit or reset to recover." : undefined);
   const brandRef = useRef(brand); const themeRef = useRef(theme);

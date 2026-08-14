@@ -42,7 +42,7 @@ export type GeneratedSourceValidationInput = {
 };
 
 function fail(detail: string): never {
-  throw new AIError("AI_PROVIDER_INVALID_RESPONSE", generatedSourceValidationMessage(detail), false, undefined, detail);
+  throw new AIError("AI_GENERATED_SOURCE_INVALID", generatedSourceValidationMessage(detail), false, undefined, detail);
 }
 function literal(node: ts.Expression | undefined) {
   return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : null;

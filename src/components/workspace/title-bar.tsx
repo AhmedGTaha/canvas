@@ -56,14 +56,17 @@ export function TitleBar({
       {saveState ? <span className="ws-save-state" role="status">{saveState}</span> : null}
       <TaskIndicator activeCount={activeTasks} failedCount={failedTasks} onClick={onTasks} />
       {canShare ? <button type="button" className="ws-title-button" onClick={onShare}><UsersRound size={14} aria-hidden="true" />Share</button> : null}
+      {/* Named, not just drawn. On a laptop the agent is an overlay that closes
+          itself whenever the sidebar opens, and an unlabelled glyph was the
+          only way back to the one surface the website is built from. */}
       <button
         type="button"
-        className="ws-title-icon"
+        className="ws-title-button ws-title-agent"
         aria-label={agentOpen ? "Hide the agent" : "Show the agent"}
         aria-pressed={agentOpen}
-        title={agentOpen ? "Hide the agent" : "Show the agent"}
+        title={agentOpen ? "Hide the agent (Ctrl / ⌘ + J)" : "Show the agent (Ctrl / ⌘ + J)"}
         onClick={onToggleAgent}
-      ><PanelRight size={16} /></button>
+      ><PanelRight size={15} aria-hidden="true" />Agent</button>
       <AccountMenu userName={userName} onSignOut={onSignOut} />
     </div>
   </header>;

@@ -119,7 +119,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     const [v1] = await db.select().from(buildingBlockVersions);
 
     const unsafe = await runBlockJob(owner.id, project.id, navbar.id, "Add tracking", `export default function Block(){fetch("/api/track");return <nav/>}`);
-    expect(unsafe.job).toMatchObject({ status: "failed", errorCode: "AI_PROVIDER_INVALID_RESPONSE" });
+    expect(unsafe.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
     expect(await db.select().from(buildingBlockVersions)).toHaveLength(1);
     expect((await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id)))[0]?.currentVersionId).toBe(v1!.id);
 
@@ -247,7 +247,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
 
     const hallucinated = [{ blockId: randomUUID(), usageKey: "nav" }];
     const invalid = await runPageJob(owner.id, project.id, home.id, "Add a navbar", pageUsing(hallucinated), hallucinated);
-    expect(invalid.job).toMatchObject({ status: "failed", errorCode: "AI_PROVIDER_INVALID_RESPONSE" });
+    expect(invalid.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
 
     const stranger = await makeUser("stranger");
     const otherWorkspace = await new WorkspaceService().create(stranger.id, { name: "Other" });
@@ -256,13 +256,13 @@ describe.sequential("Phase 9 Building Blocks", () => {
     await runBlockJob(stranger.id, otherProject.id, foreignBlock.id, "Create", navbarV1);
     const foreignUsage = [{ blockId: foreignBlock.id, usageKey: "nav" }];
     const crossProject = await runPageJob(owner.id, project.id, home.id, "Use their navbar", pageUsing(foreignUsage), foreignUsage);
-    expect(crossProject.job).toMatchObject({ status: "failed", errorCode: "AI_PROVIDER_INVALID_RESPONSE" });
+    expect(crossProject.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
 
     const archived = await blocks.create(owner.id, { projectId: project.id, name: "Old Hero", kind: "hero" });
     await blocks.archive(owner.id, { projectId: project.id, blockId: archived.id });
     const archivedUsage = [{ blockId: archived.id, usageKey: "hero" }];
     const archivedResult = await runPageJob(owner.id, project.id, home.id, "Use the archived hero", pageUsing(archivedUsage), archivedUsage);
-    expect(archivedResult.job).toMatchObject({ status: "failed", errorCode: "AI_PROVIDER_INVALID_RESPONSE" });
+    expect(archivedResult.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
 
     const [current] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
     expect(current?.currentVersionId).toBe(baseline!.id);

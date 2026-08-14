@@ -23,6 +23,13 @@ import { generatedSourceCorrectionRequest } from "@/domain/generated-source/corr
 function summaryMessage(summary: BlockChangeSummary) {
   return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n");
 }
+function failureStage(error: AIError, fallback: string) {
+  if (error.code === "AI_RESPONSE_SCHEMA_INVALID") return "response_schema";
+  if (error.code === "AI_RESPONSE_MALFORMED") return "response_parse";
+  if (error.code === "AI_RESPONSE_EMPTY" || error.code === "AI_RESPONSE_TRUNCATED") return "provider_response";
+  if (error.code === "AI_GENERATED_SOURCE_INVALID") return "source_validation";
+  return fallback;
+}
 
 /**
  * Building Block generation and modification. Shares the project context builder,
@@ -118,7 +125,7 @@ export class BlockGenerationOrchestrationService {
       try {
         manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
       } catch (error) {
-        if (!(error instanceof AIError) || error.code !== "AI_PROVIDER_INVALID_RESPONSE") throw error;
+        if (!(error instanceof AIError) || error.code !== "AI_GENERATED_SOURCE_INVALID") throw error;
         response = await provider.generateStructured(generatedSourceCorrectionRequest(providerRequest, response.text, error.diagnostic), generatedBlockResponseSchema);
         if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
         await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
@@ -147,10 +154,11 @@ export class BlockGenerationOrchestrationService {
       else if (error.retryable && current.attemptCount < 3) await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + 1_000 * 2 ** Math.max(0, current.attemptCount - 1)), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
       else {
         const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic);
+        const pipelineStage = failureStage(error, current.progressStage);
         await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic });
         await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.block_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } });
-        observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt });
-        if (error.code === "AI_PROVIDER_INVALID_RESPONSE") observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: error.diagnostic });
+        observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic });
+        if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_SOURCE_INVALID"].includes(error.code)) observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel });
       }
       return this.current(jobId);
     } finally {

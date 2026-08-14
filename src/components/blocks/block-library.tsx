@@ -226,19 +226,26 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
     <section className="tool-main">
       <div className="tool-bar">
         <div className="tool-title">
-          <strong>{selected ? selected.name : "Nothing selected"}</strong>
-          {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · version ${selected.currentVersionNumber}` : " · not built yet"}</span> : <span>Pick a section on the left to see it.</span>}
+          <strong>{selected ? selected.name : "No section selected"}</strong>
+          {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · version ${selected.currentVersionNumber}` : " · not built yet"}</span> : null}
         </div>
-        <UndoRedoControls controller={history} dense />
-        <div className="toolbar-divider" />
-        <Button type="button" variant={selectMode ? "secondary" : "ghost"} size="sm" aria-pressed={selectMode} disabled={!selected} icon={<MousePointerClick size={14} />} onClick={toggleSelectMode}>{selectMode ? "Selecting" : "Select a part"}</Button>
-        <SegmentedControl label="Appearance" value={theme} onChange={setTheme} options={[{ value: "light", label: "Light", icon: <Sun size={13} /> }, { value: "dark", label: "Dark", icon: <Moon size={13} /> }]} />
-        <IconButton label="Reload this section" icon={<RefreshCw size={14} />} onClick={() => void refreshPreview()} />
+        {/* Undo, appearance and reload act on the section being previewed, so
+            they stay out of the way until there is one — on a phone they were
+            a row of live-looking controls stacked over an empty canvas. */}
+        {selected ? <>
+          <UndoRedoControls controller={history} dense />
+          <div className="toolbar-divider" />
+          <Button type="button" variant={selectMode ? "secondary" : "ghost"} size="sm" aria-pressed={selectMode} icon={<MousePointerClick size={14} />} onClick={toggleSelectMode}>{selectMode ? "Selecting" : "Select a part"}</Button>
+          <SegmentedControl label="Appearance" value={theme} onChange={setTheme} options={[{ value: "light", label: "Light", icon: <Sun size={13} /> }, { value: "dark", label: "Dark", icon: <Moon size={13} /> }]} />
+          <IconButton label="Reload this section" icon={<RefreshCw size={14} />} onClick={() => void refreshPreview()} />
+        </> : null}
       </div>
-      <div className="preview-status" role="status">{!selected ? "Nothing selected" : previewStatus === "loading" ? <><LoaderCircle className="spin" size={13} />Loading…</> : previewStatus === "error" ? <><span className="status-error-dot" />Could not load</> : <><Check size={13} />Up to date</>}</div>
+      {selected ? <div className="preview-status" role="status">{previewStatus === "loading" ? <><LoaderCircle className="spin" size={13} />Loading…</> : previewStatus === "error" ? <><span className="status-error-dot" />Could not load</> : <><Check size={13} />Up to date</>}</div> : null}
       <div className="preview-canvas">
         {previewStatus === "error" ? <div className="preview-error" role="alert"><h2>This section could not be shown</h2><p>{previewError ?? "Your section is safe. Reload it to try again."}</p><Button type="button" size="sm" onClick={() => void refreshPreview()}>Reload</Button></div> : null}
-        <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Section"} preview`} /> : <div className="preview-loading"><Blocks size={20} />Pick a section, or create one.</div>}</div>
+        {/* One invitation to create a section per screen: the list already
+            carries the button, so this only says what this space is for. */}
+        <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Section"} preview`} /> : <div className="preview-loading"><Blocks size={20} />{blocks.length ? "Pick a section on the left to see it here." : "Your sections appear here once you create one."}</div>}</div>
       </div>
       {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy} history={history}
         onUsageResolution={(usage, resolution) => void action(async () => {

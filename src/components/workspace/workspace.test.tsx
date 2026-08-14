@@ -353,6 +353,40 @@ describe("sidebar-first project tools", () => {
   });
 });
 
+describe("pane resize handles", () => {
+  const shell = readFileSync("src/components/workspace/workspace-shell.tsx", "utf8");
+  const css = readFileSync("src/app/workspace.css", "utf8");
+
+  it("are window splitters, not unexplained tab stops", () => {
+    // Both were focusable buttons that reported no role and no value, and did
+    // nothing at all without a pointer.
+    const handles = [...shell.matchAll(/className="ws-resize ws-resize-[rl]"[\s\S]{0,600}?onKeyDown=\{resizeKeys\("(explorer|agent)"\)\}/g)];
+    expect(handles).toHaveLength(2);
+    for (const [markup] of handles) {
+      expect(markup).toContain('role="separator"');
+      expect(markup).toContain('aria-orientation="vertical"');
+      expect(markup).toMatch(/aria-valuenow=/);
+      expect(markup).toMatch(/aria-valuemin=/);
+      expect(markup).toMatch(/aria-valuemax=/);
+      expect(markup).toMatch(/aria-label="Resize/);
+      expect(markup).toMatch(/tabIndex=\{0\}/);
+    }
+  });
+
+  it("move with the arrow keys and jump to their limits", () => {
+    expect(shell).toMatch(/if \(event\.key === "ArrowRight"\)/);
+    expect(shell).toMatch(/if \(event\.key === "ArrowLeft"\)|else if \(event\.key === "ArrowLeft"\)/);
+    expect(shell).toMatch(/event\.key === "Home"/);
+    expect(shell).toMatch(/event\.key === "End"/);
+    // The agent grows leftwards, so the same key cannot mean the same delta.
+    expect(shell).toMatch(/const direction = pane === "explorer" \? 1 : -1/);
+  });
+
+  it("show where focus is", () => {
+    expect(css).toMatch(/\.ws-resize:focus-visible \{[^}]*outline: 2px solid var\(--focus\)/);
+  });
+});
+
 describe("workspace responsive strategy", () => {
   const css = readFileSync("src/app/workspace.css", "utf8");
 

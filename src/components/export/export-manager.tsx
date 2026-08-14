@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/feedback";
 import { Section } from "@/components/ui/panel";
+import { count } from "@/components/ui/plural";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 
 type Failure = { code: string; message: string; entity?: string };
@@ -59,7 +60,7 @@ export function ExportManager({ projectId }: { projectId: string }) {
       description="Canvas checks the website, builds it as a standalone Next.js project, and packages it as a ZIP you can run or host anywhere. It contains frontend code only — no account, database or backend."
       actions={<>
         <Button type="button" loading={Boolean(running)} disabled={busy} icon={<Package size={15} />} onClick={() => void startExport()}>{running ? "Exporting…" : "Export website"}</Button>
-        <Button type="button" variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => void load()}>Refresh</Button>
+        <Button type="button" variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => void load()}>Refresh this list</Button>
       </>}
     >
       {error ? <InlineAlert tone="danger" title="That export could not be started">{error}</InlineAlert> : null}
@@ -69,8 +70,8 @@ export function ExportManager({ projectId }: { projectId: string }) {
         : <ul className="export-list">{jobs.map((job) => <li key={job.id} className={`export-row ${job.status}`}>
         <div className="export-row-main">
           <strong>{job.status === "completed" ? <><Check size={14} />Ready to download</> : job.status === "failed" ? <><CircleAlert size={14} />Not exported</> : <><LoaderCircle className="spin" size={14} />{job.progressStage}</>}</strong>
-          <small>{when(job.createdAt)} · {job.actor}{job.artifact?.fileCount ? ` · ${job.artifact.fileCount} files · ${size(job.artifact.bytes)}` : ""}</small>
-          {job.validation && job.validation.ok ? <span className="export-summary">{job.validation.pageCount} pages · {job.validation.blockCount} shared blocks · {job.validation.mediaCount} images</span> : null}
+          <small>{when(job.createdAt)} · {job.actor}{job.artifact?.fileCount ? ` · ${count(job.artifact.fileCount, "file")} · ${size(job.artifact.bytes)}` : ""}</small>
+          {job.validation && job.validation.ok ? <span className="export-summary">{count(job.validation.pageCount, "page")} · {count(job.validation.blockCount, "shared section")} · {count(job.validation.mediaCount, "image")}</span> : null}
           {job.status === "failed" ? <span className="export-error">{job.errorMessage ?? "Canvas could not export this website."}</span> : null}
           {job.validation?.failures.length ? <details className="export-failures">
             <summary>What needs fixing ({job.validation.failures.length})</summary>

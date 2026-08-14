@@ -1,4 +1,6 @@
 import { ApiError, GoogleGenAI } from "@google/genai";
+import { createHash } from "node:crypto";
+import { ZodError } from "zod";
 import { AIError, type AIProvider, type AIRequest, type AIResponse, type StructuredValidator } from "@/domain/ai/provider";
 
 /** HTTP status of a provider failure, from the SDK error or a status-like shape. */
@@ -73,6 +75,28 @@ const UNUSABLE_FINISH: Record<string, string> = {
   MALFORMED_FUNCTION_CALL: "Canvas AI returned an unusable response. Try again.",
 };
 
+function responseFingerprint(label: string, value: string) {
+  return `${label}Bytes=${Buffer.byteLength(value, "utf8")} ${label}Sha256=${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * Safe diagnostic metadata for a response that cannot become a candidate. Source and
+ * prompts must never be logged, so the raw and fence-sanitized payloads are identified
+ * only by their sizes and short hashes.
+ */
+function structuredResponseDiagnostic(raw: string, sanitized: string, finishReason?: string) {
+  return [responseFingerprint("raw", raw), responseFingerprint("sanitized", sanitized), finishReason ? `finishReason=${finishReason}` : undefined].filter(Boolean).join(" ");
+}
+
+function schemaDiagnostic(error: unknown) {
+  if (!(error instanceof ZodError)) return diagnostic(error);
+  return error.issues.slice(0, 6).map((issue) => {
+    const path = issue.path.length ? issue.path.join(".") : "root";
+    const format = "format" in issue && typeof issue.format === "string" ? `(${issue.format})` : "";
+    return `${path}:${issue.code}${format}`;
+  }).join(", ");
+}
+
 /** Strips a stray markdown fence if the model wraps its JSON despite the MIME type. */
 function unwrapJson(text: string) {
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/i.exec(text.trim());
@@ -129,11 +153,12 @@ export class GeminiProvider implements AIProvider {
       const finishReason = response.candidates?.[0]?.finishReason as string | undefined;
       const text = response.text?.trim();
       if (finishReason && finishReason !== "STOP" && UNUSABLE_FINISH[finishReason]) {
-        throw new AIError("AI_PROVIDER_INVALID_RESPONSE", UNUSABLE_FINISH[finishReason]!, false, undefined, `finishReason: ${finishReason}`);
+        const code = finishReason === "MAX_TOKENS" ? "AI_RESPONSE_TRUNCATED" : "AI_PROVIDER_INVALID_RESPONSE";
+        throw new AIError(code, UNUSABLE_FINISH[finishReason]!, false, undefined, `finishReason=${finishReason}`);
       }
       if (!text) {
         const blockReason = response.promptFeedback?.blockReason;
-        throw new AIError("AI_PROVIDER_INVALID_RESPONSE", blockReason ? "Canvas AI could not complete this request. Try rephrasing it." : "Canvas AI returned an empty response. Try again.", false, undefined, blockReason ? `blockReason: ${blockReason}` : "empty response");
+        throw new AIError(blockReason ? "AI_PROVIDER_INVALID_RESPONSE" : "AI_RESPONSE_EMPTY", blockReason ? "Canvas AI could not complete this request. Try rephrasing it." : "Canvas AI returned an empty response. Try again.", false, undefined, blockReason ? `blockReason=${blockReason}` : "empty response");
       }
       return {
         text, provider: this.name, model: this.model,
@@ -162,12 +187,14 @@ export class GeminiProvider implements AIProvider {
   /** Parses and validates structured output. Zod stays the contract authority. */
   async generateStructured<T>(request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const result = await this.generate(request, true);
+    const sanitized = unwrapJson(result.text);
+    const responseDiagnostic = structuredResponseDiagnostic(result.text, sanitized, result.finishReason);
     let parsed: unknown;
-    try { parsed = JSON.parse(unwrapJson(result.text)); }
-    catch { throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas AI returned an unreadable response. Try again.", false, undefined, "response was not valid JSON"); }
+    try { parsed = JSON.parse(sanitized); }
+    catch { throw new AIError("AI_RESPONSE_MALFORMED", "Canvas AI returned an unreadable response. Try again.", false, undefined, `${responseDiagnostic} stage=response_parse`); }
     try { return { ...result, structuredData: validator.parse(parsed) }; }
     catch (error) {
-      throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas AI returned a response Canvas could not use. Try again.", false, undefined, `schema mismatch: ${messageOf(error).slice(0, 160)}`);
+      throw new AIError("AI_RESPONSE_SCHEMA_INVALID", "Canvas AI returned a response Canvas could not use. Try again.", false, undefined, `${responseDiagnostic} stage=response_schema schemaIssues=${schemaDiagnostic(error)}`);
     }
   }
 }

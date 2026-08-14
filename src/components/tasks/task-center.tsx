@@ -12,7 +12,7 @@ export function TaskCenter({ projectId, open, onClose, onReview, onOpenExport, o
   const close = () => { dialog.current?.close(); onClose(); };
   return <dialog className="task-dialog" ref={dialog} aria-labelledby="task-center-title" onCancel={(event) => { event.preventDefault(); close(); }}>
     <div className="task-center">
-      <header><div><h2 id="task-center-title">Background tasks</h2><p>AI updates and exports for this project.</p></div><button type="button" aria-label="Close background tasks" onClick={close}><X size={17} /></button></header>
+      <header><div><h2 id="task-center-title">Background tasks</h2><p>AI updates and exports for this website.</p></div><button type="button" aria-label="Close background tasks" onClick={close}><X size={17} /></button></header>
       {error ? <p className="task-error" role="alert"><CircleAlert size={14} />{error}</p> : null}
       <div className="task-list">{!tasks.length && !error ? <p className="command-empty">No background work yet.</p> : tasks.map((task) => <article key={`${task.type}:${task.id}`} className={`task-row task-${task.status}`}>
         <span className="task-icon">{task.status === "active" ? <LoaderCircle className="spin" size={15} /> : task.type === "generation" ? <Sparkles size={15} /> : <Download size={15} />}</span>

@@ -24,6 +24,10 @@
 :root {
   --ws-title-h: 44px;
   --ws-statusbar-h: 26px;
+  /* The preview's own toolbar. Declared here because the agent overlay on a
+     laptop is positioned below it, so that zoom, screen size and the overflow
+     menu are never underneath the thing floating over the website. */
+  --ws-stagebar-h: 40px;
   /* The activity bar's width is here rather than on the shell for the same
      reason as the row heights: the inset tool panels are positioned from it. */
   --ws-activity-w: 48px;
@@ -170,6 +174,8 @@
 .ws-title-button { padding: 0 var(--sp-5); }
 .ws-title-icon { width: 28px; }
 .ws-title-button:hover, .ws-title-icon:hover, .ws-title-icon[aria-pressed="true"] { background: var(--surface-hover); color: var(--text); }
+/* Pressed means the agent is on screen — the same read as the activity bar. */
+.ws-title-agent[aria-pressed="true"] { border-color: var(--border); background: var(--surface-press); color: var(--text); }
 
 /* ------------------------------------------------------------- activity bar */
 
@@ -363,7 +369,10 @@
 }
 .ws-resize-r { right: -4px; }
 .ws-resize-l { left: -4px; }
-.ws-resize:hover, .ws-resize:focus-visible { background: rgba(47, 90, 168, 0.22); outline: 0; }
+.ws-resize:hover { background: rgba(47, 90, 168, 0.22); }
+/* A 7px strip cannot show a ring around itself, so focus fills it: the whole
+   handle becomes the indicator, which is also what the arrow keys then move. */
+.ws-resize:focus-visible { background: var(--focus); outline: 2px solid var(--focus); outline-offset: 1px; }
 .ws-shell[data-resizing="on"] { cursor: col-resize; user-select: none; }
 .ws-shell[data-resizing="on"] iframe { pointer-events: none; }
 
@@ -512,7 +521,7 @@
   flex: none;
   align-items: center;
   gap: var(--sp-3);
-  height: 40px;
+  height: var(--ws-stagebar-h);
   padding: 0 var(--sp-4);
   border-bottom: 1px solid var(--border);
   background: var(--surface-chrome);
@@ -620,6 +629,10 @@
   overflow: auto;
   place-items: stretch center;
 }
+/* Wider than the space it has: the canvas scrolls from the left edge rather
+   than centring the frame and cutting its left side off. */
+.ws-canvas-wide { place-items: stretch start; }
+.ws-canvas-wide .ws-device-viewport { max-width: none; }
 .ws-device-viewport {
   height: 100%;
   min-width: 0;
@@ -800,6 +813,20 @@
   transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 .wsa-composer:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-soft); }
+/* Says what pressing the button will do while the agent is busy: queue, not
+   apply. Quiet enough that it never competes with the work in progress. */
+.wsa-composer-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-2);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.wsa-composer-note svg { flex: none; }
 .wsa-composer textarea {
   display: block;
   width: 100%;
@@ -1146,7 +1173,10 @@
   .ws-shell[data-agent="on"] .ws-pane-r {
     position: fixed;
     z-index: var(--z-overlay);
-    top: var(--ws-title-h);
+    /* Below the preview's toolbar, not over it: the row that changes zoom and
+       screen size has to stay usable while the agent is open, and it is the
+       one row that cannot be reached from inside the agent. */
+    top: calc(var(--ws-title-h) + var(--ws-stagebar-h));
     right: 0;
     bottom: var(--ws-statusbar-h);
     display: flex;

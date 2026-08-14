@@ -6,6 +6,7 @@ import { Chip } from "@/components/ui/feedback";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import { PAGE_MEDIA_ATTACHMENT_LIMIT } from "@/domain/page-generation/contract";
 import { AgentComposer, AgentError, AgentMessage as AgentMessageView, AgentProgress } from "./agent-parts";
+import { jobLabel } from "./work-state";
 
 export type AgentMessage = { id: string; role: "user" | "assistant" | "system_internal"; content: string; createdAt: string };
 export type AgentJob = null | { id: string; status: string; progressStage: string; errorMessage: string | null };
@@ -73,9 +74,21 @@ export function AgentPanel({
     : built
       ? (editingBlock ? "Change the spacing in this shared section…" : "Make the hero shorter, and tidy the spacing on phones…")
       : "Describe the page you want — for example, a services page with three cards…";
+  /*
+   * Sending and queueing are different acts, so they do not quietly share one
+   * button label. While the agent is working the composer says so above the
+   * field, and the button names the queue rather than the change — nothing is
+   * applied to the website until this request's turn comes.
+   */
   const sendLabel = activeJob ? "Add to the queue" : selection ? "Update this part" : built ? (editingBlock ? "Update section" : "Update page") : "Create page";
   const canSend = hydrated && Boolean(target) && Boolean(prompt.trim()) && !loading;
   const waiting = queue.filter((item) => item.status === "queued" || item.status === "paused");
+  const queueNotice = activeJob
+    ? <p className="wsa-composer-note" role="status">
+        <Clock size={12} aria-hidden="true" />
+        Canvas is still working. Your next request waits its turn{waiting.length ? ` behind ${waiting.length === 1 ? "one other" : `${waiting.length} others`}` : ""}.
+      </p>
+    : undefined;
 
   return <>
     <div className="ws-pane-hd">
@@ -108,7 +121,7 @@ export function AgentPanel({
           </div>
         : visible.map((message) => <AgentMessageView key={message.id} role={message.role} content={message.content} />)}
 
-      {activeJob ? <AgentProgress stage={activeJob.progressStage} busy={loading} onCancel={onCancel} /> : null}
+      {activeJob ? <AgentProgress stage={jobLabel(activeJob.status, activeJob.progressStage)} busy={loading} onCancel={onCancel} /> : null}
       {waiting.map((item, index) => <QueuedFollowUp key={item.id} item={item} position={index + 1} onCancel={onCancelQueued} onEdit={onEditQueued} />)}
 
       {job?.status === "failed" ? <AgentError>{job.errorMessage || "The agent could not make that change, and nothing on your website was altered. Try describing it a different way."}</AgentError> : null}
@@ -129,6 +142,7 @@ export function AgentPanel({
       assets={assets}
       folders={folders}
       mediaLimit={PAGE_MEDIA_ATTACHMENT_LIMIT}
+      before={queueNotice}
       onPrompt={onPrompt}
       onMedia={onMedia}
       onSubmit={onSubmit}

@@ -6,6 +6,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { uploadMediaFiles, type UploadStatus } from "@/components/media/upload";
 import { HistorySidebar, type HistorySection } from "@/components/history/history-sidebar";
 import type { HistoryController } from "@/components/history/use-history-controller";
+import { count } from "@/components/ui/plural";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import type { WorkspaceActivity } from "./workspace-layout";
@@ -16,7 +17,7 @@ export function ContextSidebar({ projectId, activity, mediaAssets, mediaFolders,
   // Each row opens Brand & design at the part it names. Both used to open it at
   // the top, which made the second row indistinguishable from the first.
   if (activity === "design") return <SidebarShell title="Design" footer="Shared across every page"><div className="ws-side-sections"><SidebarLink icon={<Palette size={17} />} title="Brand identity" text="Logo, company identity, and brand notes" onClick={() => onOpenPanel("brand", { section: "identity" })} /><SidebarLink icon={<Type size={17} />} title="Theme" text="Colours, type, spacing, and appearance" onClick={() => onOpenPanel("brand", { section: "theme" })} /></div></SidebarShell>;
-  if (activity === "sections") { const values = Object.values(blocks); return <SidebarShell title="Reusable Sections" action={<button type="button" className="ws-side-action" onClick={onNewBlock}><Plus size={14} />New</button>} footer={`${values.length} reusable ${values.length === 1 ? "section" : "sections"}`}>
+  if (activity === "sections") { const values = Object.values(blocks); return <SidebarShell title="Reusable Sections" action={<button type="button" className="ws-side-action" onClick={onNewBlock}><Plus size={14} />New</button>} footer={count(values.length, "reusable section")}>
     {!values.length ? <SidebarEmpty icon={<Blocks size={20} />} title="No reusable sections" text="Create navigation bars, footers, and sections once, then reuse them." action="Create section" onAction={onNewBlock} /> : <div className="ws-side-list">{values.map((block) => <button type="button" key={block.id} onClick={() => onOpenPanel("blocks", { block: block.id })}><Blocks size={15} /><span><strong>{block.name}</strong><small>{block.isGlobal ? "Used across the website" : block.contentStatus === "generated" ? "Ready to use" : "Draft"}</small></span><ChevronRight size={14} /></button>)}</div>}
   </SidebarShell>; }
   // History owns its own shell: it carries undo/redo in the header and expands
@@ -51,7 +52,7 @@ function AssetsSidebar({ projectId, mediaAssets, mediaFolders, onOpenPanel }: { 
   return <SidebarShell
     title="Assets"
     action={<><button type="button" className="ws-side-action" disabled={busy} onClick={() => fileRef.current?.click()}>{busy ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}Upload</button><button type="button" className="ws-side-action" onClick={() => onOpenPanel("media")}><Settings2 size={14} />Manage</button></>}
-    footer={`${mediaAssets.length} images · ${mediaFolders.length} folders`}
+    footer={`${count(mediaAssets.length, "image")} · ${count(mediaFolders.length, "folder")}`}
   >
     <input ref={fileRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" multiple aria-label="Upload images" onChange={(event) => void upload(event.target.files)} />
     {uploads.length ? <div className="upload-list" role="status">{uploads.map((item, index) => <span key={`${item.name}-${index}`} className={item.state === "error" ? "upload-error" : ""}>{item.state === "uploading" ? <LoaderCircle className="spin" size={13} /> : null}{item.name}: {item.state}{item.error ? ` — ${item.error}` : ""}</span>)}</div> : null}

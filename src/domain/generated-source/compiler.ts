@@ -5,7 +5,7 @@ import { generatedSourceValidationMessage } from "./diagnostics";
 export type GeneratedBlockModule = { blockId: string; sourceCode: string };
 
 function fail(detail: string): never {
-  throw new AIError("AI_PROVIDER_INVALID_RESPONSE", generatedSourceValidationMessage(detail), false, undefined, detail);
+  throw new AIError("AI_GENERATED_SOURCE_INVALID", generatedSourceValidationMessage(detail), false, undefined, detail);
 }
 
 // Platform-controlled runtime. Generated source may only import these primitives; the

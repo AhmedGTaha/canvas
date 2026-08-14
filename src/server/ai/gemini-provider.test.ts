@@ -19,6 +19,7 @@ vi.mock("@google/genai", async (importOriginal) => {
 const { GeminiProvider, normalizeGeminiError } = await import("./gemini-provider");
 const { aiProviderCredentials, aiProviderDescriptor, isAIConfigured, DEFAULT_GEMINI_MODEL } = await import("./config");
 const { getAIProvider } = await import("./provider-registry");
+const { generatedPageResponseJsonSchema, generatedPageResponseSchema } = await import("@/domain/page-generation/contract");
 
 const API_KEY = "AIzaSyTESTKEY0000000000000000000000000000";
 const request = (overrides: Record<string, unknown> = {}) => ({
@@ -171,6 +172,15 @@ describe("Gemini structured responses", () => {
     });
   });
 
+  it("keeps Gemini's JSON schema aligned with the canonical page contract", async () => {
+    const valid = { schemaVersion: 1, sourceCode: "export default function P(){return <main/>}", referencedMediaIds: [], summary: { headline: "Built", changes: [], limitations: [] } };
+    generateContent.mockResolvedValue(reply(JSON.stringify(valid)));
+    await expect(provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema)).resolves.toMatchObject({ structuredData: valid });
+    const schema = generateContent.mock.calls[0]![0].config.responseJsonSchema;
+    expect(schema.properties.referencedMediaIds.items.format).toBe("uuid");
+    expect(schema.properties.blockUsages.items.properties.blockId.format).toBe("uuid");
+  });
+
   it("recovers from a stray markdown fence around the JSON", async () => {
     generateContent.mockResolvedValue(reply("```json\n{\"schemaVersion\":1,\"sourceCode\":\"x\"}\n```"));
     await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({ structuredData: { sourceCode: "x" } });
@@ -178,28 +188,37 @@ describe("Gemini structured responses", () => {
 
   it("rejects unparseable and contract-violating responses without weakening the contract", async () => {
     generateContent.mockResolvedValue(reply("not json at all"));
-    await expect(provider().generateStructured(request(), validator)).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE", retryable: false, diagnostic: "response was not valid JSON" });
+    await expect(provider().generateStructured(request(), validator)).rejects.toMatchObject({ code: "AI_RESPONSE_MALFORMED", retryable: false, diagnostic: expect.stringContaining("stage=response_parse") });
 
     generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 2, sourceCode: "x" })));
     const rejected = await provider().generateStructured(request(), validator).catch((error: AIError) => error);
-    expect(rejected).toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
-    expect((rejected as AIError).diagnostic).toContain("schema mismatch");
+    expect(rejected).toMatchObject({ code: "AI_RESPONSE_SCHEMA_INVALID" });
+    expect((rejected as AIError).diagnostic).toContain("stage=response_schema");
+    expect((rejected as AIError).diagnostic).toContain("schemaIssues=schemaVersion:invalid_value");
     // The user-facing message stays plain; provider detail is diagnostic only.
     expect((rejected as AIError).message).not.toContain("schemaVersion");
+
+    generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 1, sourceCode: "x" })));
+    const missing = await provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema).catch((error: AIError) => error);
+    expect(missing).toMatchObject({ code: "AI_RESPONSE_SCHEMA_INVALID", diagnostic: expect.stringContaining("stage=response_schema") });
+
+    generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 1, sourceCode: "x", referencedMediaIds: ["invented-media-id"], summary: { headline: "Built", changes: [], limitations: [] } })));
+    const invalidReference = await provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema).catch((error: AIError) => error);
+    expect(invalidReference).toMatchObject({ code: "AI_RESPONSE_SCHEMA_INVALID", diagnostic: expect.stringContaining("referencedMediaIds.0:invalid_format(uuid)") });
   });
 
   it("fails clearly when the response was truncated or blocked", async () => {
     generateContent.mockResolvedValue(reply("{\"schemaVersion\":1", { candidates: [{ finishReason: "MAX_TOKENS" }] }));
-    await expect(provider().generateStructured(request(), validator)).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE", message: expect.stringContaining("cut short") });
+    await expect(provider().generateStructured(request(), validator)).rejects.toMatchObject({ code: "AI_RESPONSE_TRUNCATED", message: expect.stringContaining("cut short") });
 
     generateContent.mockResolvedValue(reply("", { candidates: [{ finishReason: "SAFETY" }] }));
-    await expect(provider().generateText(request())).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE", diagnostic: "finishReason: SAFETY" });
+    await expect(provider().generateText(request())).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE", diagnostic: "finishReason=SAFETY" });
 
     generateContent.mockResolvedValue({ text: "", promptFeedback: { blockReason: "SAFETY" }, candidates: [] });
-    await expect(provider().generateText(request())).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE", diagnostic: "blockReason: SAFETY" });
+    await expect(provider().generateText(request())).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE", diagnostic: "blockReason=SAFETY" });
 
     generateContent.mockResolvedValue({ text: "", candidates: [{ finishReason: "STOP" }] });
-    await expect(provider().generateText(request())).rejects.toMatchObject({ diagnostic: "empty response" });
+    await expect(provider().generateText(request())).rejects.toMatchObject({ code: "AI_RESPONSE_EMPTY", diagnostic: "empty response" });
   });
 
   it("surfaces cancellation and timeout distinctly", async () => {

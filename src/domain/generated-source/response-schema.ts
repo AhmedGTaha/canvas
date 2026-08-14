@@ -23,7 +23,9 @@ export const generatedSourceProperty = {
 export const mediaIdsProperty = {
   type: "array",
   maxItems: 20,
-  items: { type: "string", description: "A Media UUID from approvedMedia, exactly as supplied." },
+  // `format` is supported by Gemini's responseJsonSchema. Keeping it here as well as
+  // in Zod prevents the model from treating a descriptive UUID hint as arbitrary text.
+  items: { type: "string", format: "uuid", description: "A Media UUID from approvedMedia, exactly as supplied." },
   description: "Every CanvasImage mediaId used in the source, and nothing else.",
 } as const;
 

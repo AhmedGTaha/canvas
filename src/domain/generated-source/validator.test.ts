@@ -79,7 +79,7 @@ export default function GeneratedNavbar(){return <nav className="c-navbar"><div 
     ["malformed TSX", `export default function B(){return <nav>}`],
     ["no default export", `export function B(){return <nav/>}`],
   ])("rejects %s in block source", async (_name, sourceCode) => {
-    await expect(validateGeneratedBlockSource({ sourceCode, ...base, declaredMediaIds: [] })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    await expect(validateGeneratedBlockSource({ sourceCode, ...base, declaredMediaIds: [] })).rejects.toMatchObject({ code: "AI_GENERATED_SOURCE_INVALID" });
   });
 
   it("rejects source larger than the generated-source limit", async () => {

@@ -82,8 +82,11 @@ export function MediaManager({ projectId, initialFolders, initialAssets, initial
           : <EmptyState
               icon={<ImageIcon size={19} />}
               title={search ? "No images match that search" : currentFolder ? `${currentFolder.name} is empty` : "No images yet"}
-              description={search ? "Try a different word, or clear the search to see everything." : "Upload PNG, JPEG or WebP images to use them in pages and reusable sections."}
-              action={search ? <Button variant="secondary" size="sm" onClick={() => setSearch("")}>Clear search</Button> : <Button size="sm" icon={<Upload size={14} />} onClick={() => fileRef.current?.click()}>Upload images</Button>}
+              /* One way to upload per screen. "Upload images" is already in the
+                 toolbar above and never leaves, so this names it rather than
+                 offering a second button that does the same thing. */
+              description={search ? "Try a different word, or clear the search to see everything." : "Use Upload images above to add PNG, JPEG or WebP files. You can then use them in pages and reusable sections."}
+              action={search ? <Button variant="secondary" size="sm" onClick={() => setSearch("")}>Clear search</Button> : undefined}
             />}
       </div>
     </section>

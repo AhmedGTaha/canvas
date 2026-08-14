@@ -64,7 +64,7 @@ export const generatedPageResponseJsonSchema = {
       items: {
         type: "object", additionalProperties: false, required: ["blockId", "usageKey"],
         properties: {
-          blockId: { type: "string", description: "A Building Block UUID from existingBuildingBlocks, exactly as supplied." },
+          blockId: { type: "string", format: "uuid", description: "A Building Block UUID from existingBuildingBlocks, exactly as supplied." },
           usageKey: { type: "string", description: "Stable lowercase key, unique within this page, using letters, numbers, and hyphens." },
         },
       },

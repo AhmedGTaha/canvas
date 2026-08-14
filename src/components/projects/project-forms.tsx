@@ -37,10 +37,10 @@ export function CreateProjectDialog({ workspaceId, workspaces, triggerLabel = "N
 
 export function RenameProjectDialog({ id, name }: { id: string; name: string }) {
   const [state, action] = useActionState(renameProjectAction, initialState);
-  return <Dialog title="Rename project" triggerLabel="Rename" triggerVariant="secondary">
+  return <Dialog title="Rename website" triggerLabel="Rename" triggerVariant="secondary">
     <form action={action} className="stack">
       <input type="hidden" name="id" value={id} />
-      <Input name="name" label="Project name" defaultValue={name} required maxLength={100} error={state.fieldErrors?.name?.[0]} />
+      <Input name="name" label="Website name" defaultValue={name} required maxLength={100} error={state.fieldErrors?.name?.[0]} />
       {state.error ? <p className="form-error" role="alert">{state.error}</p> : null}
       {state.success ? <p className="form-success" role="status">{state.success}</p> : null}
       <SubmitButton>Save changes</SubmitButton>

@@ -33,11 +33,26 @@ export async function register(input: unknown) {
     await clearRateLimit("sign-up", normalizedEmail);
     return user;
   } catch (error: unknown) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
-      throw new DomainError("CONFLICT", "An account with that email already exists.");
+    if (isUniqueViolation(error)) {
+      throw new DomainError("CONFLICT", "An account already uses that email address. Sign in instead, or use another address.");
     }
     throw error;
   }
+}
+
+/**
+ * Postgres reports a duplicate email as SQLSTATE 23505, but Drizzle wraps the
+ * driver error in a `DrizzleQueryError` and the code moves to `cause`. Checking
+ * only the outer error made the conflict branch unreachable, so a second
+ * sign-up with the same address fell through to the generic failure message
+ * instead of saying the address was taken.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  for (let current = error, depth = 0; current && depth < 4; depth += 1) {
+    if (typeof current === "object" && "code" in current && (current as { code?: unknown }).code === "23505") return true;
+    current = typeof current === "object" && current !== null && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
 }
 
 export async function authenticate(input: unknown) {

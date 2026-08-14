@@ -57,8 +57,15 @@ export function CommandPalette({ projectId, userId = "current", open, commands, 
         {!results.length ? <p className="command-empty">Nothing matches that. Try a page name, or a word like images, brand or export.</p> : results.map((result, index) => {
           const command = result.type === "command" ? result.command : null; const disabled = !hydrated || (command ? !command.availability.available : false);
           return <button type="button" id={`palette-${result.key}`} role="option" aria-selected={index === safeSelected} aria-disabled={disabled} disabled={disabled} className={index === safeSelected ? "selected" : ""} key={result.key} onMouseEnter={() => setSelected(index)} onClick={() => execute(result)}>
-            <span className="command-result-main"><strong>{result.type === "page" ? result.page.name : command!.label}</strong><small>{result.type === "page" ? (result.page.routePath || (result.page.type === "folder" ? "Folder" : "Page")) : (command!.availability.reason || command!.description || command!.category)}</small></span>
-            <span className="command-result-kind">{result.type === "page" ? result.page.type : command!.category}</span>{command?.shortcut ? <kbd>{command.shortcut}</kbd> : <ArrowRight size={13} aria-hidden="true" />}
+            {/* The kind chip repeats the group a result is already filed
+                under; spoken, "Export website, Export, Export" was three words
+                for one command. It stays as a visual grouping cue and the
+                description never falls back to the category. */}
+            <span className="command-result-main"><strong>{result.type === "page" ? result.page.name : command!.label}</strong>{(() => {
+              const detail = result.type === "page" ? (result.page.routePath || (result.page.type === "folder" ? "Folder" : "Page")) : (command!.availability.reason || command!.description);
+              return detail ? <small>{detail}</small> : null;
+            })()}</span>
+            <span className="command-result-kind" aria-hidden="true">{result.type === "page" ? result.page.type : command!.category}</span>{command?.shortcut ? <kbd>{command.shortcut}</kbd> : <ArrowRight size={13} aria-hidden="true" />}
           </button>;
         })}
       </div>

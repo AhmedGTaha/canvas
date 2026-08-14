@@ -483,6 +483,24 @@
 @media (max-width: 767px) {
   .media-layout, .blocks-workspace, .tool-split { display: flex; flex-direction: column; height: auto; min-height: 100%; }
   .media-folders, .blocks-list-panel, .tool-aside { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); }
+  /*
+   * Sections on a phone.
+   *
+   * The list column also carries the empty state and the agent composer, so
+   * capping it at 220px cut both in half; and the builder beside it kept its
+   * desktop toolbar row, which squeezed the title into a three-character
+   * column and pushed the appearance switch off the side of the screen. One
+   * column, each part at its own height, nothing off screen.
+   */
+  .blocks-list-panel { max-height: none; }
+  .tool-main { overflow: visible; }
+  .tool-bar { flex-wrap: wrap; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); }
+  .tool-title { flex: 1 0 100%; }
+  .tool-bar .segmented, .tool-bar .history-controls-dense { flex: none; }
+  .toolbar-divider { display: none; }
+  .preview-canvas { min-height: 320px; padding: var(--sp-5); }
+  .preview-device { min-height: 300px; }
+  .blocks-details { padding: var(--sp-5); }
   .media-toolbar { flex-wrap: wrap; }
   .media-toolbar-actions { width: 100%; margin-left: 0; }
   .media-toolbar-actions .search-field { flex: 1; width: auto; }

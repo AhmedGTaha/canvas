@@ -7,7 +7,19 @@ beforeAll(() => { HTMLDialogElement.prototype.showModal = function () { this.set
 afterEach(() => { cleanup(); run.mockClear(); localStorage.clear(); });
 const run = vi.fn();
 const commands: WorkspaceCommand[] = [
-  { id: "disabled", label: "Archive", category: "Project", icon: "x", permitted: true, availability: { available: false, reason: "Only the owner can archive." }, run },
+  { id: "disabled", label: "Archive", category: "Website", icon: "x", permitted: true, availability: { available: false, reason: "Only the owner can archive." }, run },
   { id: "media", label: "Media", description: "Upload images", category: "Assets", icon: "images", permitted: true, availability: { available: true }, shortcut: "M", run },
 ];
-describe("command palette", () => { it("navigates by keyboard, executes valid results, and restores focus", async () => { const close = vi.fn(); const before = document.createElement("button"); document.body.append(before); before.focus(); render(<CommandPalette projectId="p" open commands={commands} pages={[{ id: "page", name: "Contact", slug: "contact", routePath: "/contact", type: "page" }]} onClose={close} onPage={vi.fn()} />); await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Search pages and actions"))); fireEvent.change(screen.getByLabelText("Search pages and actions"), { target: { value: "media" } }); fireEvent.keyDown(screen.getByLabelText("Search pages and actions"), { key: "Enter" }); expect(run).toHaveBeenCalled(); expect(close).toHaveBeenCalled(); await waitFor(() => expect(document.activeElement).toBe(before)); before.remove(); }); it("shows disabled reasons and never executes a disabled result", async () => { render(<CommandPalette projectId="p" open commands={commands} pages={[]} onClose={vi.fn()} onPage={vi.fn()} />); const input = screen.getByLabelText("Search pages and actions"); fireEvent.change(input, { target: { value: "archive" } }); expect(screen.getByText("Only the owner can archive.")).toBeDefined(); fireEvent.keyDown(input, { key: "Enter" }); expect(run).not.toHaveBeenCalled(); }); });
+describe("command palette", () => { it("navigates by keyboard, executes valid results, and restores focus", async () => { const close = vi.fn(); const before = document.createElement("button"); document.body.append(before); before.focus(); render(<CommandPalette projectId="p" open commands={commands} pages={[{ id: "page", name: "Contact", slug: "contact", routePath: "/contact", type: "page" }]} onClose={close} onPage={vi.fn()} />); await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Search pages and actions"))); fireEvent.change(screen.getByLabelText("Search pages and actions"), { target: { value: "media" } }); fireEvent.keyDown(screen.getByLabelText("Search pages and actions"), { key: "Enter" }); expect(run).toHaveBeenCalled(); expect(close).toHaveBeenCalled(); await waitFor(() => expect(document.activeElement).toBe(before)); before.remove(); }); it("shows disabled reasons and never executes a disabled result", async () => { render(<CommandPalette projectId="p" open commands={commands} pages={[]} onClose={vi.fn()} onPage={vi.fn()} />); const input = screen.getByLabelText("Search pages and actions"); fireEvent.change(input, { target: { value: "archive" } }); expect(screen.getByText("Only the owner can archive.")).toBeDefined(); fireEvent.keyDown(input, { key: "Enter" }); expect(run).not.toHaveBeenCalled(); });
+
+  it("names each result once", async () => {
+    render(<CommandPalette projectId="p" open commands={commands} pages={[]} onClose={vi.fn()} onPage={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Search pages and actions"), { target: { value: "media" } });
+    // The group chip is a visual cue; spoken, "Media, Upload images, Assets"
+    // ended in a word the reader did not need and used to hear twice.
+    const option = screen.getByRole("option", { name: /Media/ });
+    expect(option.textContent).toContain("Assets");
+    const spoken = [...option.querySelectorAll("*")].filter((node) => node.getAttribute("aria-hidden") !== "true").map((node) => node.textContent).join(" ");
+    expect(spoken.match(/Assets/g)).toBeNull();
+  });
+});

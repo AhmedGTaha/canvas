@@ -2,6 +2,7 @@
 
 import { ChevronDown, ChevronRight, History, Save } from "lucide-react";
 import { useEffect } from "react";
+import { count } from "@/components/ui/plural";
 import { ActivityList, CheckpointList, HistoryMessages, UndoRedoControls, VersionList } from "./history-controls";
 import type { HistoryController } from "./use-history-controller";
 
@@ -49,8 +50,11 @@ export function HistorySidebar({ controller, section, onSection }: { controller:
           icon={<Save size={17} />}
           title="Checkpoints"
           badge={pending ? String(pending) : undefined}
+          badgeLabel={pending ? count(pending, "unsaved change") : undefined}
+          /* The badge already carries the number; repeating it in the sentence
+             beside it read as two different counts that happened to agree. */
           text={pending
-            ? `${pending} ${pending === 1 ? "change" : "changes"} since ${controller.hasCheckpoint ? "your last checkpoint" : "you started"}`
+            ? `Unsaved since ${controller.hasCheckpoint ? "your last checkpoint" : "you started"}`
             : controller.hasCheckpoint ? "Everything is saved in a checkpoint" : "Save or restore the whole website"}
           onToggle={() => toggle("checkpoints")}
         >
@@ -62,11 +66,13 @@ export function HistorySidebar({ controller, section, onSection }: { controller:
   </>;
 }
 
-function Section({ open, icon, title, text, badge, onToggle, children }: { open: boolean; icon: React.ReactNode; title: string; text: string; badge?: string; onToggle: () => void; children: React.ReactNode }) {
+function Section({ open, icon, title, text, badge, badgeLabel, onToggle, children }: { open: boolean; icon: React.ReactNode; title: string; text: string; badge?: string; badgeLabel?: string; onToggle: () => void; children: React.ReactNode }) {
   return <div className={`ws-side-section${open ? " open" : ""}`}>
     <button type="button" className="ws-side-link" aria-expanded={open} onClick={onToggle}>
       {icon}
-      <span><strong>{title}{badge ? <em className="ws-side-badge">{badge}</em> : null}</strong><small>{text}</small></span>
+      {/* A bare number reads as "Checkpoints 6" out loud, which is a version,
+          not a count. The label says what the number counts. */}
+      <span><strong>{title}{badge ? <em className="ws-side-badge" aria-label={badgeLabel}>{badge}</em> : null}</strong><small>{text}</small></span>
       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
     </button>
     {open ? <div className="ws-side-section-body">{children}</div> : null}

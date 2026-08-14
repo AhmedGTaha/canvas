@@ -14,7 +14,7 @@ export type WorkspaceCommandContext = {
 
 export const WORKSPACE_SHORTCUTS = [
   { id: "navigation.palette", label: "Open the command palette", shortcut: "Ctrl / ⌘ + K" },
-  { id: "navigation.explorer", label: "Show or hide the website explorer", shortcut: "Ctrl / ⌘ + B" },
+  { id: "navigation.explorer", label: "Show or hide the website sidebar", shortcut: "Ctrl / ⌘ + B" },
   { id: "agent.toggle", label: "Show or hide Canvas Agent", shortcut: "Ctrl / ⌘ + J" },
 ] as const;
 
@@ -27,7 +27,7 @@ export function createWorkspaceCommands(c: WorkspaceCommandContext): WorkspaceCo
   const panel = (name: string) => () => c.openPanel(name);
   return [
     command({ id: "navigation.palette", label: "Open command palette", category: "Navigation", icon: "search", shortcut: WORKSPACE_SHORTCUTS[0].shortcut, run: c.openPalette, synonyms: ["search", "actions"] }),
-    command({ id: "navigation.projects", label: "All projects", category: "Navigation", icon: "grid", target: "/dashboard", run: () => c.navigate("/dashboard"), synonyms: ["dashboard"] }),
+    command({ id: "navigation.projects", label: "All websites", category: "Navigation", icon: "grid", target: "/dashboard", run: () => c.navigate("/dashboard"), synonyms: ["dashboard", "projects"] }),
     command({ id: "navigation.workspaces", label: "Workspaces", category: "Navigation", icon: "grid", target: "/workspaces", run: () => c.navigate("/workspaces") }),
     command({ id: "pages.manage", label: "Website structure", description: "Browse pages and folders", category: "Pages", icon: "tree", run: c.openWebsite, synonyms: ["pages", "folders", "routes", "slugs"] }),
     command({ id: "pages.new", label: "New page", description: "Create a page inline in Website", category: "Pages", icon: "file-plus", run: c.newPage }),
@@ -40,7 +40,7 @@ export function createWorkspaceCommands(c: WorkspaceCommandContext): WorkspaceCo
     command({ id: "history.undo", label: "Undo last change", category: "History", icon: "undo", availability: c.canUndo ? yes : no("There is nothing to undo."), run: c.undo }),
     command({ id: "history.redo", label: "Redo last change", category: "History", icon: "redo", availability: c.canRedo ? yes : no("There is nothing to redo."), run: c.redo }),
     command({ id: "history.versions", label: "Version history", category: "History", icon: "history", availability: c.hasPage ? yes : no("Select a page first."), run: c.openHistory }),
-    command({ id: "history.checkpoints", label: "Project checkpoints", category: "History", icon: "save", run: c.openCheckpoints, synonyms: ["snapshot", "restore"] }),
+    command({ id: "history.checkpoints", label: "Checkpoints", description: "Save or restore the whole website", category: "History", icon: "save", run: c.openCheckpoints, synonyms: ["snapshot", "restore"] }),
     command({ id: "preview.refresh", label: "Refresh preview", category: "Preview", icon: "refresh", run: c.refreshPreview }),
     command({ id: "preview.light", label: "Light preview appearance", category: "Preview", icon: "sun", run: () => c.setTheme("light"), synonyms: ["theme"] }),
     command({ id: "preview.dark", label: "Dark preview appearance", category: "Preview", icon: "moon", run: () => c.setTheme("dark"), synonyms: ["theme"] }),
@@ -49,12 +49,12 @@ export function createWorkspaceCommands(c: WorkspaceCommandContext): WorkspaceCo
     command({ id: "preview.mobile", label: "Preview on phone", category: "Preview", icon: "phone", run: () => c.setDevice("mobile") }),
     command({ id: "preview.fullscreen", label: "Toggle full screen", category: "Preview", icon: "maximize", run: c.toggleFullScreen }),
     command({ id: "collaboration.manage", label: "Collaborators", category: "Collaboration", icon: "users", run: panel("collaborators") }),
-    command({ id: "project.details", label: "Website settings", category: "Project", icon: "settings", run: panel("overview"), synonyms: ["details"] }),
-    command({ id: "project.agent-guidance", label: "Agent guidance", category: "Project", icon: "sparkles", run: panel("settings"), synonyms: ["instructions"] }),
+    command({ id: "project.details", label: "Website settings", category: "Website", icon: "settings", run: panel("overview"), synonyms: ["details"] }),
+    command({ id: "project.agent-guidance", label: "Agent guidance", category: "Website", icon: "sparkles", run: panel("settings"), synonyms: ["instructions"] }),
     command({ id: "export.open", label: "Export website", category: "Export", icon: "download", run: panel("export"), availability: c.activeWork ? no("Wait for the current update to finish.") : yes }),
     command({ id: "account.open", label: "Account", category: "Account", icon: "user", target: "/account", run: () => c.navigate("/account") }),
     command({ id: "account.shortcuts", label: "Keyboard shortcuts", category: "Account", icon: "keyboard", run: panel("shortcuts"), synonyms: ["keys", "help"] }),
     command({ id: "account.sign-out", label: "Sign out", category: "Account", icon: "logout", run: c.signOut }),
-    command({ id: "navigation.explorer", label: c.explorerOpen ? "Hide website explorer" : "Show website explorer", category: "Navigation", icon: "panel-left", shortcut: WORKSPACE_SHORTCUTS[1].shortcut, run: c.toggleExplorer }),
+    command({ id: "navigation.explorer", label: c.explorerOpen ? "Hide the website sidebar" : "Show the website sidebar", category: "Navigation", icon: "panel-left", shortcut: WORKSPACE_SHORTCUTS[1].shortcut, run: c.toggleExplorer }),
   ];
 }

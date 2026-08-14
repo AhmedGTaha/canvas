@@ -51,6 +51,31 @@ describe("responsive layout", () => {
     expect(small).toContain(".color-grid, .logo-picker-grid { grid-template-columns: 1fr; }");
   });
 
+  it("gives Reusable sections a phone layout, not a squeezed desktop one", () => {
+    const small = panels.slice(panels.lastIndexOf("@media (max-width: 767px)"));
+    // The list column also holds the empty state and the agent composer, so it
+    // is not capped at the height the folder lists are capped at.
+    expect(small).toContain(".blocks-list-panel { max-height: none; }");
+    // The builder's toolbar wraps instead of pushing the appearance switch and
+    // the reload button off the side of the screen.
+    expect(small).toMatch(/\.tool-bar \{ flex-wrap: wrap;/);
+    expect(small).toMatch(/\.tool-title \{ flex: 1 0 100%; \}/);
+    // And the section preview keeps a height worth looking at.
+    expect(small).toMatch(/\.preview-device \{ min-height: \d+px; \}/);
+  });
+
+  it("keeps the preview's own controls clear of the agent overlay", () => {
+    // Between 768 and 1279 the agent floats over the stage. The canvas already
+    // padded itself out from under it; the toolbar above it did not, so zoom,
+    // screen size and the overflow menu sat underneath and could not be used.
+    const compact = workspace.slice(workspace.indexOf("@media (max-width: 1279px)"), workspace.lastIndexOf("@media (max-width: 767px)"));
+    expect(compact).toMatch(/\.ws-shell\[data-agent="on"\] \.ws-canvas \{ padding-right/);
+    // The overlay starts below the preview toolbar rather than on top of it.
+    expect(compact).toMatch(/top: calc\(var\(--ws-title-h\) \+ var\(--ws-stagebar-h\)\)/);
+    expect(workspace).toMatch(/--ws-stagebar-h: \d+px/);
+    expect(workspace).toMatch(/\.ws-stage-bar \{[^}]*height: var\(--ws-stagebar-h\)/);
+  });
+
   it("lets a tall dialog scroll instead of running off the viewport", () => {
     // <dialog> is sized by its content, so without a cap the bottom of a long
     // form (page settings, the image picker) becomes unreachable.

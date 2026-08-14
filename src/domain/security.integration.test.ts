@@ -219,7 +219,7 @@ describe.sequential("security boundaries", () => {
       `export default function Page(){document.cookie="a=b";return <main/>}`,
       `export default function Page(){return <a href="javascript:alert(1)">x</a>}`,
     ]) {
-      await expect(generateHome(owner.id, project.id, home.id, unsafe)).rejects.toThrow(/AI_PROVIDER_INVALID_RESPONSE/);
+      await expect(generateHome(owner.id, project.id, home.id, unsafe)).rejects.toThrow(/AI_GENERATED_SOURCE_INVALID/);
     }
     expect(await db.select().from(pageVersions)).toHaveLength(0);
   });

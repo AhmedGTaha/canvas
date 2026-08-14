@@ -7,11 +7,14 @@ import { Section } from "@/components/ui/panel";
 import { Textarea } from "@/components/ui/form-controls";
 import { AI_LIMITS } from "@/domain/ai/limits";
 
-type Status = "Saved" | "Saving" | "Error";
+/* "Idle" is the state a form is in before anyone has touched it. Starting at
+   "Saved" put a green tick on an empty field nobody had edited, which claims
+   something that never happened. */
+type Status = "Idle" | "Saved" | "Saving" | "Error";
 
 export function ProjectInstructionsEditor({ projectId, initialContent, initialRevision }: { projectId: string; initialContent: string; initialRevision: number }) {
   const [content, setContent] = useState(initialContent);
-  const [status, setStatus] = useState<Status>("Saved");
+  const [status, setStatus] = useState<Status>("Idle");
   const [error, setError] = useState<string>();
   const valueRef = useRef(content); const revisionRef = useRef(initialRevision); const saving = useRef(false); const dirty = useRef(false); const initial = useRef(true);
   const flush = useCallback(async () => {
@@ -34,7 +37,7 @@ export function ProjectInstructionsEditor({ projectId, initialContent, initialRe
   return <Section
     title="What the agent should always know"
     description="Guidance here applies to every page and every change on this website. It saves as you type."
-    actions={<span className={`save-indicator save-${status.toLowerCase()}`} role="status" aria-live="polite"><Icon className={status === "Saving" ? "spin" : undefined} size={13} />{status}</span>}
+    actions={status === "Idle" ? undefined : <span className={`save-indicator save-${status.toLowerCase()}`} role="status" aria-live="polite"><Icon className={status === "Saving" ? "spin" : undefined} size={13} />{status}</span>}
   >
     <Textarea
       id="project-instructions"

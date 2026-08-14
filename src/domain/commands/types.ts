@@ -1,6 +1,6 @@
 export const COMMAND_CATEGORIES = [
   "Navigation", "Pages", "Assets", "Design", "Reusable sections", "Agent",
-  "History", "Preview", "Collaboration", "Project", "Export", "Account",
+  "History", "Preview", "Collaboration", "Website", "Export", "Account",
 ] as const;
 
 export type CommandCategory = (typeof COMMAND_CATEGORIES)[number];

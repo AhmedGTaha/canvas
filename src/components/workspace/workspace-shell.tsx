@@ -20,6 +20,7 @@ import { notePanelPushed, panelHref } from "./panel-url";
 import { PreviewStage, type Device } from "./preview-stage";
 import { TitleBar } from "./title-bar";
 import { breakpointFor, DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout, type WorkspaceBreakpoint, type WorkspaceLayout, type WorkspaceActivity } from "./workspace-layout";
+import { isActiveJobStatus, isWorking, workLabel, workPhase } from "./work-state";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
 import { initialPreviewRoute } from "@/generated-runtime/runtime/router";
@@ -32,7 +33,6 @@ type AgentState = { conversation: { id: string } | null; messages: AgentMessage[
 type ElementSelection = Omit<PreviewElementSelection, "type" | "sessionId" | "instanceId">;
 type ComposerTarget = { kind: "page"; id: string } | { kind: "block"; id: string; name: string };
 
-const ACTIVE_JOB_STATUSES = new Set(["queued", "preparing_context", "generating", "validating", "applying"]);
 const PRIMARY_RANGE = [224, 440] as const;
 const AGENT_RANGE = [320, 640] as const;
 
@@ -120,6 +120,33 @@ export function WorkspaceShell({
   const requestCreate = useCallback((type: "page" | "folder") => { selectActivity("website"); createKey.current += 1; setCreateRequest({ type, key: createKey.current }); }, [selectActivity]);
 
   const [resizing, setResizing] = useState<"explorer" | "agent" | null>(null);
+
+  /**
+   * Keyboard resizing, and the semantics that make the handle mean something.
+   *
+   * The two drag strips were tab stops that did nothing without a pointer and
+   * reported no role, no orientation and no value. They are window splitters:
+   * arrows move them a step, Home and End take them to their limits.
+   */
+  const nudgePane = useCallback((pane: "explorer" | "agent", delta: number | "min" | "max") => {
+    const range = pane === "explorer" ? PRIMARY_RANGE : AGENT_RANGE;
+    const key = pane === "explorer" ? "primaryWidth" : "agentWidth";
+    const current = layoutRef.current[key];
+    const next = delta === "min" ? range[0] : delta === "max" ? range[1] : Math.min(range[1], Math.max(range[0], current + delta));
+    if (next === current) return;
+    saveLayout({ ...layoutRef.current, [key]: next });
+  }, [saveLayout]);
+  const resizeKeys = useCallback((pane: "explorer" | "agent") => (event: React.KeyboardEvent) => {
+    // The explorer grows to the right and the agent grows to the left, so the
+    // same arrow key has to mean "wider" on one and "narrower" on the other.
+    const direction = pane === "explorer" ? 1 : -1;
+    const step = event.shiftKey ? 48 : 16;
+    if (event.key === "ArrowRight") { event.preventDefault(); nudgePane(pane, step * direction); }
+    else if (event.key === "ArrowLeft") { event.preventDefault(); nudgePane(pane, -step * direction); }
+    else if (event.key === "Home") { event.preventDefault(); nudgePane(pane, "min"); }
+    else if (event.key === "End") { event.preventDefault(); nudgePane(pane, "max"); }
+  }, [nudgePane]);
+
   useEffect(() => {
     if (!resizing) return;
     function onMove(event: PointerEvent) {
@@ -296,7 +323,7 @@ export function WorkspaceShell({
     return () => { active = false; window.clearTimeout(timer); };
   }, [loadAgentState, loadQueue, stateUrl, target, targetKey]);
 
-  const activeJob = agentState?.job && ACTIVE_JOB_STATUSES.has(agentState.job.status) ? agentState.job : null;
+  const activeJob = agentState?.job && isActiveJobStatus(agentState.job.status) ? agentState.job : null;
   useEffect(() => {
     if (!stateUrl || !activeJob) return;
     const timer = window.setInterval(() => { void loadAgentState(stateUrl).catch(() => undefined); }, 1_500);
@@ -306,7 +333,8 @@ export function WorkspaceShell({
     const job = agentState?.job;
     if (!job || job.status !== "completed" || completedRefresh.current === job.id) return;
     completedRefresh.current = job.id;
-    setPrompt(""); setSelectedMediaIds([]);
+    // The composer is cleared when a request is sent, not when it finishes:
+    // clearing here threw away anything typed while the agent was working.
     // Finishing a generation is the moment a checkpoint is worth offering, so a
     // dismissal from before the job does not hide it again.
     setCheckpointNudgeFrom(0);
@@ -324,7 +352,11 @@ export function WorkspaceShell({
         : await fetch(stateUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const value = await response.json() as { error?: string };
       if (!response.ok) throw new Error(value.error || "The agent could not start this update.");
-      if (activeJob) { setPrompt(""); setSelectedMediaIds([]); await loadQueue(target); } else await loadAgentState(stateUrl);
+      // Whatever was sent leaves the composer immediately. Leaving it in place
+      // while the job ran read as a send that had failed, and pressing Enter
+      // again queued the same request a second time.
+      setPrompt(""); setSelectedMediaIds([]);
+      if (activeJob) await loadQueue(target); else await loadAgentState(stateUrl);
     } catch (cause) { setAgentError(cause instanceof Error ? cause.message : "The agent could not start this update."); }
     finally { setAgentLoading(false); }
   }
@@ -382,6 +414,14 @@ export function WorkspaceShell({
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && view.fullScreen) { dispatchView({ type: "EXIT_FULL_SCREEN" }); return; }
+      // On a laptop the agent floats over the website. Escape closes it, the
+      // same key that closes every other thing layered over the workspace.
+      if (event.key === "Escape" && breakpoint === "compact" && layout.agent && !panelIsOpen && !paletteOpen && !taskCenterOpen && !reviewJobId) {
+        const target = event.target as HTMLElement | null;
+        if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+        toggleAgent();
+        return;
+      }
       const meta = event.metaKey || event.ctrlKey;
       if (!meta) return;
       const key = event.key.toLowerCase();
@@ -391,7 +431,18 @@ export function WorkspaceShell({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleAgent, toggleExplorer, view.fullScreen]);
+  }, [breakpoint, layout.agent, paletteOpen, panelIsOpen, reviewJobId, taskCenterOpen, toggleAgent, toggleExplorer, view.fullScreen]);
+
+  /*
+   * One answer to "what is happening right now", shared by the status bar, the
+   * title bar, the preview and the agent. A job on another page still counts:
+   * the footer saying "Website up to date" next to its own "1 active" button
+   * was the contradiction this removes.
+   */
+  const otherWorkRunning = taskSummary.some((task) => task.status === "active");
+  const phase = workPhase({ jobStatus: activeJob?.status ?? (otherWorkRunning ? "generating" : undefined), previewStatus: status });
+  const phaseLabel = workLabel(phase);
+  const working = isWorking(phase);
 
   const built = target?.kind === "block" || currentPage?.contentStatus === "generated";
   const showCheckpointNudge = shouldSuggestCheckpoint(history.pendingChanges, checkpointNudgeFrom);
@@ -412,13 +463,25 @@ export function WorkspaceShell({
     {/* The workspace is one screen with several regions and no visible page
         title; this names it once for anyone navigating by heading. */}
     <h1 className="sr-only">{projectName} — website workspace</h1>
-    <TitleBar workspaceName={workspaceName} projectName={projectName} pageName={currentPage?.name ?? "No page"} userName={userName} canShare={canManageProject} activeTasks={taskSummary.filter((task) => task.status === "active").length} failedTasks={taskSummary.filter((task) => task.status === "failed").length} saveState={activeJob ? "Canvas is updating your website…" : projectStatus === "active" ? undefined : projectStatus} agentOpen={layout.agent} onSearch={() => setPaletteOpen(true)} onShare={() => openPanel("collaborators")} onTasks={() => setTaskCenterOpen(true)} onToggleAgent={toggleAgent} onSignOut={() => startTransition(() => { void signOutAction(); })} />
+    <TitleBar workspaceName={workspaceName} projectName={projectName} pageName={currentPage?.name ?? "No page"} userName={userName} canShare={canManageProject} activeTasks={taskSummary.filter((task) => task.status === "active").length} failedTasks={taskSummary.filter((task) => task.status === "failed").length} saveState={working ? phaseLabel : projectStatus === "active" ? undefined : projectStatus} agentOpen={layout.agent} onSearch={() => setPaletteOpen(true)} onShare={() => openPanel("collaborators")} onTasks={() => setTaskCenterOpen(true)} onToggleAgent={toggleAgent} onSignOut={() => startTransition(() => { void signOutAction(); })} />
 
     <div className="ws-body">
       <ActivityBar activity={layout.activity} sidebarOpen={layout.primary} onActivity={selectActivity} onSettings={() => openPanel("overview")} onHelp={() => openPanel("shortcuts")} />
       <aside className="ws-pane ws-pane-l" aria-label={`${layout.activity} tools`}>
         <ContextSidebar projectId={projectId} activity={layout.activity} mediaAssets={mediaAssets} mediaFolders={mediaFolders} blocks={session.manifest.blocks} history={history} historySection={historySection} onOpenPanel={openPanel} onNewBlock={() => openPanel("blocks")} onHistorySection={setHistorySection} website={<Explorer projectId={projectId} nodes={nodes} currentPageId={currentPageId} routes={routesByPageId} onSelectPage={selectPage} onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }} onOpenPagesPanel={(nodeId) => openPanel("pages", nodeId ? { node: nodeId } : undefined)} onTreeChanged={onTreeChanged} createRequest={createRequest} />} />
-        <button type="button" className="ws-resize ws-resize-r" aria-label="Resize project tools" onPointerDown={() => setResizing("explorer")} />
+        <div
+          className="ws-resize ws-resize-r"
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label="Resize the website sidebar"
+          aria-valuenow={Math.round(layout.primaryWidth)}
+          aria-valuemin={PRIMARY_RANGE[0]}
+          aria-valuemax={PRIMARY_RANGE[1]}
+          aria-valuetext={`${Math.round(layout.primaryWidth)} pixels wide`}
+          onPointerDown={() => setResizing("explorer")}
+          onKeyDown={resizeKeys("explorer")}
+        />
       </aside>
 
       <PreviewStage
@@ -436,6 +499,8 @@ export function WorkspaceShell({
         theme={view.theme}
         zoom={layout.zoom}
         fit={layout.fit}
+        workLabel={phaseLabel}
+        building={working && Boolean(activeJob) && target?.kind === "page" && !built}
         canBack={routeHistory.index > 0}
         canForward={routeHistory.index < routeHistory.entries.length - 1}
         onFrameLoad={onFrameLoad}
@@ -457,7 +522,19 @@ export function WorkspaceShell({
       />
 
       <aside className="ws-pane ws-pane-r" aria-label="Canvas Agent">
-        <button type="button" className="ws-resize ws-resize-l" aria-label="Resize the agent panel" onPointerDown={() => setResizing("agent")} />
+        <div
+          className="ws-resize ws-resize-l"
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label="Resize the agent panel"
+          aria-valuenow={Math.round(layout.agentWidth)}
+          aria-valuemin={AGENT_RANGE[0]}
+          aria-valuemax={AGENT_RANGE[1]}
+          aria-valuetext={`${Math.round(layout.agentWidth)} pixels wide`}
+          onPointerDown={() => setResizing("agent")}
+          onKeyDown={resizeKeys("agent")}
+        />
         <AgentPanel
           target={agentTarget}
           selection={selection}
@@ -488,9 +565,9 @@ export function WorkspaceShell({
     </div>
 
     <footer className="ws-statusbar">
-      <span className={`ws-sb-note ${status === "error" ? "ws-sb-bad" : status === "ready" ? "ws-sb-ok" : ""}`}>
-        {status === "error" ? <CircleAlert size={12} aria-hidden="true" /> : status === "loading" ? <LoaderCircle className="spin" size={12} aria-hidden="true" /> : <CircleCheck size={12} aria-hidden="true" />}
-        {status === "error" ? "Preview unavailable" : status === "loading" ? "Loading the website…" : "Website up to date"}
+      <span className={`ws-sb-note ${phase === "error" ? "ws-sb-bad" : phase === "idle" ? "ws-sb-ok" : ""}`}>
+        {phase === "error" ? <CircleAlert size={12} aria-hidden="true" /> : phase === "idle" ? <CircleCheck size={12} aria-hidden="true" /> : <LoaderCircle className="spin" size={12} aria-hidden="true" />}
+        {phaseLabel}
       </span>
       <span className="ws-sb-sep" aria-hidden="true" />
       <span className="ws-sb-note"><FileText size={12} aria-hidden="true" />{currentPage?.name ?? "No page open"}</span>

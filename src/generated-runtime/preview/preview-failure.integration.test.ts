@@ -289,7 +289,7 @@ export default function GlobalNavbar(){return <nav data-canvas-id="navbar-root" 
     const job = await processBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
     expect(job).toMatchObject({
       status: "failed",
-      errorCode: "AI_PROVIDER_INVALID_RESPONSE",
+      errorCode: "AI_GENERATED_SOURCE_INVALID",
       errorMessage: "/about and /contact do not exist in this project yet. Create those pages first or ask Canvas to use your existing pages.",
       errorDiagnostic: "invalid internal routes: /about, /contact",
       provider: "fixture",

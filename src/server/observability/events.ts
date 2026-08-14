@@ -22,12 +22,12 @@ export const observe = {
     metrics.count("invite.lifecycle", { action });
     emit(`invite.${action}`, fields, action === "rejected" ? "warn" : "info");
   },
-  generationJob(action: "created" | "started" | "completed" | "failed" | "cancelled" | "retried", fields: { jobId: string; projectId: string; operation?: string; targetId?: string | null; reason?: string; durationMs?: number }) {
+  generationJob(action: "created" | "started" | "completed" | "failed" | "cancelled" | "retried", fields: { jobId: string; projectId: string; operation?: string; targetId?: string | null; reason?: string; durationMs?: number; pipelineStage?: string; provider?: string | null; model?: string | null; diagnostic?: string | null }) {
     metrics.count("generation.job", { action, operation: fields.operation });
     if (typeof fields.durationMs === "number") metrics.observe("generation.duration_ms", fields.durationMs, { operation: fields.operation });
     emit(`generation.${action}`, fields, action === "failed" ? "error" : "info");
   },
-  validationFailed(kind: "page" | "block" | "export" | "restore", fields: { projectId?: string; jobId?: string; entityId?: string; reason?: string; diagnostic?: string }) {
+  validationFailed(kind: "page" | "block" | "export" | "restore", fields: { projectId?: string; jobId?: string; entityId?: string; reason?: string; diagnostic?: string | null; pipelineStage?: string; provider?: string | null; model?: string | null }) {
     metrics.count("validation.failure", { kind });
     emit("validation.failed", { kind, ...fields }, "warn");
   },
