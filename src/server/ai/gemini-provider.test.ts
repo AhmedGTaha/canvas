@@ -202,9 +202,9 @@ describe("Gemini structured responses", () => {
     const missing = await provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema).catch((error: AIError) => error);
     expect(missing).toMatchObject({ code: "AI_RESPONSE_SCHEMA_INVALID", diagnostic: expect.stringContaining("stage=response_schema") });
 
-    generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 1, sourceCode: "x", referencedMediaIds: ["invented-media-id"], summary: { headline: "Built", changes: [], limitations: [] } })));
-    const invalidReference = await provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema).catch((error: AIError) => error);
-    expect(invalidReference).toMatchObject({ code: "AI_RESPONSE_SCHEMA_INVALID", diagnostic: expect.stringContaining("referencedMediaIds.0:invalid_format(uuid)") });
+    generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 1, sourceCode: "x", referencedMediaIds: Array.from({ length: 21 }, () => "11111111-1111-4111-8111-111111111111"), summary: { headline: "Built", changes: [], limitations: [] } })));
+    const tooManyReferences = await provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema).catch((error: AIError) => error);
+    expect(tooManyReferences).toMatchObject({ code: "AI_RESPONSE_SCHEMA_INVALID", diagnostic: expect.stringContaining("referencedMediaIds:too_big") });
   });
 
   it("fails clearly when the response was truncated or blocked", async () => {

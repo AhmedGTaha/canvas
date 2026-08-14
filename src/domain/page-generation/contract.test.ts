@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { blockChangeSummarySchema } from "@/domain/block-generation/contract";
 import { generatedPageResponseSchema, pageChangeSummarySchema } from "./contract";
@@ -90,8 +91,14 @@ describe("generated page response strictness", () => {
     expect(() => generatedPageResponseSchema.parse(pageResponse({ sourceCode: "x".repeat(102_401) }))).toThrow();
   });
 
-  it("keeps rejecting a non-UUID media reference", () => {
-    expect(() => generatedPageResponseSchema.parse(pageResponse({ referencedMediaIds: ["not-a-uuid"] }))).toThrow();
+  it("drops a non-UUID media reference instead of failing the whole response", () => {
+    const parsed = generatedPageResponseSchema.parse(pageResponse({ referencedMediaIds: [mediaId, "not-a-uuid"] }));
+    expect(parsed.referencedMediaIds).toEqual([mediaId]);
+  });
+
+  it("keeps rejecting more media references than the contract allows", () => {
+    const ids = Array.from({ length: 21 }, () => randomUUID());
+    expect(() => generatedPageResponseSchema.parse(pageResponse({ referencedMediaIds: ids }))).toThrow();
   });
 
   it("keeps rejecting a malformed block usage key", () => {

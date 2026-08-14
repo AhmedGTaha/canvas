@@ -33,6 +33,22 @@ export const pageChangeSummarySchema = z.object({
   limitations: summaryList(4),
 }).strict();
 
+export const MEDIA_REFERENCE_LIMIT = 20;
+
+/**
+ * Gemini does not enforce `format: "uuid"` inside `responseJsonSchema`, so a model that
+ * declares one invented reference alongside real ones (a filename, a placeholder) fails
+ * the whole job at the schema stage, before the source validator — the real authority on
+ * Media references — ever runs. A non-UUID entry cannot name an approved Media asset, so
+ * it carries no meaning and is dropped, exactly as over-length summary prose is clamped.
+ * Nothing is widened: `validateGeneratedSource` still derives the manifest from the
+ * source, rejects any mediaId that is not approved, and still fails a declaration that
+ * disagrees with the source.
+ */
+export const declaredMediaIdsSchema = z.array(z.string())
+  .transform((ids) => ids.filter((id) => z.uuid().safeParse(id).success))
+  .pipe(z.array(z.uuid()).max(MEDIA_REFERENCE_LIMIT));
+
 export const PAGE_BLOCK_USAGE_LIMIT = 20;
 
 export const generatedBlockUsageSchema = z.object({
@@ -43,7 +59,7 @@ export const generatedBlockUsageSchema = z.object({
 export const generatedPageResponseSchema = z.object({
   schemaVersion: z.literal(1),
   sourceCode: z.string().min(1).refine((value) => Buffer.byteLength(value, "utf8") <= PAGE_SOURCE_MAX_BYTES, "Generated page source exceeds 100 KB."),
-  referencedMediaIds: z.array(z.uuid()).max(20),
+  referencedMediaIds: declaredMediaIdsSchema,
   blockUsages: z.array(generatedBlockUsageSchema).max(PAGE_BLOCK_USAGE_LIMIT).default([]),
   targetCanvasId: z.string().max(64).nullish().transform((value) => value ?? null),
   targetRemoved: z.boolean().nullish().transform((value) => value ?? false),
