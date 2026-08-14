@@ -4,10 +4,33 @@ import { changeSummaryProperty, generatedSourceProperty, mediaIdsProperty, schem
 export const PAGE_SOURCE_MAX_BYTES = 102_400;
 export const PAGE_MEDIA_ATTACHMENT_LIMIT = 5;
 
+export const SUMMARY_HEADLINE_MAX = 120;
+export const SUMMARY_ITEM_MAX = 200;
+
+/**
+ * The change summary is display-only prose. Providers routinely overshoot its character
+ * limits by a few words while returning otherwise valid source, and `maxLength` is not a
+ * keyword Gemini honours, so the limit cannot be enforced at the provider. Clamping here
+ * keeps a cosmetic overrun from failing the whole generation job, exactly as
+ * `repairGeneratedCanvasIds` absorbs cosmetic ID deviations. The limits themselves stay:
+ * `changeSets.summary` is a varchar(300) built from a page name plus this headline.
+ */
+function clamp(value: string, limit: number) { return value.trim().slice(0, limit).trimEnd(); }
+
+const summaryHeadline = z.string()
+  .transform((value) => clamp(value.replace(/\s+/g, " "), SUMMARY_HEADLINE_MAX))
+  .pipe(z.string().min(1).max(SUMMARY_HEADLINE_MAX));
+
+// Entries that are blank once trimmed carry no meaning, so they are dropped rather than
+// rejected — and dropped before the array limit, which counts real entries only.
+const summaryList = (max: number) => z.array(z.string())
+  .transform((items) => items.map((item) => clamp(item, SUMMARY_ITEM_MAX)).filter((item) => item.length > 0))
+  .pipe(z.array(z.string().min(1).max(SUMMARY_ITEM_MAX)).max(max));
+
 export const pageChangeSummarySchema = z.object({
-  headline: z.string().trim().min(1).max(120),
-  changes: z.array(z.string().trim().min(1).max(200)).max(6),
-  limitations: z.array(z.string().trim().min(1).max(200)).max(4),
+  headline: summaryHeadline,
+  changes: summaryList(6),
+  limitations: summaryList(4),
 }).strict();
 
 export const PAGE_BLOCK_USAGE_LIMIT = 20;

@@ -28,11 +28,11 @@ function pageUsing(usages: Array<{ blockId: string; usageKey: string }>) {
 /** Deterministic provider so Phase 9 behaviour is verified without real AI credentials. */
 class FixtureProvider implements AIProvider {
   name = "fixture"; model = "fixture-1";
-  constructor(private readonly source: string, private readonly blockUsages: Array<{ blockId: string; usageKey: string }> = []) {}
+  constructor(private readonly source: string, private readonly blockUsages: Array<{ blockId: string; usageKey: string }> = [], private readonly summary: unknown = { headline: "Updated", changes: ["Applied the requested change"], limitations: [] }) {}
   async generateText(): Promise<AIResponse> { return { text: "unused", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     // Block responses have no blockUsages field: a block may not embed another block.
-    const value = { schemaVersion: 1, sourceCode: this.source, referencedMediaIds: [], ...(this.blockUsages.length ? { blockUsages: this.blockUsages } : {}), summary: { headline: "Updated", changes: ["Applied the requested change"], limitations: [] } };
+    const value = { schemaVersion: 1, sourceCode: this.source, referencedMediaIds: [], ...(this.blockUsages.length ? { blockUsages: this.blockUsages } : {}), summary: this.summary };
     return { text: JSON.stringify(value), structuredData: validator.parse(value), provider: this.name, model: this.model, usage: { totalTokens: 10 } };
   }
 }
@@ -81,6 +81,19 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect(compiled?.bundle).toContain("Navbar version one");
     const manifest = (await new PreviewManifestService().createSession(owner.id, project.id)).manifest;
     expect(manifest.blocks[navbar.id]).toMatchObject({ isGlobal: true, contentStatus: "generated", activeVersionId: versions[0]!.id });
+  });
+
+  it("completes a block generation whose summary overruns its character limits", async () => {
+    const { owner, project } = await setup();
+    const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar" });
+    const summary = { headline: "H".repeat(180), changes: ["C".repeat(240)], limitations: ["L".repeat(260)] };
+    const request = await new GenerationJobService().createBlockJob(owner.id, { projectId: project.id, blockId: navbar.id, content: "Create", selectedMediaIds: [] });
+    await claimGenerationJob("worker");
+    const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(navbarV1, [], summary)).process(request.job.id);
+
+    expect(job).toMatchObject({ status: "completed" });
+    const versions = await db.select().from(buildingBlockVersions);
+    expect(versions[0]).toMatchObject({ sourceCode: navbarV1, changeSummary: { headline: "H".repeat(120), changes: ["C".repeat(200)], limitations: ["L".repeat(200)] } });
   });
 
   it("modifies a block into a new version while the previous version stays intact", async () => {
