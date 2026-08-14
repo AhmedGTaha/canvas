@@ -9,5 +9,5 @@ export const metadata: Metadata = { title: "Create account" };
 export default async function SignUpPage({ searchParams }: { searchParams: Promise<{ returnTo?: string }> }) {
   const returnTo = safeReturnTo((await searchParams).returnTo);
   if (await getCurrentUser()) redirect(returnTo);
-  return <section className="auth-card"><div className="auth-heading"><p className="eyebrow">Get started</p><h1>Create your account</h1><p>Set up your workspace and start your first project.</p></div><AuthForm mode="sign-up" returnTo={returnTo === "/dashboard" ? undefined : returnTo} /></section>;
+  return <section className="auth-card"><div className="auth-heading"><h1>Create your account</h1><p>Then describe the website you want, and Canvas builds it.</p></div><AuthForm mode="sign-up" returnTo={returnTo === "/dashboard" ? undefined : returnTo} /></section>;
 }

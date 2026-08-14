@@ -1,11 +1,13 @@
 "use client";
 
-import Image from "next/image";
-import { Blocks, Check, CircleAlert, Copy, Globe, Link2, LoaderCircle, Moon, MousePointerClick, Plus, RefreshCw, Search, Send, Sparkles, Sun, Trash2, Unlink, X } from "lucide-react";
+import { Blocks, Check, Copy, Globe, Link2, LoaderCircle, Moon, MousePointerClick, Plus, RefreshCw, Sun, Trash2, Unlink, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/form-controls";
-import { MultiMediaPicker } from "@/components/media/media-picker";
+import { IconButton } from "@/components/ui/icon-button";
+import { SegmentedControl } from "@/components/ui/segmented";
+import { EmptyState } from "@/components/ui/states";
+import { AgentComposer, AgentError, AgentMessage, AgentProgress } from "@/components/workspace/agent-parts";
+import { Checkbox, Input, SearchField, Select } from "@/components/ui/form-controls";
 import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
@@ -14,7 +16,6 @@ import { HistoryMessages, UndoRedoControls, VersionList } from "@/components/his
 import { useHistoryController } from "@/components/history/use-history-controller";
 import type { HistoryController } from "@/components/history/use-history-controller";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
-import { AI_LIMITS } from "@/domain/ai/limits";
 import { BLOCK_MEDIA_ATTACHMENT_LIMIT } from "@/domain/generated-source/limits";
 import { SUGGESTED_BLOCK_KINDS, blockKindLabel } from "@/domain/blocks/schemas";
 
@@ -198,14 +199,14 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
 
   return <div className="blocks-workspace">
     <aside className="blocks-list-panel">
-      <div className="builder-panel-title">
-        <div><p className="eyebrow">Library</p><h2>Building Blocks</h2></div>
-        <Button type="button" variant="secondary" onClick={() => createDialog.current?.showModal()}><Plus size={14} />New</Button>
+      <div className="tool-aside-title">
+        <h2>Sections</h2>
+        <Button type="button" variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => createDialog.current?.showModal()}>New</Button>
       </div>
-      <label className="tree-search"><Search size={15} /><input type="search" value={search} placeholder="Search blocks" aria-label="Search Building Blocks" onChange={(event) => setSearch(event.target.value)} /></label>
-      {libraryError ? <p className="builder-ai-error" role="alert"><CircleAlert size={14} />{libraryError}</p> : null}
+      <SearchField label="Search sections" value={search} onValueChange={setSearch} placeholder="Search sections" />
+      {libraryError ? <AgentError>{libraryError}</AgentError> : null}
       {blocks.length === 0
-        ? <div className="blocks-empty"><span className="state-icon"><Blocks size={20} /></span><h3>No Building Blocks yet</h3><p>Create a reusable navbar, footer, card, or section with AI.</p><Button type="button" onClick={() => createDialog.current?.showModal()}><Plus size={14} />Create Building Block</Button></div>
+        ? <EmptyState size="inline" icon={<Blocks size={19} />} title="No reusable sections yet" description="Build a navigation bar, footer or call-to-action once, then use it on any page." action={<Button type="button" size="sm" icon={<Plus size={14} />} onClick={() => createDialog.current?.showModal()}>Create a section</Button>} />
         : <ul className="blocks-list">{visible.map((block) => <li key={block.id}>
           <button type="button" className={block.id === selectedId ? "active" : ""} onClick={() => setSelectedId(block.id)}>
             <span className="blocks-list-name">{block.name}</span>
@@ -217,31 +218,27 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
             </span>
           </button>
         </li>)}
-        {visible.length === 0 ? <li><p className="inline-empty">No blocks match this search.</p></li> : null}
+        {visible.length === 0 ? <li><p className="quiet-note">No sections match that search.</p></li> : null}
         </ul>}
       {selected ? <BlockComposer block={selected} state={aiState} loading={aiLoading} error={aiError} prompt={prompt} selectedMediaIds={selectedMediaIds} assets={mediaAssets} folders={mediaFolders} activeJob={activeJob} summary={latestSummary?.content} selection={selection} selectMode={selectMode} onClearSelection={clearSelection} onPrompt={setPrompt} onMedia={setSelectedMediaIds} onSubmit={() => void submitPrompt()} onCancel={() => void cancelJob()} /> : null}
     </aside>
 
-    <section className="builder-stage">
-      <div className="builder-toolbar">
-        <div className="blocks-stage-title">
-          <strong>{selected ? selected.name : "Building Blocks"}</strong>
-          {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · Version ${selected.currentVersionNumber}` : " · Not created yet"}</span> : <span>Select a block to preview it.</span>}
+    <section className="tool-main">
+      <div className="tool-bar">
+        <div className="tool-title">
+          <strong>{selected ? selected.name : "Nothing selected"}</strong>
+          {selected ? <span>{blockKindLabel(selected.kind)}{selected.currentVersionNumber ? ` · version ${selected.currentVersionNumber}` : " · not built yet"}</span> : <span>Pick a section on the left to see it.</span>}
         </div>
-        <div className="builder-toolbar-right">
-          <UndoRedoControls controller={history} dense />
-          <Button type="button" variant={selectMode ? "secondary" : "ghost"} aria-pressed={selectMode} disabled={!selected} onClick={toggleSelectMode}><MousePointerClick size={15} />{selectMode ? "Selecting" : "Select element"}</Button>
-          <div className="segmented compact" role="group" aria-label="Preview theme">
-            <button type="button" className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><Sun size={14} />Light</button>
-            <button type="button" className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}><Moon size={14} />Dark</button>
-          </div>
-          <Button type="button" variant="ghost" onClick={() => void refreshPreview()} aria-label="Refresh preview"><RefreshCw size={15} />Refresh</Button>
-        </div>
+        <UndoRedoControls controller={history} dense />
+        <div className="toolbar-divider" />
+        <Button type="button" variant={selectMode ? "secondary" : "ghost"} size="sm" aria-pressed={selectMode} disabled={!selected} icon={<MousePointerClick size={14} />} onClick={toggleSelectMode}>{selectMode ? "Selecting" : "Select a part"}</Button>
+        <SegmentedControl label="Appearance" value={theme} onChange={setTheme} options={[{ value: "light", label: "Light", icon: <Sun size={13} /> }, { value: "dark", label: "Dark", icon: <Moon size={13} /> }]} />
+        <IconButton label="Reload this section" icon={<RefreshCw size={14} />} onClick={() => void refreshPreview()} />
       </div>
-      <div className="preview-status" role="status">{!selected ? <>Nothing selected</> : previewStatus === "loading" ? <><LoaderCircle className="spin" size={13} />Loading preview</> : previewStatus === "error" ? <><span className="status-error-dot" />Preview error</> : <><Check size={13} />Preview ready</>}</div>
+      <div className="preview-status" role="status">{!selected ? "Nothing selected" : previewStatus === "loading" ? <><LoaderCircle className="spin" size={13} />Loading…</> : previewStatus === "error" ? <><span className="status-error-dot" />Could not load</> : <><Check size={13} />Up to date</>}</div>
       <div className="preview-canvas">
-        {previewStatus === "error" ? <div className="preview-error" role="alert"><h2>Preview could not be loaded.</h2><p>{previewError ?? "Return to Canvas and refresh the preview."}</p><Button type="button" onClick={() => void refreshPreview()}>Try again</Button></div> : null}
-        <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Building Block"} preview`} /> : <div className="preview-loading"><Blocks size={20} />Select or create a Building Block.</div>}</div>
+        {previewStatus === "error" ? <div className="preview-error" role="alert"><h2>This section could not be shown</h2><p>{previewError ?? "Your section is safe. Reload it to try again."}</p><Button type="button" size="sm" onClick={() => void refreshPreview()}>Reload</Button></div> : null}
+        <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Section"} preview`} /> : <div className="preview-loading"><Blocks size={20} />Pick a section, or create one.</div>}</div>
       </div>
       {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy} history={history}
         onUsageResolution={(usage, resolution) => void action(async () => {
@@ -257,11 +254,11 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
 
     <dialog className="dialog" ref={createDialog} onClick={(event) => { if (event.target === createDialog.current) createDialog.current?.close(); }}>
       <div className="dialog-panel">
-        <div className="dialog-header"><div><h2>New Building Block</h2><p>Name it now, then describe it to Canvas.</p></div><Button variant="ghost" aria-label="Close dialog" onClick={() => createDialog.current?.close()}><X size={18} /></Button></div>
+        <div className="dialog-header"><div><h2>New reusable section</h2><p>Give it a name now; you describe what it should contain next.</p></div><Button variant="ghost" aria-label="Close dialog" onClick={() => createDialog.current?.close()}><X size={18} /></Button></div>
         <form action={(form) => void createBlock(form)}>
-          <Input label="Name" name="name" maxLength={120} required placeholder="Global Navbar" />
+          <Input label="Name" name="name" maxLength={120} required placeholder="Main navigation" />
           <Select label="Category" name="kind" defaultValue="section">{SUGGESTED_BLOCK_KINDS.map((kind) => <option key={kind} value={kind}>{blockKindLabel(kind)}</option>)}</Select>
-          <label className="checkbox-field"><input type="checkbox" name="isGlobal" /><span>Share across pages — every page using it stays up to date automatically.</span></label>
+          <Checkbox name="isGlobal" label="Use the same section on every page" description="Pages that use it stay up to date automatically when you change it." />
           <div className="form-actions"><Button type="button" variant="secondary" onClick={() => createDialog.current?.close()}>Cancel</Button><Button type="submit" disabled={busy}>Create</Button></div>
         </form>
       </div>
@@ -289,7 +286,7 @@ function BlockDetails({ block, usages, busy, history, onRename, onToggleGlobal, 
     </div>
     <div className="blocks-usage">
       <h3>Used on</h3>
-      {usages.length === 0 ? <p className="inline-empty">Not used on any page yet.</p> : <ul>{usages.map((usage) => <li key={`${usage.pageId}:${usage.usageKey}`}>
+      {usages.length === 0 ? <p className="quiet-note">Not used on any page yet.</p> : <ul>{usages.map((usage) => <li key={`${usage.pageId}:${usage.usageKey}`}>
         <span>{usage.pageName}</span>
         <small>{usage.route ?? "—"}</small>
         <em>{usage.resolution === "global" ? "Always current" : "Fixed version"}</em>
@@ -311,28 +308,33 @@ function BlockDetails({ block, usages, busy, history, onRename, onToggleGlobal, 
 
 function BlockComposer({ block, state, loading, error, prompt, selectedMediaIds, assets, folders, activeJob, summary, selection, selectMode, onPrompt, onMedia, onClearSelection, onSubmit, onCancel }: { block: BlockSummary; state: BlockAIState | null; loading: boolean; error?: string; prompt: string; selectedMediaIds: string[]; assets: MediaAsset[]; folders: MediaFolder[]; activeJob: BlockAIState["job"]; summary?: string; selection: ElementSelection | null; selectMode: boolean; onPrompt: (value: string) => void; onMedia: (ids: string[]) => void; onClearSelection: () => void; onSubmit: () => void; onCancel: () => void }) {
   const created = block.contentStatus === "generated";
-  return <section className="builder-ai" aria-label="Canvas AI">
-    <div className="builder-ai-title"><Sparkles size={15} /><strong>Canvas</strong></div>
-    <div className="builder-ai-history">
-      {state?.messages.slice(-6).map((message) => <div key={message.id} className={`builder-ai-message ${message.role === "user" ? "from-user" : "from-canvas"}`}><small>{message.role === "user" ? "You" : "Canvas"}</small><p>{message.content}</p></div>)}
-      {loading && !state ? <p className="inline-empty"><LoaderCircle className="spin" size={13} /> Loading history…</p> : null}
+  return <section className="blocks-composer" aria-label="Canvas Agent">
+    <h3 className="caption">Canvas Agent</h3>
+    <div className="blocks-composer-thread">
+      {state?.messages.filter((message) => message.role !== "system_internal").slice(-4).map((message) => <AgentMessage key={message.id} role={message.role} content={message.content} />)}
+      {loading && !state ? <p className="quiet-note"><LoaderCircle className="spin" size={13} /> Opening this conversation…</p> : null}
+      {summary && state?.job?.status === "completed" ? <AgentMessage role="assistant" content={summary} /> : null}
+      {activeJob ? <AgentProgress stage={activeJob.progressStage} busy={loading} onCancel={onCancel} /> : null}
+      {state?.job?.status === "failed" ? <AgentError>{state.job.errorMessage || "The agent could not update this section, and nothing was changed. Try describing it a different way."}</AgentError> : null}
+      {error ? <AgentError>{error}</AgentError> : null}
     </div>
-    {summary && state?.job?.status === "completed" ? <div className="builder-ai-summary"><strong>Canvas updated this block</strong><p>{summary}</p></div> : null}
-    {selection ? <SelectedElementChip selection={selection} onClear={onClearSelection} /> : selectMode ? <p className="builder-selection-hint">Click any highlighted region in the preview to select it.</p> : null}
-    {activeJob ? <div className="builder-ai-progress" role="status" aria-live="polite"><span><LoaderCircle className="spin" size={14} />{activeJob.progressStage}</span><Button type="button" variant="ghost" onClick={onCancel} disabled={loading}>Cancel</Button></div> : null}
-    {state?.job?.status === "failed" ? <p className="builder-ai-error" role="alert"><CircleAlert size={14} />{state.job.errorMessage || "Canvas could not update this block. Try again."}</p> : null}
-    {error ? <p className="builder-ai-error" role="alert"><CircleAlert size={14} />{error}</p> : null}
-    <label className="field">
-      <span className="field-label">{selection ? "Ask Canvas to change the selected element" : created ? "Ask Canvas to change this block" : "Describe the block you want Canvas to create"}</span>
-      <textarea className="textarea builder-ai-textarea" value={prompt} maxLength={AI_LIMITS.userMessageCharacters} rows={4} disabled={Boolean(activeJob)}
-        placeholder={created ? "Add a Contact link and tighten the mobile spacing…" : "A sticky navbar with the company logo and links to every page…"}
-        onChange={(event) => onPrompt(event.target.value)} />
-      <span className="field-hint">{prompt.length.toLocaleString()} / {AI_LIMITS.userMessageCharacters.toLocaleString()}</span>
-    </label>
-    <div className="builder-ai-attachments">{selectedMediaIds.map((id) => { const asset = assets.find((item) => item.id === id); return asset ? <span key={id}><Image src={`/api/media/${id}`} width={24} height={24} alt="" unoptimized /><span>{asset.displayName}</span><button type="button" aria-label={`Remove ${asset.displayName}`} onClick={() => onMedia(selectedMediaIds.filter((item) => item !== id))}><X size={12} /></button></span> : null; })}</div>
-    <div className="builder-ai-actions">
-      <MultiMediaPicker assets={assets} folders={folders} value={selectedMediaIds} limit={BLOCK_MEDIA_ATTACHMENT_LIMIT} onSelect={onMedia} />
-      <Button type="button" onClick={onSubmit} disabled={!prompt.trim() || Boolean(activeJob) || loading}><Send size={14} />{selection ? "Update element" : created ? "Update block" : "Create block"}</Button>
-    </div>
+    <AgentComposer
+      label={selection ? "Ask the agent to change the selected part" : created ? "Ask the agent to change this section" : "Describe the section you want"}
+      placeholder={created ? "Add a Contact link, and tighten the spacing on phones…" : "A navigation bar with the logo and a link to every page…"}
+      sendLabel={selection ? "Update this part" : created ? "Update section" : "Create section"}
+      prompt={prompt}
+      disabled={Boolean(activeJob)}
+      busy={loading && !activeJob}
+      canSend={Boolean(prompt.trim()) && !activeJob && !loading}
+      selectedMediaIds={selectedMediaIds}
+      assets={assets}
+      folders={folders}
+      mediaLimit={BLOCK_MEDIA_ATTACHMENT_LIMIT}
+      before={selection ? <SelectedElementChip selection={selection} onClear={onClearSelection} />
+        : selectMode ? <p className="quiet-note">Click a highlighted part of the section to edit just that.</p> : null}
+      onPrompt={onPrompt}
+      onMedia={onMedia}
+      onSubmit={onSubmit}
+    />
   </section>;
 }

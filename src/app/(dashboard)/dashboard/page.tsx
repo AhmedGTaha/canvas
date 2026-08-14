@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Globe } from "lucide-react";
 import { CreateWorkspaceDialog } from "@/components/workspaces/workspace-forms";
 import { CreateProjectDialog } from "@/components/projects/project-forms";
 import { ProjectCard } from "@/components/projects/project-card";
@@ -11,44 +12,42 @@ import { requireAuthenticatedUser } from "@/server/auth/session";
 export default async function DashboardPage() {
   const user = await requireAuthenticatedUser();
   const [workspaces, projects] = await Promise.all([new WorkspaceService().list(user.id), new ProjectService().listAccessible(user.id)]);
-  const nothingYet = workspaces.length === 0 && projects.shared.length === 0;
+  const nothingYet = workspaces.length === 0 && projects.shared.length === 0 && projects.owned.length === 0;
+  const workspaceNames = new Map(workspaces.map((workspace) => [workspace.id, workspace.name]));
 
-  // Creating a website used to mean going to Workspaces, opening one, and only
-  // then finding the button. With at least one workspace it belongs right here.
+  // Creating a website is the reason most people open this screen, so the
+  // control is here rather than three clicks away inside a workspace. Without a
+  // workspace to put it in, the first step is that instead.
   const primary = workspaces.length
     ? <CreateProjectDialog workspaces={workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name }))} />
     : <CreateWorkspaceDialog />;
 
   return <>
-    <PageHeader
-      eyebrow="Websites"
-      title="Your websites"
-      description="Open a website to edit it, or start a new one."
-      actions={primary}
-    />
+    <PageHeader title="Your websites" description="Open a website to keep building it, or start a new one." actions={nothingYet ? undefined : primary} />
+
     {nothingYet
       ? <EmptyState
-          title="No websites yet"
-          description="Create a workspace to hold your first website, or join someone else's project through an invitation link."
+          icon={<Globe size={19} />}
+          title="Build your first website"
+          description="Websites live in a workspace. Create one to get started — you can describe the pages you want as soon as it exists."
           action={<CreateWorkspaceDialog />}
         />
-      : <div className="project-sections">
-          <section>
-            <div className="list-heading"><h2>Yours</h2><span>{projects.owned.length}</span></div>
+      : <div className="screen-sections">
+          <section aria-labelledby="owned-heading">
+            <div className="section-head"><h2 id="owned-heading">Yours<span className="count">{projects.owned.length}</span></h2></div>
             {projects.owned.length
-              ? <div className="card-grid">{projects.owned.map((project) => <ProjectCard key={project.id} project={project} />)}</div>
-              : <p className="inline-empty">No websites yet. Use <strong>New website</strong> above to create your first one.</p>}
+              ? <div className="entity-list">{projects.owned.map((project) => <ProjectCard key={project.id} project={project} workspaceName={workspaceNames.get(project.workspaceId)} />)}</div>
+              : <p className="quiet-note">Nothing here yet. Use <strong>New website</strong> to create your first one.</p>}
           </section>
-          {projects.shared.length ? <section>
-            <div className="list-heading"><h2>Shared with you</h2><span>{projects.shared.length}</span></div>
-            <div className="card-grid">{projects.shared.map((project) => <ProjectCard key={project.id} project={project} />)}</div>
+
+          {projects.shared.length ? <section aria-labelledby="shared-heading">
+            <div className="section-head"><h2 id="shared-heading">Shared with you<span className="count">{projects.shared.length}</span></h2></div>
+            <div className="entity-list">{projects.shared.map((project) => <ProjectCard key={project.id} project={project} />)}</div>
           </section> : null}
-          {workspaces.length ? <section>
-            <div className="list-heading"><h2>Workspaces</h2><span>{workspaces.length}</span></div>
-            <p className="inline-empty">
-              Workspaces group related websites. <Link href="/workspaces">Manage your workspaces</Link>.
-            </p>
-          </section> : null}
+
+          {workspaces.length ? <p className="quiet-note">
+            Workspaces group related websites. <Link href="/workspaces">Manage workspaces</Link>.
+          </p> : null}
         </div>}
   </>;
 }

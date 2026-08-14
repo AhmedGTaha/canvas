@@ -1,3 +1,4 @@
+import { FolderKanban } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/states";
 import { CreateWorkspaceDialog } from "@/components/workspaces/workspace-forms";
@@ -8,5 +9,10 @@ import { requireAuthenticatedUser } from "@/server/auth/session";
 export default async function WorkspacesPage() {
   const user = await requireAuthenticatedUser();
   const workspaces = await new WorkspaceService().list(user.id);
-  return <><PageHeader eyebrow="Workspaces" title="Your workspaces" description="Workspaces group related websites together." actions={<CreateWorkspaceDialog />} />{workspaces.length === 0 ? <EmptyState title="No workspaces yet" description="Create a workspace to hold your first website." action={<CreateWorkspaceDialog />} /> : <div className="card-grid">{workspaces.map((workspace) => <WorkspaceCard key={workspace.id} workspace={workspace} />)}</div>}</>;
+  return <>
+    <PageHeader title="Workspaces" description="A workspace groups related websites and the people who work on them." actions={workspaces.length ? <CreateWorkspaceDialog /> : undefined} />
+    {workspaces.length === 0
+      ? <EmptyState icon={<FolderKanban size={19} />} title="No workspaces yet" description="Create a workspace to hold your first website." action={<CreateWorkspaceDialog />} />
+      : <div className="entity-list">{workspaces.map((workspace) => <WorkspaceCard key={workspace.id} workspace={workspace} />)}</div>}
+  </>;
 }

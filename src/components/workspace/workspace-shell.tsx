@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bot, CircleAlert, FileText, LoaderCircle, Save, X } from "lucide-react";
+import { Bot, CircleAlert, CircleCheck, FileText, LoaderCircle, Save, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { signOutAction } from "@/app/actions/auth";
 import { shouldSuggestCheckpoint, useHistoryController } from "@/components/history/use-history-controller";
@@ -168,6 +168,23 @@ export function WorkspaceShell({
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
   }, [currentPageId, instanceId, post, recordRoute, selectMode, session.manifest.previewSessionId]);
+
+  /*
+   * Preview readiness, honestly.
+   *
+   * The handshake from inside the frame is the real signal, but it can be
+   * missed — a tool panel opening over the workspace was enough — and the
+   * status bar then sat at "Loading preview…" over a website that had been
+   * painted for minutes. The frame's own load event is the backstop: if the
+   * document loaded and no handshake followed, the preview is up, and saying so
+   * is closer to the truth than a spinner that never stops.
+   */
+  const readyFallback = useRef<number>(undefined);
+  const onFrameLoad = useCallback(() => {
+    window.clearTimeout(readyFallback.current);
+    readyFallback.current = window.setTimeout(() => setStatus((current) => (current === "loading" ? "ready" : current)), 2_000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(readyFallback.current), []);
 
   function send(message: ParentPreviewCommand) { post(message, session.manifest.previewSessionId, instanceId); }
   const navigate = useCallback((next: string) => {
@@ -392,6 +409,9 @@ export function WorkspaceShell({
     data-resizing={resizing ? "on" : "off"}
     style={{ ["--ws-primary-w" as string]: `${layout.primaryWidth}px`, ["--ws-ai-w" as string]: `${layout.agentWidth}px` }}
   >
+    {/* The workspace is one screen with several regions and no visible page
+        title; this names it once for anyone navigating by heading. */}
+    <h1 className="sr-only">{projectName} — website workspace</h1>
     <TitleBar workspaceName={workspaceName} projectName={projectName} pageName={currentPage?.name ?? "No page"} userName={userName} canShare={canManageProject} activeTasks={taskSummary.filter((task) => task.status === "active").length} failedTasks={taskSummary.filter((task) => task.status === "failed").length} saveState={activeJob ? "Canvas is updating your website…" : projectStatus === "active" ? undefined : projectStatus} agentOpen={layout.agent} onSearch={() => setPaletteOpen(true)} onShare={() => openPanel("collaborators")} onTasks={() => setTaskCenterOpen(true)} onToggleAgent={toggleAgent} onSignOut={() => startTransition(() => { void signOutAction(); })} />
 
     <div className="ws-body">
@@ -418,6 +438,12 @@ export function WorkspaceShell({
         fit={layout.fit}
         canBack={routeHistory.index > 0}
         canForward={routeHistory.index < routeHistory.entries.length - 1}
+        onFrameLoad={onFrameLoad}
+        empty={session.manifest.pages.length ? undefined : <>
+          <h2>This website has no pages yet</h2>
+          <p>Every website starts with a page. Create one, then describe what it should contain and the agent will build it.</p>
+          <button type="button" className="button button-primary" onClick={() => requestCreate("page")}>Create your first page</button>
+        </>}
         onBack={() => stepPreviewHistory(-1)}
         onForward={() => stepPreviewHistory(1)}
         onPage={navigate}
@@ -462,8 +488,13 @@ export function WorkspaceShell({
     </div>
 
     <footer className="ws-statusbar">
-      <span className={`ws-sb-note ${status === "error" ? "ws-sb-bad" : status === "ready" ? "ws-sb-ok" : ""}`} role="status">{status === "error" ? <CircleAlert size={12} /> : status === "loading" ? <LoaderCircle className="spin" size={12} /> : <FileText size={12} />}{status === "error" ? "Preview needs attention" : status === "loading" ? "Loading preview…" : "Preview ready"}</span>
-      <span className="ws-sb-sep" /><span className="ws-sb-note">{currentPage?.name ?? "No page"}</span><span className="ws-sb-spacer" />
+      <span className={`ws-sb-note ${status === "error" ? "ws-sb-bad" : status === "ready" ? "ws-sb-ok" : ""}`}>
+        {status === "error" ? <CircleAlert size={12} aria-hidden="true" /> : status === "loading" ? <LoaderCircle className="spin" size={12} aria-hidden="true" /> : <CircleCheck size={12} aria-hidden="true" />}
+        {status === "error" ? "Preview unavailable" : status === "loading" ? "Loading the website…" : "Website up to date"}
+      </span>
+      <span className="ws-sb-sep" aria-hidden="true" />
+      <span className="ws-sb-note"><FileText size={12} aria-hidden="true" />{currentPage?.name ?? "No page open"}</span>
+      <span className="ws-sb-spacer" />
       {queuedFollowUps.filter((item) => item.status === "queued" || item.status === "paused").length ? <button type="button" className="ws-sb-btn" onClick={() => setTaskCenterOpen(true)}><Bot size={12} />{queuedFollowUps.filter((item) => item.status === "queued" || item.status === "paused").length} queued</button> : null}
       {taskSummary.some((task) => task.status === "active") ? <button type="button" className="ws-sb-btn" onClick={() => setTaskCenterOpen(true)}><LoaderCircle className="spin" size={12} />{taskSummary.filter((task) => task.status === "active").length} active</button> : null}
       {showCheckpointNudge ? <span className="ws-sb-nudge" role="status">

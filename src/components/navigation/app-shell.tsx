@@ -1,24 +1,32 @@
-import Link from "next/link";
-import type { ReactNode } from "react";
-import type { AuthenticatedUser } from "@/domain/auth/service";
-import { signOutAction } from "@/app/actions/auth";
-import { Button } from "@/components/ui/button";
-import { SidebarNavItem } from "./sidebar-nav";
+"use client";
 
-export function AppShell({ user, children }: { user: AuthenticatedUser; children: ReactNode }) {
-  return <div className="app-shell">
+import Link from "next/link";
+import { useTransition, type ReactNode } from "react";
+import { signOutAction } from "@/app/actions/auth";
+import { AccountMenu } from "./account-menu";
+import { NavLink } from "./nav-link";
+
+/**
+ * The shell around everything outside a project: websites, workspaces, account.
+ *
+ * Navigation lives in the top bar rather than a fixed 208px rail. Three
+ * destinations never justified a permanent column, and reclaiming it gives the
+ * content the full width it needs at laptop sizes.
+ */
+export function AppShell({ user, children }: { user: { displayName: string; email: string }; children: ReactNode }) {
+  const [, startTransition] = useTransition();
+  return <div className="app">
     <a className="skip-link" href="#main-content">Skip to main content</a>
-    <aside className="sidebar">
-      <Link href="/dashboard" className="brand"><span className="brand-mark">C</span><span>Canvas</span></Link>
-      <nav aria-label="Main navigation" className="sidebar-nav">
-        <SidebarNavItem href="/dashboard" label="Websites" icon="projects" />
-        <SidebarNavItem href="/workspaces" label="Workspaces" icon="workspaces" />
+    <header className="app-bar">
+      <Link href="/dashboard" className="app-brand"><span className="brand-mark" aria-hidden="true">C</span>Canvas</Link>
+      <nav className="app-nav" aria-label="Main">
+        <NavLink href="/dashboard" label="Websites" />
+        <NavLink href="/workspaces" label="Workspaces" />
       </nav>
-      <div className="sidebar-footer"><SidebarNavItem href="/account" label="Account" icon="account" /></div>
-    </aside>
-    <div className="app-frame">
-      <header className="topbar" aria-label="Account"><span className="topbar-name">{user.displayName}</span><form action={signOutAction}><Button type="submit" variant="ghost">Sign out</Button></form></header>
-      <main className="main-content" id="main-content" tabIndex={-1}>{children}</main>
-    </div>
+      <div className="app-bar-end">
+        <AccountMenu userName={user.displayName} email={user.email} onSignOut={() => startTransition(() => { void signOutAction(); })} />
+      </div>
+    </header>
+    <main className="app-main" id="main-content" tabIndex={-1}>{children}</main>
   </div>;
 }

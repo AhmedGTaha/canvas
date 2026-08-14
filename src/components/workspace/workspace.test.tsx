@@ -98,7 +98,10 @@ describe("website explorer", () => {
     expect(screen.getByText("Web Design").closest(".wsx-row")!.className).toContain("wsx-row-selected");
     // The home page carries a badge as well as its name, hence two matches.
     expect(screen.getByText("Home", { selector: ".wsx-name" })).toBeDefined();
-    expect(screen.getByText("Home", { selector: ".wsx-badge-home" })).toBeDefined();
+    // The home page is marked by its own icon; the badge that repeated the word
+    // "Home" next to a page called Home is gone, but the state is still named
+    // for anyone who cannot see the icon.
+    expect(screen.getByText("Home page", { selector: ".sr-only" })).toBeDefined();
     // A page the agent has not built yet is labelled, not silently identical.
     expect(screen.getByText("Draft")).toBeDefined();
   });
@@ -351,7 +354,7 @@ describe("sidebar-first project tools", () => {
 });
 
 describe("workspace responsive strategy", () => {
-  const css = readFileSync("src/app/workspace.css", "utf8") + readFileSync("src/app/workspace-redesign.css", "utf8");
+  const css = readFileSync("src/app/workspace.css", "utf8");
 
   it("declares the progressive collapse breakpoints", () => {
     const queries = [...css.matchAll(/@media \(max-width:\s*(\d+)px\)/g)].map((match) => Number(match[1]));
@@ -359,17 +362,18 @@ describe("workspace responsive strategy", () => {
   });
 
   it("never squeezes three columns onto a tablet or phone", () => {
-    const tablet = css.slice(css.lastIndexOf("@media (max-width:1279px)"), css.lastIndexOf("@media (max-width:767px)"));
-    const phone = css.slice(css.lastIndexOf("@media (max-width:767px)"));
-    expect(tablet).toMatch(/data-agent=.*\.ws-pane-r\{position:fixed/);
+    const tablet = css.slice(css.lastIndexOf("@media (max-width: 1279px)"), css.lastIndexOf("@media (max-width: 767px)"));
+    const phone = css.slice(css.lastIndexOf("@media (max-width: 767px)"));
+    // The agent floats over the website rather than taking a third of it.
+    expect(tablet).toMatch(/data-agent="on"\] \.ws-pane-r \{[^}]*position: fixed/);
     expect(phone).toContain('data-surface="tools"');
     expect(phone).toContain('data-surface="preview"');
     expect(phone).toContain('data-surface="agent"');
   });
 
   it("keeps panels inside the viewport on phones", () => {
-    const phone = css.slice(css.lastIndexOf("@media (max-width:767px)"));
-    expect(phone).toMatch(/\.ws-panel-wide,\.ws-panel-drawer\{[^}]*top:0[^}]*left:0/);
+    const phone = css.slice(css.lastIndexOf("@media (max-width: 767px)"));
+    expect(phone).toMatch(/\.ws-panel-wide, \.ws-panel-drawer \{\s*inset: 0/);
   });
 
   it("keeps the agent composer visible when its conversation is long", () => {
@@ -378,7 +382,7 @@ describe("workspace responsive strategy", () => {
   });
 
   it("sizes panels from their insets so the body can scroll", () => {
-    const panel = css.slice(css.indexOf(".ws-panel {"), css.indexOf(".ws-panel::backdrop"));
+    const panel = css.slice(css.indexOf(".ws-panel {"), css.indexOf(".ws-panel:focus"));
     // A <dialog> is width/height: fit-content per the UA stylesheet, which would
     // let a tall panel grow past the viewport and leave nothing scrollable.
     expect(panel).toMatch(/width: auto;/);
@@ -395,7 +399,7 @@ describe("workspace responsive strategy", () => {
    * Sections run off the bottom of the screen with nothing left to scroll.
    */
   it("sizes panels only from custom properties declared outside the shell", () => {
-    const sheets = css + readFileSync("src/app/globals.css", "utf8");
+    const sheets = css + readFileSync("src/app/tokens.css", "utf8");
     const used = new Set([...sheets.matchAll(/[^{}]*\.ws-panel[^{}]*\{([^{}]*)\}/g)]
       .flatMap(([, body]) => [...body!.matchAll(/var\((--[\w-]+)/g)].map(([, name]) => name!)));
     // Guards the parse itself: these two are what the insets are built from.
@@ -416,8 +420,8 @@ describe("workspace responsive strategy", () => {
     // past the viewport, and leaves its body nothing to scroll.
     const insets = ["top", "right", "bottom", "left", "inset"];
     for (const [name, sheet] of [
-      ["desktop", css.slice(0, css.indexOf("@media (max-width:1279px)"))],
-      ["phone", css.slice(css.lastIndexOf("@media (max-width:767px)"))],
+      ["desktop", css.slice(0, css.indexOf("@media (max-width: 1279px)"))],
+      ["phone", css.slice(css.lastIndexOf("@media (max-width: 767px)"))],
     ] as const) {
       const found = [...sheet.matchAll(/\.ws-panel-(wide|drawer)[^{]*\{([^}]*)\}/g)];
       expect(found.length, `${name} defines no panel geometry`).toBeGreaterThan(0);
@@ -441,13 +445,15 @@ describe("workspace responsive strategy", () => {
       .filter(([, body]) => /max-height:\s*\d+px/.test(body!))
       .map(([rule]) => rule);
     expect(capped).toEqual([]);
-    // And the caps the reused page components declare are lifted in a panel.
-    expect(css).toMatch(/\.ws-panel-bd \.blocks-list-panel,\s+\.ws-panel-bd \.builder-pages \{ max-height: none; \}/);
   });
 
   it("honours reduced motion", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(css).toMatch(/\.ws-panel, \.ws-panel::backdrop \{ animation: none; \}/);
+    // Everything that moves in the workspace opts out by name.
+    const reduced = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+    for (const surface of [".ws-device", ".ws-panel-drawer", ".ws-panel-wide", ".ws-panel::backdrop", ".ws-overflow-menu"]) {
+      expect(reduced, `${surface} keeps animating under reduced motion`).toContain(surface);
+    }
   });
 
   it("avoids CSS outside the supported browser matrix", () => {

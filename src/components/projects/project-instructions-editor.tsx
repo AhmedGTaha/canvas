@@ -3,7 +3,7 @@
 import { Check, CircleAlert, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { saveProjectInstructionsAction } from "@/app/actions/instructions";
-import { Card } from "@/components/ui/card";
+import { Section } from "@/components/ui/panel";
 import { Textarea } from "@/components/ui/form-controls";
 import { AI_LIMITS } from "@/domain/ai/limits";
 
@@ -31,9 +31,20 @@ export function ProjectInstructionsEditor({ projectId, initialContent, initialRe
   }, [projectId]);
   useEffect(() => { valueRef.current = content; if (initial.current) { initial.current = false; return; } dirty.current = true; const timer = window.setTimeout(() => void flush(), 700); return () => window.clearTimeout(timer); }, [content, flush]);
   const Icon = status === "Saving" ? LoaderCircle : status === "Error" ? CircleAlert : Check;
-  return <Card className="settings-card"><div className="settings-title"><div><p className="eyebrow">AI guidance</p><h2>Project Instructions</h2></div><span className={`save-indicator save-${status.toLowerCase()}`} role="status" aria-live="polite"><Icon className={status === "Saving" ? "spin" : undefined} size={14} />{status}</span></div>
-    <p className="settings-description">Tell Canvas what it should always remember when creating or changing this website.</p>
-    <Textarea id="project-instructions" label="Instructions" value={content} onChange={(event) => { setContent(event.target.value); setStatus("Saving"); }} maxLength={AI_LIMITS.projectInstructionsCharacters} rows={12} hint={`Examples: Keep the design professional and minimal. Never use gradients. Always include our WhatsApp call-to-action. Write for businesses in Bahrain. Maximum ${AI_LIMITS.projectInstructionsCharacters.toLocaleString()} characters.`} />
+  return <Section
+    title="What the agent should always know"
+    description="Guidance here applies to every page and every change on this website. It saves as you type."
+    actions={<span className={`save-indicator save-${status.toLowerCase()}`} role="status" aria-live="polite"><Icon className={status === "Saving" ? "spin" : undefined} size={13} />{status}</span>}
+  >
+    <Textarea
+      id="project-instructions"
+      label="Instructions"
+      value={content}
+      onChange={(event) => { setContent(event.target.value); setStatus("Saving"); }}
+      maxLength={AI_LIMITS.projectInstructionsCharacters}
+      rows={12}
+      hint={`For example: keep the design professional and minimal, never use gradients, always include our WhatsApp call-to-action. Up to ${AI_LIMITS.projectInstructionsCharacters.toLocaleString()} characters.`}
+    />
     {error ? <p className="form-error" role="alert">{error}</p> : null}
-  </Card>;
+  </Section>;
 }

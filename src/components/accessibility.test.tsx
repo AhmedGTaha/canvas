@@ -25,24 +25,38 @@ function contrast(foreground: string, background: string) {
   const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
   return (lighter! + 0.05) / (darker! + 0.05);
 }
-const css = readFileSync("src/app/globals.css", "utf8");
-function token(name: string) {
-  const match = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,6})`).exec(css);
+/*
+ * Tokens are read from the token layer and resolved through their aliases, so
+ * a colour that is defined once and referenced by five semantic names is still
+ * checked as the colour it actually renders as.
+ */
+const tokenCss = readFileSync("src/app/tokens.css", "utf8");
+const styleSheets = ["base", "ui", "app", "workspace", "panels"].map((name) => [`${name}.css`, readFileSync(`src/app/${name}.css`, "utf8")] as const);
+
+function token(name: string, seen = new Set<string>()): string {
+  if (seen.has(name)) throw new Error(`Design token --${name} refers to itself`);
+  seen.add(name);
+  const match = new RegExp(`--${name}:\\s*([^;]+);`).exec(tokenCss);
   if (!match) throw new Error(`Missing design token --${name}`);
-  return match[1]!;
+  const value = match[1]!.trim();
+  const alias = /^var\((--[\w-]+)\)$/.exec(value);
+  if (alias) return token(alias[1]!.slice(2), seen);
+  if (!/^#[0-9a-fA-F]{3,6}$/.test(value)) throw new Error(`Design token --${name} is not a colour: ${value}`);
+  return value;
 }
 
 describe("Canvas UI accessibility", () => {
   it("meets WCAG AA contrast for the core text palette", () => {
-    const surface = token("surface"); const background = token("background"); const muted = token("muted");
+    const surface = token("surface"); const app = token("surface-app"); const muted = token("text-muted");
     const pairs: Array<[string, string, string, number]> = [
       ["body text on surface", token("text"), surface, 4.5],
-      ["body text on app background", token("text"), background, 4.5],
+      ["body text on the app background", token("text"), app, 4.5],
       ["muted text on surface", muted, surface, 4.5],
-      ["muted text on app background", muted, background, 4.5],
+      ["muted text on the app background", muted, app, 4.5],
       ["primary button label", token("accent-contrast"), token("accent"), 4.5],
       ["danger text on surface", token("danger"), surface, 4.5],
       ["success text on surface", token("success"), surface, 4.5],
+      ["accent on chrome", token("focus"), token("surface-chrome"), 4.5],
     ];
     for (const [name, foreground, over, minimum] of pairs) {
       expect(contrast(foreground, over), `${name} (${foreground} on ${over})`).toBeGreaterThanOrEqual(minimum);
@@ -53,9 +67,7 @@ describe("Canvas UI accessibility", () => {
     // Every color in the stylesheets resolves through a token, so the palette
     // below is the whole palette — there is no second, drifting one hiding in a
     // component rule. The tokens themselves are the only literals.
-    const workspaceCss = readFileSync("src/app/workspace.css", "utf8");
-    const afterTokens = css.slice(css.indexOf("* { box-sizing: border-box; }"));
-    for (const [name, sheet] of [["globals.css", afterTokens], ["workspace.css", workspaceCss]] as const) {
+    for (const [name, sheet] of styleSheets) {
       const literals = [...sheet.matchAll(/#[0-9a-fA-F]{3,6}\b/g)].map((match) => match[0]);
       expect(literals, `${name} hard-codes ${literals.join(", ")} instead of using a token`).toHaveLength(0);
     }
@@ -63,15 +75,17 @@ describe("Canvas UI accessibility", () => {
 
   it("keeps every text token above the AA threshold on the surface it sits on", () => {
     const pairs: Array<[string, string, string]> = [
-      ["strong muted text", token("muted-strong"), token("surface")],
-      ["strong muted text on canvas", token("muted-strong"), token("background")],
-      ["soft muted text", token("muted-soft"), token("surface")],
-      ["soft muted text on canvas", token("muted-soft"), token("background")],
-      ["muted text on a sunken surface", token("muted"), token("surface-muted")],
-      ["selected tree row", token("focus-strong"), token("focus-soft")],
+      ["secondary text", token("text-secondary"), token("surface")],
+      ["secondary text on the app background", token("text-secondary"), token("surface-app")],
+      ["subtle text", token("text-subtle"), token("surface")],
+      ["subtle text on the app background", token("text-subtle"), token("surface-app")],
+      ["muted text on a muted surface", token("text-muted"), token("surface-muted")],
+      ["muted text on the preview mat", token("text-muted"), token("surface-sunken")],
+      ["muted text on chrome", token("text-muted"), token("surface-chrome")],
+      ["selected row", token("focus-strong"), token("surface-selected")],
       ["danger text on its surface", token("danger"), token("danger-soft")],
       ["success text on its surface", token("success"), token("success-soft")],
-      ["draft badge", token("warning-ink"), token("warning-soft")],
+      ["draft badge", token("warning"), token("warning-soft")],
     ];
     for (const [name, foreground, over] of pairs) {
       expect(contrast(foreground, over), `${name} (${foreground} on ${over})`).toBeGreaterThanOrEqual(4.5);
@@ -101,7 +115,7 @@ describe("Canvas UI accessibility", () => {
     const headingId = dialog.getAttribute("aria-labelledby");
     expect(headingId).toBeTruthy();
     expect(document.getElementById(headingId!)?.textContent).toBe("Create project");
-    expect(within(dialog).getByRole("button", { name: "Close dialog" })).toBeDefined();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeDefined();
     // Native <dialog> + showModal gives focus trapping and Escape-to-close for free.
     expect(dialog.tagName).toBe("DIALOG");
     for (const control of dialog.querySelectorAll("button, input, textarea, select, a[href]")) {
@@ -164,7 +178,7 @@ describe("Canvas UI accessibility", () => {
   });
 
   it("exposes one page heading with its context", () => {
-    render(<PageHeader eyebrow="Acme Site" title="Building Blocks" description="Reusable sections." actions={<Button>New</Button>} />);
+    render(<PageHeader title="Building Blocks" description="Reusable sections." back={{ href: "/workspaces", label: "Acme Site" }} actions={<Button>New</Button>} />);
     const headings = screen.getAllByRole("heading");
     expect(headings).toHaveLength(1);
     expect(headings[0]!.tagName).toBe("H1");

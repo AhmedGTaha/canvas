@@ -3,6 +3,9 @@
 import { Check, CircleAlert, Download, LoaderCircle, Package, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/feedback";
+import { Section } from "@/components/ui/panel";
+import { EmptyState, LoadingState } from "@/components/ui/states";
 
 type Failure = { code: string; message: string; entity?: string };
 type ExportJob = {
@@ -51,23 +54,19 @@ export function ExportManager({ projectId }: { projectId: string }) {
   }
 
   return <section className="export-manager">
-    <div className="export-intro">
-      <div>
-        <h2>Download your website</h2>
-        <p>Canvas checks your website, builds it as a standalone Next.js project, and packages it as a ZIP you can run or host anywhere. It contains only frontend code — no Canvas account, database, or backend.</p>
-      </div>
-      <div className="export-intro-actions">
-        <Button type="button" onClick={() => void startExport()} disabled={busy || Boolean(running)}>
-          {running ? <><LoaderCircle className="spin" size={15} />Exporting…</> : <><Package size={15} />Export website</>}
-        </Button>
-        <Button type="button" variant="ghost" onClick={() => void load()} aria-label="Refresh exports"><RefreshCw size={15} />Refresh</Button>
-      </div>
-    </div>
-    {error ? <p className="history-inline-error" role="alert"><CircleAlert size={13} />{error}</p> : null}
+    <Section
+      title="Download your website"
+      description="Canvas checks the website, builds it as a standalone Next.js project, and packages it as a ZIP you can run or host anywhere. It contains frontend code only — no account, database or backend."
+      actions={<>
+        <Button type="button" loading={Boolean(running)} disabled={busy} icon={<Package size={15} />} onClick={() => void startExport()}>{running ? "Exporting…" : "Export website"}</Button>
+        <Button type="button" variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => void load()}>Refresh</Button>
+      </>}
+    >
+      {error ? <InlineAlert tone="danger" title="That export could not be started">{error}</InlineAlert> : null}
 
-    {jobs === null ? <p className="inline-empty"><LoaderCircle className="spin" size={13} /> Loading exports…</p>
-      : jobs.length === 0 ? <div className="empty-state"><span className="state-icon"><Package size={22} /></span><h2>No exports yet</h2><p>Export your website when you are ready to run or host it yourself.</p></div>
-      : <ul className="export-list">{jobs.map((job) => <li key={job.id} className={`export-row ${job.status}`}>
+      {jobs === null ? <LoadingState size="compact" label="Loading past exports…" />
+        : jobs.length === 0 ? <EmptyState size="inline" icon={<Package size={19} />} title="No exports yet" description="Export the website when you are ready to run or host it yourself. Every export is kept here." />
+        : <ul className="export-list">{jobs.map((job) => <li key={job.id} className={`export-row ${job.status}`}>
         <div className="export-row-main">
           <strong>{job.status === "completed" ? <><Check size={14} />Ready to download</> : job.status === "failed" ? <><CircleAlert size={14} />Not exported</> : <><LoaderCircle className="spin" size={14} />{job.progressStage}</>}</strong>
           <small>{when(job.createdAt)} · {job.actor}{job.artifact?.fileCount ? ` · ${job.artifact.fileCount} files · ${size(job.artifact.bytes)}` : ""}</small>
@@ -82,7 +81,8 @@ export function ExportManager({ projectId }: { projectId: string }) {
             <ul>{job.validation.checks.map((check) => <li key={check.name}><span>{check.passed ? "✓" : "✕"} {check.name}</span></li>)}</ul>
           </details> : null}
         </div>
-        {job.status === "completed" ? <a className="button button-secondary" href={`/api/projects/${projectId}/exports/${job.id}/download`} download><Download size={14} />Download ZIP</a> : null}
+        {job.status === "completed" ? <a className="button button-secondary button-sm" href={`/api/projects/${projectId}/exports/${job.id}/download`} download><Download size={14} />Download ZIP</a> : null}
       </li>)}</ul>}
+    </Section>
   </section>;
 }

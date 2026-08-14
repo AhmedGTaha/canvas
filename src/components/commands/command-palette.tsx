@@ -21,7 +21,11 @@ export function CommandPalette({ projectId, userId = "current", open, commands, 
     if (open && node && !node.open) { returnFocus.current = document.activeElement as HTMLElement | null; node.showModal(); setQuery(""); setSelected(0); requestAnimationFrame(() => input.current?.focus()); }
     if (!open && node?.open) node.close();
   }, [open]);
-  const all = useMemo(() => searchWorkspace(query, commands, pages), [commands, pages, query]);
+  // Opening the palette is a command everywhere else — in a menu, on a
+  // shortcut card — but offering it as the first result *inside* the palette is
+  // a dead end, so it is dropped here rather than removed from the registry.
+  const available = useMemo(() => commands.filter((command) => command.id !== "navigation.palette"), [commands]);
+  const all = useMemo(() => searchWorkspace(query, available, pages), [available, pages, query]);
   const results = useMemo(() => {
     if (query.trim() || !recent.length) return all;
     const byKey = new Map(all.map((item) => [item.key, item]));
@@ -47,10 +51,10 @@ export function CommandPalette({ projectId, userId = "current", open, commands, 
   }
   return <dialog ref={dialog} className="command-dialog" aria-label="Command palette" onCancel={(event) => { event.preventDefault(); close(); }} onClose={() => { if (open) onClose(); }}>
     <div className="command-palette" onKeyDown={keyDown}>
-      <div className="command-search"><Search size={17} aria-hidden="true" /><input ref={input} value={query} onChange={(event) => { setQuery(event.target.value); setSelected(0); }} placeholder="Search commands, pages, and project tools" aria-label="Search commands and pages" autoComplete="off" /><kbd>Esc</kbd><button type="button" aria-label="Close command palette" onClick={close}><X size={15} /></button></div>
+      <div className="command-search"><Search size={17} aria-hidden="true" /><input ref={input} value={query} onChange={(event) => { setQuery(event.target.value); setSelected(0); }} placeholder="Search pages and actions" aria-label="Search pages and actions" autoComplete="off" /><kbd>Esc</kbd><button type="button" aria-label="Close search" onClick={close}><X size={15} /></button></div>
       <div className="command-results" role="listbox" aria-label="Results" aria-activedescendant={results[safeSelected] ? `palette-${results[safeSelected].key}` : undefined}>
         {!query && recent.length ? <p className="command-heading">Recent</p> : null}
-        {!results.length ? <p className="command-empty">No matching commands or pages in this project.</p> : results.map((result, index) => {
+        {!results.length ? <p className="command-empty">Nothing matches that. Try a page name, or a word like images, brand or export.</p> : results.map((result, index) => {
           const command = result.type === "command" ? result.command : null; const disabled = !hydrated || (command ? !command.availability.available : false);
           return <button type="button" id={`palette-${result.key}`} role="option" aria-selected={index === safeSelected} aria-disabled={disabled} disabled={disabled} className={index === safeSelected ? "selected" : ""} key={result.key} onMouseEnter={() => setSelected(index)} onClick={() => execute(result)}>
             <span className="command-result-main"><strong>{result.type === "page" ? result.page.name : command!.label}</strong><small>{result.type === "page" ? (result.page.routePath || (result.page.type === "folder" ? "Folder" : "Page")) : (command!.availability.reason || command!.description || command!.category)}</small></span>

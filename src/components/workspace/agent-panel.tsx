@@ -1,12 +1,11 @@
 "use client";
 
-import Image from "next/image";
-import { Blocks, ChevronRight, CircleAlert, FileText, History, LoaderCircle, MousePointerClick, Send, Sparkles, X } from "lucide-react";
+import { Blocks, ChevronRight, Clock, FileText, History, LoaderCircle, MousePointerClick, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { MultiMediaPicker } from "@/components/media/media-picker";
+import { Chip } from "@/components/ui/feedback";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
-import { AI_LIMITS } from "@/domain/ai/limits";
 import { PAGE_MEDIA_ATTACHMENT_LIMIT } from "@/domain/page-generation/contract";
+import { AgentComposer, AgentError, AgentMessage as AgentMessageView, AgentProgress } from "./agent-parts";
 
 export type AgentMessage = { id: string; role: "user" | "assistant" | "system_internal"; content: string; createdAt: string };
 export type AgentJob = null | { id: string; status: string; progressStage: string; errorMessage: string | null };
@@ -15,17 +14,18 @@ export type AgentQueueItem = { id: string; prompt: string; status: "queued" | "p
 export type AgentSelection = { canvasId: string; elementType: string; label: string | null; blockId: string | null } | null;
 
 const STARTERS = [
-  "Create a modern homepage with a hero, services, and a contact call-to-action.",
-  "Add an about section that explains what we do.",
-  "Give this page a footer that matches the rest of the website.",
+  "A homepage with a hero, three services, and a way to get in touch.",
+  "An about page that explains who we are and what we believe.",
+  "A contact page with our address, opening hours and a map.",
 ];
 
 /**
- * The Canvas Agent panel.
+ * The Canvas agent.
  *
- * The conversation is the panel's main content and gets the vertical space,
- * rather than being a short scroll box wedged under the page list as it was in
- * the old Builder sidebar. The composer is pinned to the bottom.
+ * Six states, each one visibly different: nothing asked yet, your request,
+ * the agent working, a follow-up waiting its turn, changes applied and
+ * reviewable, and a failure you can act on. The panel's job is that you never
+ * have to guess which of the six you are in.
  */
 export function AgentPanel({
   target, selection, selectMode, messages, job, activeJob, loading, error, prompt, selectedMediaIds, assets, folders, built,
@@ -69,104 +69,93 @@ export function AgentPanel({
   useEffect(() => { thread.current?.scrollTo({ top: thread.current.scrollHeight }); }, [visible.length, activeJob?.progressStage]);
 
   const placeholder = selection
-    ? "Make this card more compact…"
+    ? "Make this part smaller, or change its wording…"
     : built
-      ? (editingBlock ? "Change the spacing in this shared block…" : "Make the hero shorter and improve the spacing on phones…")
+      ? (editingBlock ? "Change the spacing in this shared section…" : "Make the hero shorter, and tidy the spacing on phones…")
       : "Describe the page you want — for example, a services page with three cards…";
-  const sendLabel = selection ? "Update element" : built ? (editingBlock ? "Update block" : "Update page") : "Create page";
+  const sendLabel = activeJob ? "Add to the queue" : selection ? "Update this part" : built ? (editingBlock ? "Update section" : "Update page") : "Create page";
   const canSend = hydrated && Boolean(target) && Boolean(prompt.trim()) && !loading;
+  const waiting = queue.filter((item) => item.status === "queued" || item.status === "paused");
 
   return <>
     <div className="ws-pane-hd">
       <h2>Canvas Agent</h2>
       <div className="ws-pane-hd-acts">
-        <button type="button" className="ws-icon-btn" title="Version history" aria-label="Version history" onClick={onOpenHistory}><History size={14} /></button>
-        <button type="button" className="ws-icon-btn" title="Collapse Canvas Agent" aria-label="Collapse Canvas Agent" onClick={onHide}><ChevronRight size={14} /></button>
+        <button type="button" className="ws-icon-btn" title="What changed and when" aria-label="What changed and when" onClick={onOpenHistory}><History size={14} /></button>
+        <button type="button" className="ws-icon-btn" title="Hide the agent" aria-label="Hide the agent" onClick={onHide}><ChevronRight size={14} /></button>
       </div>
     </div>
 
     {/* What the agent will change, stated before you type rather than inferred. */}
     <div className="wsa-context">
       {editingBlock ? <Blocks size={12} aria-hidden="true" /> : <FileText size={12} aria-hidden="true" />}
-      <span className="wsa-context-label">{selection ? "Selected Element" : editingBlock ? "Reusable Section" : "Page"}</span>
-      <strong>{target ? target.name : "nothing yet"}</strong>
-      {selection ? <span className="ws-chip" style={{ marginLeft: "auto" }}>
-        <MousePointerClick size={10} aria-hidden="true" />
-        <span>{selection.label ?? selection.elementType}</span>
-        <button type="button" className="ws-chip-x" aria-label="Clear selected element" onClick={onClearSelection}><X size={10} /></button>
+      <span className="wsa-context-label">{selection ? "Editing" : editingBlock ? "Section" : "Page"}</span>
+      <strong>{target ? target.name : "No page open"}</strong>
+      {selection ? <span style={{ marginLeft: "auto" }}>
+        <Chip accent icon={<MousePointerClick size={10} aria-hidden="true" />} removeLabel="Stop editing this part" onRemove={onClearSelection}>
+          {selection.label ?? selection.elementType}
+        </Chip>
       </span> : null}
     </div>
 
     <div className="wsa-thread" ref={thread}>
-      {loading && !messages ? <p className="wsa-empty"><LoaderCircle className="spin" size={16} aria-hidden="true" />Loading this conversation…</p>
+      {loading && !messages ? <p className="wsa-empty"><LoaderCircle className="spin" size={16} aria-hidden="true" />Opening this conversation…</p>
         : !visible.length ? <div className="wsa-empty">
             <Sparkles size={20} aria-hidden="true" style={{ color: "var(--focus)" }} />
             <h3>{built ? "Ask for a change" : "Let's build this page"}</h3>
-            <p>{built ? "Describe what you want different and the agent will edit this page." : "Describe the page in your own words. You can refine it afterwards."}</p>
+            <p>{built ? "Describe what you want different, in your own words." : "Describe the page in your own words. You can change anything about it afterwards."}</p>
             {!built ? <div className="wsa-suggestions">{STARTERS.map((starter) => <button key={starter} type="button" onClick={() => onPrompt(starter)}>{starter}</button>)}</div> : null}
           </div>
-        : visible.map((message) => message.role === "user"
-            ? <p className="wsa-user" key={message.id}>{message.content}</p>
-            : <div className="wsa-agent" key={message.id}>
-                <p className="wsa-agent-hd"><Sparkles size={12} aria-hidden="true" />Canvas</p>
-                <p>{message.content}</p>
-              </div>)}
+        : visible.map((message) => <AgentMessageView key={message.id} role={message.role} content={message.content} />)}
 
-      {activeJob ? <div className="wsa-progress" role="status" aria-live="polite">
-        <LoaderCircle className="spin" size={13} aria-hidden="true" />
-        <span>{activeJob.progressStage}</span>
-        <button type="button" className="button button-secondary button-sm" onClick={onCancel} disabled={loading}>Cancel</button>
-      </div> : null}
-      {queue.filter((item) => item.status === "queued" || item.status === "paused").map((item, index) => <QueuedFollowUp key={item.id} item={item} position={index + 1} onCancel={onCancelQueued} onEdit={onEditQueued} />)}
+      {activeJob ? <AgentProgress stage={activeJob.progressStage} busy={loading} onCancel={onCancel} /> : null}
+      {waiting.map((item, index) => <QueuedFollowUp key={item.id} item={item} position={index + 1} onCancel={onCancelQueued} onEdit={onEditQueued} />)}
 
-      {job?.status === "failed" ? <p className="wsa-error" role="alert"><CircleAlert size={14} aria-hidden="true" />{job.errorMessage || "The agent could not apply that change. Try describing it differently."}</p> : null}
-      {job?.status === "completed" ? <button type="button" className="wsa-review-link" onClick={() => onReview(job.id)}>Review completed changes</button> : null}
-      {error ? <p className="wsa-error" role="alert"><CircleAlert size={14} aria-hidden="true" />{error}</p> : null}
-      {selectMode && !selection ? <p className="ws-chip ws-chip-neutral" style={{ alignSelf: "flex-start" }}><MousePointerClick size={11} aria-hidden="true" /><span>Click a part of the website to select it</span></p> : null}
+      {job?.status === "failed" ? <AgentError>{job.errorMessage || "The agent could not make that change, and nothing on your website was altered. Try describing it a different way."}</AgentError> : null}
+      {job?.status === "completed" ? <button type="button" className="wsa-review-link" onClick={() => onReview(job.id)}>See what changed</button> : null}
+      {error ? <AgentError>{error}</AgentError> : null}
+      {selectMode && !selection ? <span style={{ alignSelf: "flex-start" }}><Chip icon={<MousePointerClick size={11} aria-hidden="true" />}>Click a part of the website to edit just that</Chip></span> : null}
     </div>
 
-    <div className="wsa-composer">
-      {selectedMediaIds.length ? <div className="wsa-chips">{selectedMediaIds.map((id) => {
-        const asset = assets.find((item) => item.id === id);
-        return asset ? <span className="ws-chip ws-chip-neutral" key={id}>
-          <Image src={`/api/media/${id}`} width={18} height={18} alt="" unoptimized />
-          <span>{asset.displayName}</span>
-          <button type="button" className="ws-chip-x" aria-label={`Remove ${asset.displayName}`} onClick={() => onMedia(selectedMediaIds.filter((item) => item !== id))}><X size={10} /></button>
-        </span> : null;
-      })}</div> : null}
-
-      <textarea
-        aria-label={selection ? "Ask the agent to change the selected element" : built ? "Ask the agent to change this page" : "Describe the page you want"}
-        value={prompt}
-        rows={3}
-        maxLength={AI_LIMITS.userMessageCharacters}
-        disabled={!target}
-        placeholder={placeholder}
-        onChange={(event) => onPrompt(event.target.value)}
-        // Enter sends, Shift+Enter adds a line — the convention for chat composers.
-        onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (canSend) onSubmit(); } }}
-      />
-
-      <div className="wsa-composer-bar">
-        <MultiMediaPicker assets={assets} folders={folders} value={selectedMediaIds} limit={PAGE_MEDIA_ATTACHMENT_LIMIT} onSelect={onMedia} compact />
-        {prompt.length > AI_LIMITS.userMessageCharacters * 0.8
-          ? <span className="wsa-count">{prompt.length.toLocaleString()} / {AI_LIMITS.userMessageCharacters.toLocaleString()}</span>
-          : null}
-        <button type="button" className="wsa-send" disabled={!canSend} onClick={onSubmit}>
-          {loading && !activeJob ? <LoaderCircle className="spin" size={12} aria-hidden="true" /> : <Send size={12} aria-hidden="true" />}
-          {activeJob ? "Queue follow-up" : sendLabel}
-        </button>
-      </div>
-    </div>
+    <AgentComposer
+      label={selection ? "Ask the agent to change the selected part" : built ? "Ask the agent to change this page" : "Describe the page you want"}
+      placeholder={placeholder}
+      sendLabel={sendLabel}
+      prompt={prompt}
+      disabled={!target}
+      busy={loading && !activeJob}
+      canSend={canSend}
+      selectedMediaIds={selectedMediaIds}
+      assets={assets}
+      folders={folders}
+      mediaLimit={PAGE_MEDIA_ATTACHMENT_LIMIT}
+      onPrompt={onPrompt}
+      onMedia={onMedia}
+      onSubmit={onSubmit}
+    />
   </>;
 }
 
+/**
+ * A request waiting its turn.
+ *
+ * It is deliberately quieter than the work in progress — grey rather than the
+ * agent's blue — so the one thing happening now stays the loudest thing in the
+ * panel. Paused means Canvas needs an answer before it can continue.
+ */
 function QueuedFollowUp({ item, position, onCancel, onEdit }: { item: AgentQueueItem; position: number; onCancel: (id: string) => void; onEdit: (item: AgentQueueItem, prompt: string) => void }) {
-  const [editing, setEditing] = useState(false); const [value, setValue] = useState(item.prompt);
-  return <div className={`wsa-progress ${item.status === "paused" ? "wsa-error" : ""}`} role="status">
-    <span>{item.status === "paused" ? "Review needed" : `Follow-up ${position}`}</span><p>{item.status === "paused" ? item.pauseReason : item.prompt}</p>
-    {item.editable && editing ? <><textarea aria-label="Edit queued follow-up" value={value} onChange={(event) => setValue(event.target.value)} /><button type="button" className="button button-secondary button-sm" onClick={() => { onEdit(item, value); setEditing(false); }}>Save</button></> : null}
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(item.prompt);
+  const paused = item.status === "paused";
+  return <div className={`wsa-progress ${paused ? "wsa-error" : "wsa-queued"}`} role="status">
+    {paused ? null : <Clock size={13} aria-hidden="true" />}
+    <span>{paused ? "Needs your attention" : `Next up · ${position}`}</span>
+    <p>{paused ? item.pauseReason : item.prompt}</p>
+    {item.editable && editing
+      ? <><textarea aria-label="Edit this queued request" value={value} onChange={(event) => setValue(event.target.value)} />
+          <button type="button" className="button button-secondary button-sm" onClick={() => { onEdit(item, value); setEditing(false); }}>Save</button></>
+      : null}
     {item.editable && !editing ? <button type="button" className="button button-secondary button-sm" onClick={() => setEditing(true)}>Edit</button> : null}
-    {item.editable ? <button type="button" className="button button-secondary button-sm" onClick={() => onCancel(item.id)}>Cancel</button> : null}
+    {item.editable ? <button type="button" className="button button-secondary button-sm" onClick={() => onCancel(item.id)}>Remove</button> : null}
   </div>;
 }

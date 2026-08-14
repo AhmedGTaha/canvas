@@ -3,7 +3,7 @@
 import { ChevronDown, ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, FolderClosed, FolderOpen, FolderPlus, House, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { pageTreeAction } from "@/app/actions/pages";
-import { Menu } from "@/components/ui/menu";
+import { Menu, MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { buildPageTree, type PageTreeNode } from "@/domain/pages/tree";
 import type { PageNode } from "@/server/db/schema";
 
@@ -183,28 +183,28 @@ function Row(props: RowProps) {
               ? (open ? <FolderOpen className="wsx-icon" size={13} /> : <FolderClosed className="wsx-icon" size={13} />)
               : node.isHomepage ? <House className="wsx-icon" size={13} /> : <FileText className="wsx-icon" size={13} />}
             <span className="wsx-name">{node.name}</span>
-            {node.isHomepage ? <span className="wsx-badge wsx-badge-home">Home</span> : null}
+            {node.isHomepage ? <span className="sr-only">Home page</span> : null}
             {/* No version yet means the agent has not built this page. */}
             {!isFolder && !node.currentVersionId ? <span className="wsx-badge wsx-badge-draft">Draft</span> : null}
           </button>}
 
       <span className="wsx-row-actions">
         <Menu label={`Actions for ${node.name}`} align="end">
-          <button type="button" className="ws-mi" onClick={() => onRename(node.id)}><Pencil size={14} /><span className="ws-mi-label">Rename</span><span className="ws-mi-key">F2</span></button>
+          <MenuItem icon={<Pencil size={14} />} shortcut="F2" onClick={() => onRename(node.id)}>Rename</MenuItem>
           {isFolder ? <>
-            <button type="button" className="ws-mi" onClick={() => onDraft({ parentId: node.id, type: "page" })}><FilePlus2 size={14} /><span className="ws-mi-label">New page inside</span></button>
-            <button type="button" className="ws-mi" onClick={() => onDraft({ parentId: node.id, type: "folder" })}><FolderPlus size={14} /><span className="ws-mi-label">New folder inside</span></button>
+            <MenuItem icon={<FilePlus2 size={14} />} onClick={() => onDraft({ parentId: node.id, type: "page" })}>New page inside</MenuItem>
+            <MenuItem icon={<FolderPlus size={14} />} onClick={() => onDraft({ parentId: node.id, type: "folder" })}>New folder inside</MenuItem>
           </> : <>
-            <button type="button" className="ws-mi" disabled={pending} onClick={() => onRun({ intent: "duplicate", nodeId: node.id })}><Copy size={14} /><span className="ws-mi-label">Duplicate</span></button>
-            {!node.isHomepage ? <button type="button" className="ws-mi" disabled={pending} onClick={() => onRun({ intent: "homepage", nodeId: node.id })}><House size={14} /><span className="ws-mi-label">Set as home page</span></button> : null}
+            <MenuItem icon={<Copy size={14} />} disabled={pending} onClick={() => onRun({ intent: "duplicate", nodeId: node.id })}>Duplicate</MenuItem>
+            {!node.isHomepage ? <MenuItem icon={<House size={14} />} disabled={pending} onClick={() => onRun({ intent: "homepage", nodeId: node.id })}>Set as home page</MenuItem> : null}
           </>}
-          <div className="ws-menu-sep" />
-          <button type="button" className="ws-mi" disabled={pending} onClick={() => onRun({ intent: "reorder", nodeId: node.id, direction: "up" })}><CornerUpLeft size={14} /><span className="ws-mi-label">Move up</span></button>
-          <button type="button" className="ws-mi" disabled={pending} onClick={() => onRun({ intent: "reorder", nodeId: node.id, direction: "down" })}><CornerUpLeft size={14} style={{ transform: "scaleY(-1)" }} /><span className="ws-mi-label">Move down</span></button>
-          <div className="ws-menu-sep" />
-          <button type="button" className="ws-mi" onClick={() => onOpenPagesPanel(node.id)}><Settings2 size={14} /><span className="ws-mi-label">{isFolder ? "Folder Settings" : "Page Settings"}</span></button>
-          {!isFolder ? <button type="button" className="ws-mi" onClick={() => onEditWithAgent(node.id, routes[node.id])}><Sparkles size={14} /><span className="ws-mi-label">Edit with the agent</span></button> : null}
-          <div className="ws-menu-sep" />
+          <MenuSeparator />
+          <MenuItem icon={<CornerUpLeft size={14} />} disabled={pending} onClick={() => onRun({ intent: "reorder", nodeId: node.id, direction: "up" })}>Move up</MenuItem>
+          <MenuItem icon={<CornerUpLeft size={14} style={{ transform: "scaleY(-1)" }} />} disabled={pending} onClick={() => onRun({ intent: "reorder", nodeId: node.id, direction: "down" })}>Move down</MenuItem>
+          <MenuSeparator />
+          <MenuItem icon={<Settings2 size={14} />} onClick={() => onOpenPagesPanel(node.id)}>{isFolder ? "Folder settings" : "Page settings"}</MenuItem>
+          {!isFolder ? <MenuItem icon={<Sparkles size={14} />} onClick={() => onEditWithAgent(node.id, routes[node.id])}>Change this page with the agent</MenuItem> : null}
+          <MenuSeparator />
           <DeleteItem node={node} pending={pending} onConfirm={() => onRun({ intent: "delete", nodeId: node.id })} />
         </Menu>
       </span>
@@ -222,18 +222,13 @@ function Row(props: RowProps) {
 function DeleteItem({ node, pending, onConfirm }: { node: PageTreeNode; pending: boolean; onConfirm: () => void }) {
   const [armed, setArmed] = useState(false);
   if (!armed) {
-    return <button type="button" className="ws-mi ws-mi-danger" onClick={(event) => { event.stopPropagation(); setArmed(true); }}>
-      <Trash2 size={14} /><span className="ws-mi-label">Delete…</span>
-    </button>;
+    return <MenuItem icon={<Trash2 size={14} />} tone="danger" onClick={(event) => { event.stopPropagation(); setArmed(true); }}>Delete…</MenuItem>;
   }
-  return <div style={{ padding: "6px 8px" }} onClick={(event) => event.stopPropagation()}>
-    <p style={{ margin: "0 0 7px", fontSize: "var(--fs-body)" }}>
-      Delete <strong style={{ color: "var(--text)" }}>{node.name}</strong>
-      {node.children.length ? ` and everything inside it (${node.children.length}+ items)` : ""}?
-    </p>
-    <div style={{ display: "flex", gap: 6 }}>
+  return <div className="menu-confirm" onClick={(event) => event.stopPropagation()}>
+    <p>Delete <strong>{node.name}</strong>{node.children.length ? ` and everything inside it (${node.children.length}+ items)` : ""}? This cannot be undone.</p>
+    <div className="inline gap-3">
       <button type="button" className="button button-danger button-sm" disabled={pending} onClick={onConfirm}>Delete</button>
-      <button type="button" className="button button-secondary button-sm" onClick={() => setArmed(false)}>Keep</button>
+      <button type="button" className="button button-secondary button-sm" onClick={() => setArmed(false)}>Keep it</button>
     </div>
   </div>;
 }

@@ -53,7 +53,7 @@ function EditNodeDialog({ projectId, node, nodes }: { projectId: string; node: P
 
 function TreeItem({ projectId, node, nodes, depth }: { projectId: string; node: PageTreeNode; nodes: PageNode[]; depth: number }) {
   const [expanded, setExpanded] = useState(true);
-  return <li className="tree-item"><div className="tree-row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
+  return <li><div className="tree-row" style={{ paddingLeft: `${12 + depth * 22}px` }}>
     <button className="tree-chevron" type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`} onClick={() => setExpanded((value) => !value)} disabled={!node.children.length}>{node.children.length ? expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} /> : null}</button>
     <span className="tree-type-icon">{node.isHomepage ? <Home size={17} /> : node.type === "folder" ? <Folder size={17} /> : <FileText size={17} />}</span>
     <span className="tree-label"><strong>{node.name}</strong><small>{node.type === "page" ? node.routePath : `${node.children.length} item${node.children.length === 1 ? "" : "s"}`}</small></span>

@@ -1,10 +1,11 @@
 "use client";
 
-import { Clock, Link as LinkIcon, RefreshCw } from "lucide-react";
+import { Clock, RefreshCw } from "lucide-react";
 import { useActionState } from "react";
 import { createInviteAction, revokeInviteAction, type InviteActionState } from "@/app/actions/collaboration";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
+import { InlineAlert } from "@/components/ui/feedback";
 import { SubmitButton } from "@/components/ui/submit-button";
 
 const initialState: InviteActionState = {};
@@ -13,9 +14,10 @@ export function InviteManager({ projectId, currentInvite }: { projectId: string;
   const [state, action] = useActionState(createInviteAction, initialState);
   const active = state.inviteUrl ? { id: state.inviteId, expiresAt: state.expiresAt } : currentInvite;
   return <div className="invite-manager">
-    <div className="invite-copy"><span className="entity-icon"><LinkIcon size={18} /></span><div><h2>Invite collaborators</h2><p>Anyone with this active link can join this project as a collaborator.</p></div></div>
-    {state.inviteUrl ? <div className="invite-link-row"><code>{state.inviteUrl}</code><CopyButton value={state.inviteUrl} /></div> : active ? <div className="notice"><Clock size={16} /><span>An active link exists. Regenerate it to copy a new link.</span></div> : null}
-    {active?.expiresAt ? <p className="invite-expiry"><Clock size={14} />Expires {new Date(active.expiresAt).toLocaleString("en", { dateStyle: "medium", timeStyle: "short" })}</p> : null}
+    <p className="text-body text-muted">Anyone with an active link can open this website and work on it. Revoke a link to end that access.</p>
+    {state.inviteUrl ? <div className="invite-link-row"><code>{state.inviteUrl}</code><CopyButton value={state.inviteUrl} /></div>
+      : active ? <InlineAlert tone="info" title="A link is already active">Regenerate it to copy a new one. The previous link stops working.</InlineAlert> : null}
+    {active?.expiresAt ? <p className="invite-expiry"><Clock size={13} aria-hidden="true" />Expires {new Date(active.expiresAt).toLocaleString("en", { dateStyle: "medium", timeStyle: "short" })}</p> : null}
     {state.error ? <p className="form-error" role="alert">{state.error}</p> : null}
     {state.success ? <p className="form-success" role="status">{state.success}</p> : null}
     <div className="inline-actions">

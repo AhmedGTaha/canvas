@@ -58,7 +58,7 @@ export function HistorySidebar({ controller, section, onSection }: { controller:
         </Section>
       </div>
     </div>
-    <p className="wsx-foot">Immutable versions and checkpoints</p>
+    <p className="wsx-foot">Every change is kept. Nothing is ever overwritten.</p>
   </>;
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { notFound } from "next/navigation";
-import { CalendarDays, ShieldCheck, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { CalendarDays, ChevronRight, Package, ShieldCheck, Sparkles, UserRound, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { BlockLibrary } from "@/components/blocks/block-library";
 import { InviteManager } from "@/components/collaboration/invite-manager";
@@ -12,7 +12,9 @@ import { PageSettingsEditor } from "@/components/pages/page-tree-manager";
 import { ProjectInstructionsEditor } from "@/components/projects/project-instructions-editor";
 import { RenameProjectDialog } from "@/components/projects/project-forms";
 import { ThemeEditor } from "@/components/theme/theme-editor";
-import { Card } from "@/components/ui/card";
+import { InlineAlert } from "@/components/ui/feedback";
+import { Section } from "@/components/ui/panel";
+import { EmptyState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { PanelLink } from "@/components/workspace/panel-link";
 import { PanelSection } from "@/components/workspace/panel-section";
@@ -50,18 +52,27 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
     try { access = await new ProjectService().readWithRole(user.id, projectId); } catch { notFound(); }
     const { project, role, owner } = access;
     return {
-      title: "Project Settings",
-      description: project.description || "Add a description as this project takes shape.",
+      title: "Website settings",
+      description: project.description || "No description yet. Add one to say what this website is for.",
       size: "drawer",
       actions: role === "owner" ? <RenameProjectDialog id={project.id} name={project.name} /> : undefined,
-      body: <div className="settings-page-stack"><Card>
-        <dl className="detail-list">
-          <div><dt><ShieldCheck size={15} />Status</dt><dd><StatusBadge status={project.status} /></dd></div>
-          <div><dt><UserRound size={15} />Owner</dt><dd>{owner.displayName}</dd></div>
-          <div><dt><UsersRound size={15} />Your role</dt><dd style={{ textTransform: "capitalize" }}>{role}</dd></div>
-          <div><dt><CalendarDays size={15} />Created</dt><dd>{project.createdAt.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}</dd></div>
-        </dl>
-      </Card><nav className="settings-destinations" aria-label="Project settings sections"><PanelLink tool="settings"><Sparkles size={16} /><span><strong>Agent guidance</strong><small>Instructions Canvas follows for this website</small></span></PanelLink><PanelLink tool="collaborators"><UsersRound size={16} /><span><strong>Collaborators</strong><small>People who can work on this project</small></span></PanelLink><PanelLink tool="export"><ShieldCheck size={16} /><span><strong>Export website</strong><small>Validate and download the frontend project</small></span></PanelLink></nav></div>,
+      body: <>
+        <Section title="This website">
+          <dl className="detail-list">
+            <div><dt><ShieldCheck size={14} />Status</dt><dd><StatusBadge status={project.status} /></dd></div>
+            <div><dt><UserRound size={14} />Owner</dt><dd>{owner.displayName}</dd></div>
+            <div><dt><UsersRound size={14} />Your role</dt><dd style={{ textTransform: "capitalize" }}>{role}</dd></div>
+            <div><dt><CalendarDays size={14} />Created</dt><dd>{project.createdAt.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}</dd></div>
+          </dl>
+        </Section>
+        <Section title="Settings for this website">
+          <nav className="destination-list" aria-label="Website settings">
+            <PanelLink tool="settings" className="destination"><Sparkles size={16} /><span><strong>Agent guidance</strong><small>What the agent should always know</small></span><ChevronRight size={15} /></PanelLink>
+            <PanelLink tool="collaborators" className="destination"><UsersRound size={16} /><span><strong>Collaborators</strong><small>Who else can work on this website</small></span><ChevronRight size={15} /></PanelLink>
+            <PanelLink tool="export" className="destination"><Package size={16} /><span><strong>Export website</strong><small>Check it, build it, download the ZIP</small></span><ChevronRight size={15} /></PanelLink>
+          </nav>
+        </Section>
+      </>,
     };
   }
 
@@ -69,7 +80,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
     let project; let nodes;
     try { [project, nodes] = await Promise.all([new ProjectService().read(user.id, projectId), new PageTreeService().listTree(user.id, projectId)]); } catch { notFound(); }
     const node = options.nodeId ? nodes.find((item) => item.id === options.nodeId) : undefined;
-    return { title: node?.type === "folder" ? "Folder Settings" : "Page Settings", description: node ? `Settings for ${node.name}. Website remains the canonical place to browse and organize pages.` : "Select a page or folder from Website to edit its details.", size: "drawer", body: node ? <PageSettingsEditor projectId={project.id} node={node} nodes={nodes} /> : <div className="empty-state"><h2>No page selected</h2><p>Close this drawer and choose a page or folder from Website.</p></div> };
+    return { title: node?.type === "folder" ? "Folder settings" : "Page settings", description: node ? `The address, title and description for ${node.name}.` : "Pick a page or folder in the Website sidebar to edit its details.", size: "drawer", body: node ? <PageSettingsEditor projectId={project.id} node={node} nodes={nodes} /> : <EmptyState title="No page chosen" description="Close this and pick a page or folder in the Website sidebar to edit its details." /> };
   }
 
   if (name === "media") {
@@ -98,7 +109,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
     catch (error) { session = null; previewError = previewUnavailableMessage(error); }
     return {
       title: "Reusable sections",
-      description: "Navbars, footers, cards and other sections you can use on many pages at once.",
+      description: "Navigation bars, footers, cards and other sections you can use on many pages at once.",
       size: "wide",
       body: <BlockLibrary projectId={project.id} initialBlocks={blocks} initialBlockId={options.blockId} initialSession={session} initialPreviewError={previewError} initialInstanceId={randomUUID()} mediaAssets={media.assets} mediaFolders={media.folders} />,
     };
@@ -115,8 +126,8 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
       ]);
     } catch { notFound(); }
     return {
-      title: "Brand & design",
-      description: "The identity, colours, type and spacing shared by every page.",
+      title: "Brand and design",
+      description: "The logo, colours, type and spacing shared by every page of this website.",
       size: "wide",
       body: <div className="brand-page-stack">
         <PanelSection focus={options.section === "identity"} />
@@ -152,16 +163,17 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
     const currentInvite = access.role === "owner" ? await new InvitationService().current(user.id, project.id) : undefined;
     return {
       title: "Collaborators",
-      description: "Who can open this project, and how to invite more people.",
+      description: "Who can open this website, and how to invite more people.",
       size: "drawer",
       body: <div className="collaboration-layout">
         {access.role === "owner"
-          ? <Card><InviteManager projectId={project.id} currentInvite={currentInvite ? { id: currentInvite.id, expiresAt: currentInvite.expiresAt.toISOString() } : undefined} /></Card>
-          : <Card className="notice-card"><UsersRound size={20} /><div><h2>Shared project</h2><p>You can work on this project. Only its owner can invite or remove people.</p></div></Card>}
-        <Card>
-          <div className="section-heading"><div><p className="eyebrow">Access</p><h2>People with access</h2></div></div>
+          ? <Section title="Invite by link" description="Share a link with someone to give them access to this website.">
+              <InviteManager projectId={project.id} currentInvite={currentInvite ? { id: currentInvite.id, expiresAt: currentInvite.expiresAt.toISOString() } : undefined} />
+            </Section>
+          : <InlineAlert tone="info" title="You are a collaborator here">You can work on this website. Only its owner can invite or remove people.</InlineAlert>}
+        <Section title="People with access" description={people.collaborators.length ? undefined : "Only you, so far."}>
           <MemberList projectId={project.id} owner={people.owner} collaborators={people.collaborators} canManage={access.role === "owner"} />
-        </Card>
+        </Section>
       </div>,
     };
   }
@@ -171,7 +183,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
   try { [project, instructions] = await Promise.all([new ProjectService().read(user.id, projectId), new ProjectInstructionService().read(user.id, projectId)]); } catch { notFound(); }
   return {
     title: "Agent guidance",
-    description: "Guidance the agent should always follow on this website.",
+    description: "Standing instructions the agent follows on every change to this website.",
     size: "drawer",
     body: <ProjectInstructionsEditor projectId={project.id} initialContent={instructions.content} initialRevision={instructions.revisionNumber} />,
   };

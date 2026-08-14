@@ -49,7 +49,7 @@ export function createWorkspaceCommands(c: WorkspaceCommandContext): WorkspaceCo
     command({ id: "preview.mobile", label: "Preview on phone", category: "Preview", icon: "phone", run: () => c.setDevice("mobile") }),
     command({ id: "preview.fullscreen", label: "Toggle full screen", category: "Preview", icon: "maximize", run: c.toggleFullScreen }),
     command({ id: "collaboration.manage", label: "Collaborators", category: "Collaboration", icon: "users", run: panel("collaborators") }),
-    command({ id: "project.details", label: "Project Settings", category: "Project", icon: "settings", run: panel("overview"), synonyms: ["details"] }),
+    command({ id: "project.details", label: "Website settings", category: "Project", icon: "settings", run: panel("overview"), synonyms: ["details"] }),
     command({ id: "project.agent-guidance", label: "Agent guidance", category: "Project", icon: "sparkles", run: panel("settings"), synonyms: ["instructions"] }),
     command({ id: "export.open", label: "Export website", category: "Export", icon: "download", run: panel("export"), availability: c.activeWork ? no("Wait for the current update to finish.") : yes }),
     command({ id: "account.open", label: "Account", category: "Account", icon: "user", target: "/account", run: () => c.navigate("/account") }),

@@ -1,0 +1,92 @@
+/* ==========================================================================
+   Canvas base layer.
+
+   Element defaults and the handful of utilities every surface needs. No
+   component lives here, and no value is written that is not a token.
+   ========================================================================== */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  background: var(--surface-app);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 100%;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-size: var(--fs-md);
+  line-height: var(--lh-body);
+}
+
+a { color: inherit; }
+button, input, textarea, select { font: inherit; }
+button, summary { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled) { cursor: pointer; }
+
+/* One focus treatment for the whole product: a blueprint ring, offset so it
+   reads on both light surfaces and the sunken mat. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-2);
+}
+
+h1, h2, h3, h4 {
+  margin: 0 0 var(--sp-3);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-heading);
+}
+h1 { font-size: var(--fs-2xl); }
+h2 { font-size: var(--fs-lg); }
+h3 { font-size: var(--fs-md); }
+h4 { font-size: var(--fs-body); }
+
+p { margin: 0 0 var(--sp-6); color: var(--text-muted); line-height: var(--lh-body); }
+p:last-child { margin-bottom: 0; }
+
+hr { height: 1px; margin: var(--sp-12) 0; border: 0; background: var(--border); }
+
+img, svg, video { max-width: 100%; }
+svg { flex: none; }
+
+::selection { background: var(--focus-line); color: var(--text); }
+
+/* --------------------------------------------------------------- utilities */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

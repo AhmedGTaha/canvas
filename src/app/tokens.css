@@ -1,0 +1,216 @@
+/* ==========================================================================
+   Canvas design tokens.
+
+   One source for every visual decision in the product. Screens and components
+   consume the semantic names below; nobody hardcodes a hex, a pixel radius or a
+   duration again.
+
+   The palette is deliberate. Canvas is a tool for building websites, and the
+   website being built is the only thing on screen that should carry colour, so
+   the chrome is a warm neutral ramp — paper and graphite — rather than the cool
+   blue-greys of an IDE. Exactly one accent hue is used, "blueprint", and only
+   ever to say *this is the thing you are working on or acting through*:
+   selection, focus, the agent at work. Anything competing with that is a bug.
+
+   Layers:
+     1. primitives — raw scales, never referenced by components directly
+     2. semantics  — what components use: surface-panel, text-muted, border-focus
+     3. legacy     — the old variable names, mapped onto the semantics above so
+                     unmigrated CSS keeps rendering while it is replaced
+   ========================================================================== */
+
+:root {
+  /* ---------------------------------------------------------- 1. primitives */
+
+  /* Warm neutral ramp. Hue held at ~40° so greys read as paper, not slate. */
+  --n-0: #ffffff;
+  --n-25: #fcfbfa;
+  --n-50: #f7f6f4;
+  --n-100: #f1efec;
+  --n-150: #e9e7e3;
+  --n-200: #e0ddd8;
+  --n-300: #cbc7c0;
+  --n-400: #a8a39b;
+  --n-500: #767063;
+  --n-600: #635e56;
+  --n-700: #47433d;
+  --n-800: #2b2926;
+  --n-900: #1a1917;
+
+  /* Blueprint — the single accent. Deeper and less saturated than the SaaS
+     blue it replaces, so a selected row reads as marked rather than lit up. */
+  --blueprint-50: #eef3fb;
+  --blueprint-100: #dbe6f6;
+  --blueprint-200: #b8cdec;
+  --blueprint-500: #2f5aa8;
+  --blueprint-600: #27498a;
+  --blueprint-700: #1e3a70;
+
+  /* Status hues. Muted to sit beside the neutrals without shouting. */
+  --green-50: #ecf7f1;
+  --green-200: #b6e0c9;
+  --green-600: #0f7a4d;
+  --green-700: #0b6340;
+  --red-50: #fdf2f0;
+  --red-200: #f2c3bc;
+  --red-600: #b3251c;
+  --red-700: #8f1d16;
+  --amber-50: #fdf4e6;
+  --amber-200: #f0d9a8;
+  --amber-700: #8a5a10;
+
+  /* ----------------------------------------------------------- 2. semantics */
+
+  /* surfaces */
+  --surface-app: var(--n-50);          /* dashboard and auth backdrop */
+  --surface-chrome: var(--n-25);       /* workspace bars, sidebars, panels */
+  --surface: var(--n-0);               /* raised content: cards, inputs, menus */
+  --surface-muted: var(--n-100);       /* quiet fills: chips, metadata blocks */
+  --surface-sunken: var(--n-150);      /* the mat the preview sits on */
+  --surface-hover: var(--n-100);
+  --surface-press: var(--n-200);
+  --surface-selected: var(--blueprint-50);
+  --surface-overlay: rgba(26, 25, 23, 0.28);
+
+  /* ink */
+  --text: var(--n-900);
+  --text-secondary: var(--n-700);
+  --text-muted: var(--n-600);          /* AA on every surface above */
+  --text-subtle: var(--n-500);         /* micro-labels and placeholders */
+  --text-disabled: var(--n-400);
+  --text-on-accent: var(--n-0);
+  --icon: var(--n-500);
+  --icon-subtle: var(--n-400);         /* decorative only, always beside a label */
+
+  /* lines */
+  --border: var(--n-200);
+  --border-subtle: var(--n-150);
+  --border-strong: var(--n-300);
+  --border-focus: var(--blueprint-500);
+
+  /* accents and status */
+  --accent: var(--n-900);              /* primary actions stay graphite */
+  --accent-hover: var(--n-800);
+  --accent-contrast: var(--n-0);
+  --focus: var(--blueprint-500);
+  --focus-strong: var(--blueprint-700);
+  --focus-soft: var(--blueprint-50);
+  --focus-line: var(--blueprint-200);
+  --success: var(--green-600);
+  --success-soft: var(--green-50);
+  --success-line: var(--green-200);
+  --danger: var(--red-600);
+  --danger-hover: var(--red-700);
+  --danger-soft: var(--red-50);
+  --danger-line: var(--red-200);
+  --warning: var(--amber-700);
+  --warning-soft: var(--amber-50);
+  --warning-line: var(--amber-200);
+  --info: var(--blueprint-500);
+  --info-soft: var(--blueprint-50);
+  --info-line: var(--blueprint-200);
+
+  /* spacing — 2px base, 4px grid above 8px. Every gap and pad picks from here */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 10px;
+  --sp-6: 12px;
+  --sp-8: 16px;
+  --sp-10: 20px;
+  --sp-12: 24px;
+  --sp-16: 32px;
+  --sp-20: 40px;
+  --sp-24: 48px;
+  --sp-32: 64px;
+
+  /* type — chrome is dense but never smaller than 11px, and body copy for
+     non-technical users sits at 13–14px rather than the 12.5px it was */
+  --fs-micro: 0.6875rem;   /* 11px — captions, kbd, counts */
+  --fs-sm: 0.75rem;        /* 12px — secondary metadata */
+  --fs-body: 0.8125rem;    /* 13px — chrome body */
+  --fs-md: 0.875rem;       /* 14px — controls and prose */
+  --fs-lg: 1rem;           /* 16px — panel and section titles */
+  --fs-xl: 1.125rem;       /* 18px — panel headings */
+  --fs-2xl: 1.375rem;      /* 22px — page headings */
+  --fs-3xl: 1.75rem;       /* 28px — the one heading per screen */
+
+  --lh-tight: 1.25;
+  --lh-snug: 1.4;
+  --lh-body: 1.55;
+  --tracking-tight: -0.011em;
+  --tracking-heading: -0.02em;
+  --tracking-caps: 0.06em;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* radii */
+  --r-1: 3px;
+  --r-2: 5px;
+  --r-3: 7px;
+  --r-4: 10px;
+  --r-5: 14px;
+  --r-full: 999px;
+
+  /* elevation — one light source, low and warm, so raised things read as paper
+     lifted off a desk instead of glowing */
+  --e-1: 0 1px 2px rgba(26, 25, 23, 0.06);
+  --e-2: 0 1px 2px rgba(26, 25, 23, 0.07), 0 6px 16px rgba(26, 25, 23, 0.06);
+  --e-3: 0 2px 4px rgba(26, 25, 23, 0.08), 0 14px 34px rgba(26, 25, 23, 0.12);
+  --e-4: 0 4px 8px rgba(26, 25, 23, 0.09), 0 28px 64px rgba(26, 25, 23, 0.18);
+
+  /* motion — short and eased out; anything longer than --dur-3 in chrome is a
+     decision that has to be argued for */
+  --dur-1: 90ms;
+  --dur-2: 140ms;
+  --dur-3: 220ms;
+  --dur-4: 320ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasis: cubic-bezier(0.2, 1.1, 0.35, 1);
+
+  /* stacking — every fixed or absolute layer names its plane here */
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-chrome: 20;
+  --z-overlay: 30;
+  --z-panel: 40;
+  --z-popover: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
+
+  /* focus ring — one definition, applied by the .focus-ring helper and by
+     every control's :focus-visible */
+  --ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus);
+  --ring-inset: inset 0 0 0 2px var(--focus);
+
+  /* --------------------------------------------------------------- 3. legacy
+     Old names kept alive while the remaining screen CSS is migrated. Nothing
+     new should use them; each one disappears with its last caller. */
+  --background: var(--surface-app);
+  --muted: var(--text-muted);
+  --muted-strong: var(--text-secondary);
+  --muted-soft: var(--text-subtle);
+  --icon-soft: var(--icon-subtle);
+  --chrome: var(--surface-chrome);
+  --hover: var(--surface-hover);
+  --press: var(--surface-press);
+  --warning-soft: var(--amber-50);
+  --warning-ink: var(--amber-700);
+  --r-sm: var(--r-1);
+  --r: var(--r-2);
+  --r-lg: var(--r-3);
+  --radius: var(--r-4);
+  --r-xl: var(--r-4);
+  --shadow-sm: var(--e-1);
+  --shadow-card: var(--e-2);
+  --shadow-pop: var(--e-3);
+}

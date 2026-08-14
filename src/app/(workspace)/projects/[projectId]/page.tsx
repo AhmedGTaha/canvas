@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { MonitorOff } from "lucide-react";
 import { FeaturePanel } from "@/components/workspace/feature-panel";
 import { isPanelName } from "@/components/workspace/panel-names";
 import { resolvePanel } from "@/components/workspace/project-panel";
+import { ErrorState } from "@/components/ui/states";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 import { MediaService } from "@/domain/media/service";
 import { PageTreeService } from "@/domain/pages/service";
@@ -62,15 +62,14 @@ export default async function ProjectWorkspacePage({ params, searchParams }: { p
   // cannot be assembled. This is the one case that falls back to a plain screen.
   if (!session || !media) {
     return <div className="standalone-state">
-      <div className="empty-state error-state">
-        <span className="state-icon"><MonitorOff size={22} /></span>
-        <h2>This website could not be opened.</h2>
-        <p>{previewError ?? "Check the preview configuration, then try again."}</p>
-        <div className="inline-actions">
+      <ErrorState
+        title="This website could not be opened"
+        description={previewError ?? "Your pages and content are safe. Try opening it again in a moment."}
+        retry={<div className="inline-actions">
           <Link href={`/projects/${projectId}`} className="button button-primary">Try again</Link>
-          <Link href="/dashboard" className="button button-secondary">All projects</Link>
-        </div>
-      </div>
+          <Link href="/dashboard" className="button button-secondary">All websites</Link>
+        </div>}
+      />
     </div>;
   }
 

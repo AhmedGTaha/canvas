@@ -1,0 +1,674 @@
+/* ==========================================================================
+   Canvas component system.
+
+   Every reusable control, surface and state in the product. Screens compose
+   these; screens do not restyle them and do not invent their own. If a pattern
+   appears twice, it belongs in this file — and if a rule here is only ever true
+   for one screen, it does not.
+
+   Names match the components in src/components/ui/ one to one.
+   ========================================================================== */
+
+/* ============================================================ 1. primitives */
+
+/* A bare .stack still needs a rhythm; .gap-* overrides it. */
+.stack { display: flex; flex-direction: column; gap: var(--sp-8); min-width: 0; }
+.inline { display: flex; align-items: center; min-width: 0; }
+.inline-wrap { flex-wrap: wrap; }
+.grid { display: grid; min-width: 0; }
+.fill { flex: 1; min-width: 0; min-height: 0; }
+.push { margin-left: auto; }
+
+.gap-1 { gap: var(--sp-1); } .gap-2 { gap: var(--sp-2); } .gap-3 { gap: var(--sp-3); }
+.gap-4 { gap: var(--sp-4); } .gap-5 { gap: var(--sp-5); } .gap-6 { gap: var(--sp-6); }
+.gap-8 { gap: var(--sp-8); } .gap-10 { gap: var(--sp-10); } .gap-12 { gap: var(--sp-12); }
+.gap-16 { gap: var(--sp-16); } .gap-20 { gap: var(--sp-20); }
+
+.align-start { align-items: flex-start; }
+.align-end { align-items: flex-end; }
+.align-baseline { align-items: baseline; }
+.justify-between { justify-content: space-between; }
+.justify-end { justify-content: flex-end; }
+.justify-center { justify-content: center; }
+
+.divider { flex: none; height: 1px; border: 0; margin: 0; background: var(--border); }
+.divider-vertical { width: 1px; height: 100%; min-height: 16px; }
+
+/* Section caption: uppercase micro-label. Used to name a group of controls,
+   never as decoration above a heading that already says the same word. */
+.caption {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.text-muted { color: var(--text-muted); }
+.text-sm { font-size: var(--fs-sm); }
+.text-body { font-size: var(--fs-body); }
+
+/* =============================================================== 2. buttons */
+
+.button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-height: 32px;
+  padding: 0 var(--sp-6);
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.button:active:not(:disabled) { transform: translateY(0.5px); }
+/* Disabled means "not available here". A submit in flight is a wait, not a
+   refusal, so it keeps its colour and says so with the cursor. */
+.button:disabled { cursor: not-allowed; opacity: 0.5; }
+.button[data-pending="true"] { cursor: progress; opacity: 1; }
+
+.button-primary { background: var(--accent); color: var(--accent-contrast); }
+.button-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.button-secondary { background: var(--surface); border-color: var(--border-strong); color: var(--text); }
+.button-secondary:hover:not(:disabled) { background: var(--surface-muted); border-color: var(--border-strong); }
+.button-ghost { color: var(--text-secondary); }
+.button-ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.button-danger { background: var(--surface); border-color: var(--danger-line); color: var(--danger); }
+.button-danger:hover:not(:disabled) { background: var(--danger-soft); }
+
+.button-sm { min-height: 26px; padding: 0 var(--sp-4); font-size: var(--fs-sm); }
+.button-block { width: 100%; }
+
+/* Icon-only control. Square, quiet, and never without an accessible name. */
+.icon-button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--icon);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.icon-button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.icon-button[aria-pressed="true"] { background: var(--surface-press); color: var(--text); }
+.icon-button:disabled { color: var(--text-disabled); cursor: not-allowed; }
+.icon-button-sm { width: 22px; height: 22px; }
+
+/* =============================================================== 3. toolbar */
+
+.toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 40px;
+  padding: 0 var(--sp-4);
+}
+.toolbar-group { display: flex; flex: none; align-items: center; gap: var(--sp-1); }
+.toolbar-divider { flex: none; width: 1px; height: 18px; margin: 0 var(--sp-2); background: var(--border); }
+.toolbar-spacer { flex: 1; min-width: var(--sp-2); }
+
+/* ============================================================ 4. form input */
+
+.field { display: grid; gap: var(--sp-3); min-width: 0; }
+.field-label {
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+}
+.field-optional { margin-left: var(--sp-2); color: var(--text-subtle); font-weight: var(--fw-regular); }
+
+.input, .textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--sp-4) var(--sp-5);
+  font-size: var(--fs-md);
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+.input { height: 34px; padding-block: 0; }
+.textarea { min-height: 84px; resize: vertical; line-height: var(--lh-body); }
+.input::placeholder, .textarea::placeholder { color: var(--text-subtle); }
+.input:focus-visible, .textarea:focus-visible {
+  border-color: var(--focus);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+.input[aria-invalid="true"], .textarea[aria-invalid="true"] { border-color: var(--danger-line); }
+.input[aria-invalid="true"]:focus-visible, .textarea[aria-invalid="true"]:focus-visible { box-shadow: 0 0 0 3px var(--danger-soft); }
+.input:disabled, .textarea:disabled { background: var(--surface-muted); color: var(--text-disabled); cursor: not-allowed; }
+
+/* A bare bordered box reads as a text field, so a select says that it opens. */
+select.input {
+  padding-right: var(--sp-16);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23837d74' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--sp-5) center;
+  cursor: pointer;
+}
+select.input:disabled { cursor: not-allowed; }
+
+.field-hint { color: var(--text-muted); font-size: var(--fs-sm); line-height: var(--lh-snug); }
+.field-error { color: var(--danger); font-size: var(--fs-sm); line-height: var(--lh-snug); }
+
+/* Search field: an input that owns its icon and its clear control. */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 30px;
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--icon);
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+.search-field:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-soft); }
+.search-field input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+.search-field input::placeholder { color: var(--text-subtle); }
+.search-field-lg { height: 36px; }
+
+/* Checkbox and switch. Both keep the native control as the accessible thing
+   and style the box around it, so keyboard and forms behave natively. */
+.choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-4);
+  min-width: 0;
+  font-size: var(--fs-md);
+}
+.choice input[type="checkbox"], .choice input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--focus);
+  cursor: pointer;
+}
+.choice-text { display: grid; gap: var(--sp-1); min-width: 0; }
+.choice-text small { color: var(--text-muted); font-size: var(--fs-sm); line-height: var(--lh-snug); }
+
+.switch { display: flex; align-items: center; gap: var(--sp-5); justify-content: space-between; min-width: 0; }
+.switch-control {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: var(--r-full);
+  background: var(--n-300);
+  transition: background var(--dur-2) var(--ease-out);
+}
+.switch-control::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--e-1);
+  transition: transform var(--dur-2) var(--ease-emphasis);
+}
+.switch-input { position: relative; display: inline-flex; flex: none; }
+.switch-input input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch-input input:checked + .switch-control { background: var(--focus); }
+.switch-input input:checked + .switch-control::after { transform: translateX(14px); }
+.switch-input input:focus-visible + .switch-control { outline: 2px solid var(--focus); outline-offset: 2px; }
+.switch-input input:disabled + .switch-control { opacity: 0.5; }
+
+/* Form structure: sections with a heading and a stack of fields, then one row
+   of actions. Settings are not each a card. */
+.form-section { display: grid; gap: var(--sp-8); padding: var(--sp-12) 0; border-top: 1px solid var(--border-subtle); }
+.form-section:first-child { padding-top: 0; border-top: 0; }
+.form-section-head { display: grid; gap: var(--sp-2); max-width: 62ch; }
+.form-section-head h3 { margin: 0; font-size: var(--fs-md); }
+.form-section-head p { margin: 0; font-size: var(--fs-body); }
+.form-fields { display: grid; gap: var(--sp-10); }
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-4);
+  padding-top: var(--sp-10);
+}
+.form-actions-split { justify-content: space-between; }
+
+/* =========================================================== 5. segmented */
+
+.segmented {
+  display: inline-flex;
+  flex: none;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-2);
+  background: var(--surface-sunken);
+}
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 24px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.segmented button:hover:not(:disabled) { color: var(--text); }
+.segmented button[aria-pressed="true"], .segmented button[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--e-1);
+}
+.segmented-lg button { height: 30px; padding: 0 var(--sp-6); font-size: var(--fs-body); }
+
+/* Tabs: a underline row, for switching what a body shows. */
+.tabs { display: flex; gap: var(--sp-6); border-bottom: 1px solid var(--border); }
+.tabs button {
+  position: relative;
+  padding: var(--sp-4) var(--sp-1) var(--sp-5);
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-selected="true"] { color: var(--text); }
+.tabs button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 2px;
+  border-radius: var(--r-full) var(--r-full) 0 0;
+  background: var(--focus);
+}
+
+/* ========================================================== 6. status, chip */
+
+.badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  padding: 0 var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.badge-neutral { background: var(--surface-muted); color: var(--text-secondary); }
+.badge-info { background: var(--info-soft); border-color: var(--info-line); color: var(--focus-strong); }
+.badge-success { background: var(--success-soft); border-color: var(--success-line); color: var(--success); }
+.badge-warning { background: var(--warning-soft); border-color: var(--warning-line); color: var(--warning); }
+.badge-danger { background: var(--danger-soft); border-color: var(--danger-line); color: var(--danger); }
+
+/* State is never carried by colour alone: every indicator pairs its dot with
+   a label, and the dot shape changes with the tone. */
+.status-indicator { display: inline-flex; align-items: center; gap: var(--sp-3); min-width: 0; font-size: var(--fs-sm); }
+.status-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--icon); }
+.status-dot-success { background: var(--success); }
+.status-dot-danger { background: var(--danger); }
+.status-dot-warning { background: var(--warning); }
+.status-dot-info { background: var(--focus); }
+.status-dot-busy { background: var(--focus); animation: pulse 1.4s var(--ease-in-out) infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+.chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 22px;
+  padding: 0 var(--sp-3) 0 var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+.chip-accent { border-color: var(--focus-line); background: var(--focus-soft); color: var(--focus-strong); }
+.chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip img { flex: none; width: 18px; height: 18px; border-radius: var(--r-1); object-fit: cover; }
+.chip-remove {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+}
+.chip-remove:hover { background: rgba(47, 90, 168, 0.14); opacity: 1; }
+
+/* ============================================================= 7. feedback */
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+}
+.alert > svg { flex: none; margin-top: 1px; }
+.alert-body { display: grid; gap: var(--sp-2); min-width: 0; flex: 1; }
+.alert-body strong { color: var(--text); font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+.alert-body p { margin: 0; color: inherit; font-size: var(--fs-body); }
+.alert-info { border-color: var(--info-line); background: var(--info-soft); color: var(--focus-strong); }
+.alert-success { border-color: var(--success-line); background: var(--success-soft); color: var(--success); }
+.alert-warning { border-color: var(--warning-line); background: var(--warning-soft); color: var(--warning); }
+.alert-danger { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger); }
+.alert-info .alert-body strong, .alert-success .alert-body strong,
+.alert-warning .alert-body strong, .alert-danger .alert-body strong { color: inherit; }
+
+/* Empty, loading and error share one anatomy so a surface changing state does
+   not change shape underneath the user. */
+.state {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--sp-4);
+  padding: var(--sp-24) var(--sp-12);
+  text-align: center;
+}
+.state-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: var(--sp-2);
+  border-radius: var(--r-3);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+.state h2, .state h3 { margin: 0; font-size: var(--fs-md); }
+.state p { max-width: 44ch; margin: 0; font-size: var(--fs-body); }
+.state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-4); margin-top: var(--sp-4); }
+.state-compact { padding: var(--sp-12) var(--sp-8); }
+.state-inline { padding: var(--sp-10) var(--sp-8); border: 1px dashed var(--border-strong); border-radius: var(--r-3); }
+.state-danger .state-icon { background: var(--danger-soft); color: var(--danger); }
+.state-loading { color: var(--text-muted); font-size: var(--fs-body); }
+
+.skeleton {
+  display: block;
+  border-radius: var(--r-2);
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface-hover) 37%, var(--surface-muted) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s var(--ease-in-out) infinite;
+}
+.skeleton-text { height: 10px; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { background: var(--surface-muted); animation: none; }
+}
+
+.progress {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--surface-press);
+}
+.progress > span { display: block; height: 100%; border-radius: inherit; background: var(--focus); transition: width var(--dur-3) var(--ease-out); }
+.progress-indeterminate > span { width: 40%; animation: slide 1.3s var(--ease-in-out) infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+
+/* Tooltip: label-only, appears after a beat, never carries an action. */
+.tooltip-host { position: relative; display: inline-flex; }
+.tooltip {
+  position: absolute;
+  z-index: var(--z-tooltip);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-2);
+  background: var(--n-900);
+  color: var(--n-0);
+  box-shadow: var(--e-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: tooltip-in var(--dur-1) var(--ease-out);
+}
+.tooltip-top { bottom: calc(100% + var(--sp-3)); left: 50%; transform: translateX(-50%); }
+.tooltip-bottom { top: calc(100% + var(--sp-3)); left: 50%; transform: translateX(-50%); }
+.tooltip-right { left: calc(100% + var(--sp-3)); top: 50%; transform: translateY(-50%); }
+@keyframes tooltip-in { from { opacity: 0; } }
+
+/* =========================================================== 8. rows, list */
+
+/* One row anatomy for every list in the product: a leading glyph, a label
+   stack that truncates, trailing metadata, and actions that appear on hover
+   but are always reachable by keyboard. */
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: 34px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  text-align: left;
+}
+.row-button { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; }
+.row:hover { background: var(--surface-hover); }
+.row-selected { background: var(--surface-selected); color: var(--focus-strong); font-weight: var(--fw-semibold); }
+/* The selection spine: the one mark that means "this is what you are editing",
+   repeated on explorer rows, activity items and the agent's target. */
+.row-selected::before {
+  content: "";
+  position: absolute;
+  inset: var(--sp-1) auto var(--sp-1) 0;
+  width: 2px;
+  border-radius: var(--r-full);
+  background: var(--focus);
+}
+.row-main { display: grid; gap: var(--sp-1); min-width: 0; flex: 1; }
+.row-main strong { overflow: hidden; font-size: var(--fs-body); font-weight: var(--fw-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.row-main small { overflow: hidden; color: var(--text-muted); font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { flex: none; color: var(--text-muted); font-size: var(--fs-sm); }
+.row-actions { display: flex; flex: none; gap: var(--sp-1); opacity: 0; transition: opacity var(--dur-1) var(--ease-out); }
+.row:hover .row-actions, .row:focus-within .row-actions, .row-selected .row-actions { opacity: 1; }
+.row-icon { flex: none; color: var(--icon); }
+.row-selected .row-icon { color: var(--focus); }
+
+.list { display: grid; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
+
+/* ============================================================== 9. surfaces */
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-4);
+  background: var(--surface);
+  padding: var(--sp-12);
+}
+
+/* Panel anatomy — shared by every tool panel and every sidebar surface, so
+   nine tools read as one product. */
+.panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.panel-header {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-6) var(--sp-8) var(--sp-12);
+  border-bottom: 1px solid var(--border);
+}
+.panel-header-main { display: grid; gap: var(--sp-2); min-width: 0; flex: 1; }
+.panel-header h1, .panel-header h2 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-heading);
+}
+.panel-header p { margin: 0; max-width: 68ch; font-size: var(--fs-body); }
+.panel-header-actions { display: flex; flex: none; align-items: center; gap: var(--sp-4); }
+.panel-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-12);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-chrome);
+}
+.panel-body { flex: 1; min-height: 0; padding: var(--sp-12); overflow: auto; overscroll-behavior: contain; }
+.panel-body-flush { padding: 0; }
+.panel-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-12);
+  border-top: 1px solid var(--border);
+  background: var(--surface-chrome);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+/* A titled block inside a panel body. Structure and spacing group settings,
+   not a card around each one. */
+.section { display: grid; gap: var(--sp-8); padding-bottom: var(--sp-16); }
+.section + .section { border-top: 1px solid var(--border-subtle); padding-top: var(--sp-16); }
+.section:last-child { padding-bottom: 0; }
+.section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-8); }
+.section-head h2, .section-head h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-md); }
+.section-head p { margin: 0; max-width: 68ch; font-size: var(--fs-body); }
+.section-head-actions { display: flex; flex: none; align-items: center; gap: var(--sp-3); }
+
+/* ============================================================= 10. overlays */
+
+.menu { position: relative; display: inline-flex; }
+.menu-trigger {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--icon);
+}
+.menu-trigger:hover, .menu-trigger[aria-expanded="true"] { background: var(--surface-hover); color: var(--text); }
+.menu-content {
+  position: absolute;
+  top: calc(100% + var(--sp-2));
+  right: 0;
+  z-index: var(--z-popover);
+  min-width: 208px;
+  padding: var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-3);
+  background: var(--surface);
+  box-shadow: var(--e-3);
+  animation: menu-in var(--dur-1) var(--ease-out);
+  transform-origin: top right;
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(0.97) translateY(-2px); } }
+
+.menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--sp-5);
+  min-height: 30px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-body);
+  text-align: left;
+  text-decoration: none;
+}
+.menu-item > svg { flex: none; color: var(--icon); }
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--surface-hover); outline: 0; }
+.menu-item:disabled { color: var(--text-disabled); cursor: not-allowed; }
+.menu-item-danger { color: var(--danger); }
+.menu-item-danger > svg { color: var(--danger); }
+.menu-item-danger:hover:not(:disabled) { background: var(--danger-soft); }
+.menu-item-key { margin-left: auto; color: var(--text-subtle); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.menu-separator { height: 1px; margin: var(--sp-2) var(--sp-3); background: var(--border); }
+.menu-confirm { padding: var(--sp-4); }
+.menu-confirm p { margin: 0 0 var(--sp-4); color: var(--text-secondary); font-size: var(--fs-body); line-height: var(--lh-snug); }
+.menu-confirm strong { color: var(--text); }
+.menu-label { padding: var(--sp-4) var(--sp-4) var(--sp-2); color: var(--text-subtle); font-size: var(--fs-micro); font-weight: var(--fw-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+
+.dialog {
+  width: min(520px, calc(100vw - var(--sp-16)));
+  max-height: calc(100vh - var(--sp-24));
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-5);
+  background: transparent;
+  box-shadow: var(--e-4);
+}
+.dialog::backdrop { background: var(--surface-overlay); animation: fade-in var(--dur-2) var(--ease-out); }
+.dialog[open] { animation: dialog-in var(--dur-2) var(--ease-out); }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(0.99); } }
+.dialog-panel {
+  max-height: calc(100vh - var(--sp-24));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-16);
+  border: 1px solid var(--border);
+  border-radius: var(--r-5);
+  background: var(--surface);
+}
+.dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-12); margin-bottom: var(--sp-12); }
+.dialog-header h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-xl); }
+.dialog-header p { margin: 0; font-size: var(--fs-body); }
+.dialog-wide { width: min(720px, calc(100vw - var(--sp-16))); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog[open], .dialog::backdrop, .menu-content, .tooltip { animation: none; }
+}

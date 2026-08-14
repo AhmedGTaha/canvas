@@ -35,9 +35,9 @@ export function HistoryMessages({ controller }: { controller: HistoryController 
 export function VersionList({ controller }: { controller: HistoryController }) {
   const { target, versions, busy } = controller;
   return <div className="history-list">
-    {!target ? <p className="inline-empty">Select a page or block to see its versions.</p>
-      : !versions ? <p className="inline-empty"><LoaderCircle className="spin" size={13} /> Loading versions…</p>
-      : versions.versions.length === 0 ? <p className="inline-empty">No versions yet. Create this with Canvas first.</p>
+    {!target ? <p className="quiet-note">Select a page or block to see its versions.</p>
+      : !versions ? <p className="quiet-note"><LoaderCircle className="spin" size={13} /> Loading versions…</p>
+      : versions.versions.length === 0 ? <p className="quiet-note">No versions yet. Create this with Canvas first.</p>
       : versions.versions.map((version) => <div key={version.id} className={`history-row ${version.isCurrent ? "current" : ""}`}>
         <div><strong>Version {version.versionNumber}{version.isCurrent ? " · Active" : ""}</strong><small>{whenLabel(version.createdAt)} · {version.actor}</small>{version.summary ? <span>{version.summary}</span> : null}</div>
         {version.isCurrent ? <span className="history-current-tag">Active</span>
@@ -55,8 +55,8 @@ export function CheckpointList({ controller }: { controller: HistoryController }
       <input className="input" value={name} maxLength={120} placeholder="Before pricing rework" aria-label="Checkpoint name" onChange={(event) => setName(event.target.value)} />
       <Button type="submit" disabled={busy || !name.trim()}><Save size={14} />Save checkpoint</Button>
     </form>
-    {!checkpoints ? <p className="inline-empty"><LoaderCircle className="spin" size={13} /> Loading checkpoints…</p>
-      : checkpoints.length === 0 ? <p className="inline-empty">No checkpoints yet. Save one before a big change.</p>
+    {!checkpoints ? <p className="quiet-note"><LoaderCircle className="spin" size={13} /> Loading checkpoints…</p>
+      : checkpoints.length === 0 ? <p className="quiet-note">No checkpoints yet. Save one before a big change.</p>
       : checkpoints.map((checkpoint) => <div key={checkpoint.id} className="history-row">
         <div><strong>{checkpoint.name}</strong><small>{whenLabel(checkpoint.createdAt)} · {checkpoint.actor}</small><span>{checkpoint.pageCount} pages · {checkpoint.blockCount} blocks</span></div>
         <Button type="button" variant="secondary" disabled={busy} onClick={() => controller.restoreCheckpoint(checkpoint)}><RotateCcw size={13} />Restore</Button>
@@ -66,7 +66,7 @@ export function CheckpointList({ controller }: { controller: HistoryController }
 
 /** Everything that has happened to the project, newest first. */
 export function ActivityList({ controller, limit = 12 }: { controller: HistoryController; limit?: number }) {
-  if (!controller.activity.length) return <p className="inline-empty">Nothing has changed yet.</p>;
+  if (!controller.activity.length) return <p className="quiet-note">Nothing has changed yet.</p>;
   return <ul className="history-activity-list">
     {controller.activity.slice(0, limit).map((entry) => <li key={entry.id}>
       <span>{entry.summary}</span>

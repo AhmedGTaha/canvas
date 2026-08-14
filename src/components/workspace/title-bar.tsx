@@ -1,16 +1,70 @@
 "use client";
+
 import Link from "next/link";
-import { ChevronDown, Command, Home, LogOut, PanelRight, Search, UserRound, UsersRound } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Command, PanelRight, Search, UsersRound } from "lucide-react";
+import { AccountMenu } from "@/components/navigation/account-menu";
 import { TaskIndicator } from "@/components/tasks/task-center";
 
-export function TitleBar({ workspaceName, projectName, pageName, userName, canShare, activeTasks, failedTasks, saveState, agentOpen, onSearch, onShare, onTasks, onToggleAgent, onSignOut }: { workspaceName: string; projectName: string; pageName: string; userName: string; canShare: boolean; activeTasks: number; failedTasks: number; saveState?: string; agentOpen: boolean; onSearch: () => void; onShare: () => void; onTasks: () => void; onToggleAgent: () => void; onSignOut: () => void }) {
-  return <header className="ws-title"><Link href="/dashboard" className="ws-brand-home" aria-label="Canvas home" title="Canvas home"><span><Command size={16} /></span><strong>Canvas</strong></Link>
-    <nav className="ws-breadcrumb" aria-label="Project location"><span>{workspaceName}</span><i>/</i><strong>{projectName}</strong><i>/</i><span>{pageName}</span></nav>
-    <button type="button" className="ws-search-trigger" onClick={onSearch}><Search size={14} /><span>Search commands and pages</span><kbd>⌘K</kbd></button>
-    <div className="ws-title-actions">{saveState ? <span className="ws-save-state" role="status">{saveState}</span> : null}<TaskIndicator activeCount={activeTasks} failedCount={failedTasks} onClick={onTasks} />{canShare ? <button type="button" className="ws-title-button" onClick={onShare}><UsersRound size={14} />Share</button> : null}<button type="button" className="ws-title-icon" aria-label={agentOpen ? "Hide Canvas Agent" : "Show Canvas Agent"} aria-pressed={agentOpen} title={agentOpen ? "Hide Canvas Agent" : "Show Canvas Agent"} onClick={onToggleAgent}><PanelRight size={16} /></button><AccountMenu userName={userName} onSignOut={onSignOut} /></div>
+/**
+ * The workspace title bar: who you are, where you are, and how to find things.
+ *
+ * The breadcrumb answers "where am I?" in the product's own words — workspace,
+ * website, page — and the page, the thing every edit applies to, is the one set
+ * in full contrast. The workspace segment links back out, so leaving a project
+ * does not mean reaching for the browser's back button.
+ */
+export function TitleBar({
+  workspaceName, projectName, pageName, userName, canShare, activeTasks, failedTasks, saveState, agentOpen,
+  onSearch, onShare, onTasks, onToggleAgent, onSignOut,
+}: {
+  workspaceName: string;
+  projectName: string;
+  pageName: string;
+  userName: string;
+  canShare: boolean;
+  activeTasks: number;
+  failedTasks: number;
+  saveState?: string;
+  agentOpen: boolean;
+  onSearch: () => void;
+  onShare: () => void;
+  onTasks: () => void;
+  onToggleAgent: () => void;
+  onSignOut: () => void;
+}) {
+  return <header className="ws-title">
+    <Link href="/dashboard" className="ws-brand-home" aria-label="All websites" title="All websites">
+      <span aria-hidden="true"><Command size={15} /></span>
+      <strong>Canvas</strong>
+    </Link>
+
+    <nav className="ws-breadcrumb" aria-label="Where you are">
+      <span>{workspaceName}</span>
+      <i aria-hidden="true">/</i>
+      <span>{projectName}</span>
+      <i aria-hidden="true">/</i>
+      <strong>{pageName}</strong>
+    </nav>
+
+    <button type="button" className="ws-search-trigger" onClick={onSearch}>
+      <Search size={14} aria-hidden="true" />
+      <span>Search pages and actions</span>
+      <kbd>⌘K</kbd>
+    </button>
+
+    <div className="ws-title-actions">
+      {saveState ? <span className="ws-save-state" role="status">{saveState}</span> : null}
+      <TaskIndicator activeCount={activeTasks} failedCount={failedTasks} onClick={onTasks} />
+      {canShare ? <button type="button" className="ws-title-button" onClick={onShare}><UsersRound size={14} aria-hidden="true" />Share</button> : null}
+      <button
+        type="button"
+        className="ws-title-icon"
+        aria-label={agentOpen ? "Hide the agent" : "Show the agent"}
+        aria-pressed={agentOpen}
+        title={agentOpen ? "Hide the agent" : "Show the agent"}
+        onClick={onToggleAgent}
+      ><PanelRight size={16} /></button>
+      <AccountMenu userName={userName} onSignOut={onSignOut} />
+    </div>
   </header>;
 }
-
-function AccountMenu({ userName, onSignOut }: { userName: string; onSignOut: () => void }) { const [open, setOpen] = useState(false); const root = useRef<HTMLDivElement>(null); const trigger = useRef<HTMLButtonElement>(null); useEffect(() => { if (!open) return; function pointer(event: PointerEvent) { if (!root.current?.contains(event.target as Node)) setOpen(false); } function key(event: KeyboardEvent) { if (event.key === "Escape") { setOpen(false); trigger.current?.focus(); } } document.addEventListener("pointerdown", pointer); document.addEventListener("keydown", key); return () => { document.removeEventListener("pointerdown", pointer); document.removeEventListener("keydown", key); }; }, [open]); return <div className="ws-account" ref={root}><button type="button" ref={trigger} className="ws-avatar" aria-label={`Account menu for ${userName}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{initials(userName)}<ChevronDown size={10} /></button>{open ? <div className="ws-account-menu" role="menu"><p><strong>{userName}</strong><span>Your Canvas account</span></p><Link role="menuitem" href="/account" onClick={() => setOpen(false)}><UserRound size={14} />Account</Link><Link role="menuitem" href="/dashboard" onClick={() => setOpen(false)}><Home size={14} />All Projects</Link><Link role="menuitem" href="/workspaces" onClick={() => setOpen(false)}><Command size={14} />Workspaces</Link><div role="separator" /><button type="button" role="menuitem" onClick={() => { setOpen(false); onSignOut(); }}><LogOut size={14} />Sign out</button></div> : null}</div>; }
-function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?"; }
