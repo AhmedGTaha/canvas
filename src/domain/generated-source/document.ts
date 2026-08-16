@@ -1,12 +1,5 @@
 import { z } from "zod";
-import {
-  DOCUMENT_DESCRIPTION_MAX_LENGTH,
-  DOCUMENT_TITLE_MAX_LENGTH,
-  GENERATED_CSS_MAX_BYTES,
-  GENERATED_DOCUMENT_MAX_BYTES,
-  GENERATED_HTML_MAX_BYTES,
-  GENERATED_JS_MAX_BYTES,
-} from "./limits";
+import { DOCUMENT_DESCRIPTION_MAX_LENGTH, DOCUMENT_TITLE_MAX_LENGTH } from "./limits";
 
 /**
  * The generated-website data contract.
@@ -38,14 +31,6 @@ export type GeneratedDocument = {
   metadata: GeneratedDocumentMetadata | null;
 };
 
-function bytes(value: string) {
-  return Buffer.byteLength(value, "utf8");
-}
-
-const html = z.string().min(1, "The generated page has no markup.").refine((value) => bytes(value) <= GENERATED_HTML_MAX_BYTES, `HTML exceeds ${GENERATED_HTML_MAX_BYTES} bytes.`);
-const css = z.string().default("").refine((value) => bytes(value) <= GENERATED_CSS_MAX_BYTES, `CSS exceeds ${GENERATED_CSS_MAX_BYTES} bytes.`);
-const js = z.string().default("").refine((value) => bytes(value) <= GENERATED_JS_MAX_BYTES, `JavaScript exceeds ${GENERATED_JS_MAX_BYTES} bytes.`);
-
 /** Trimmed to null: a model that has nothing to say should not say "". */
 const optionalText = (max: number) =>
   z.string().nullish().transform((value) => {
@@ -57,32 +42,6 @@ export const generatedDocumentMetadataSchema = z.object({
   title: optionalText(DOCUMENT_TITLE_MAX_LENGTH),
   description: optionalText(DOCUMENT_DESCRIPTION_MAX_LENGTH),
 }).strict();
-
-const withinTotalBudget = <T extends { html: string; css: string; js: string }>(value: T, context: z.RefinementCtx) => {
-  if (bytes(value.html) + bytes(value.css) + bytes(value.js) > GENERATED_DOCUMENT_MAX_BYTES) {
-    context.addIssue({ code: "custom", message: `The generated document exceeds ${GENERATED_DOCUMENT_MAX_BYTES} bytes.` });
-  }
-};
-
-/** A page: markup, styles, behaviour, and the metadata for its `<head>`. */
-export const generatedPageDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
-  html,
-  css,
-  js,
-  metadata: generatedDocumentMetadataSchema.nullish().transform((value) => value ?? { title: null, description: null }),
-}).strict().superRefine(withinTotalBudget);
-
-/** A Building Block: one reusable fragment, with no page-level metadata of its own. */
-export const generatedFragmentDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
-  html,
-  css,
-  js,
-}).strict().superRefine(withinTotalBudget);
-
-export type GeneratedPageDocumentInput = z.infer<typeof generatedPageDocumentSchema>;
-export type GeneratedFragmentDocumentInput = z.infer<typeof generatedFragmentDocumentSchema>;
 
 /**
  * Reads a stored `document` column back into the contract.
@@ -107,8 +66,4 @@ export function readStoredDocument(value: unknown): GeneratedDocument | null {
 
 export function emptyDocument(): GeneratedDocument {
   return { schemaVersion: 1, html: "", css: "", js: "", metadata: null };
-}
-
-export function documentBytes(document: GeneratedDocument) {
-  return bytes(document.html) + bytes(document.css) + bytes(document.js);
 }

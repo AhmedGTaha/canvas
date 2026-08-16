@@ -14,8 +14,6 @@ export const GENERATED_RUNTIME_CLASSES = [
   "c-button", "c-button-secondary", "c-muted", "c-kicker", "c-media", "c-logo",
 ] as const;
 
-export const GENERATED_RUNTIME_CLASS_SET: ReadonlySet<string> = new Set(GENERATED_RUNTIME_CLASSES);
-
 export const GENERATED_RUNTIME_CLASS_GUIDE = `Canvas supplies these theme-aware classes. Build on them first, and add your own classes in the css field only for what they do not cover:
 - Layout: c-page, c-container, c-section, c-hero, c-stack (vertical), c-row (wrapping row), c-cluster (space-between row), c-grid, c-actions.
 - Surfaces: c-card, c-surface, c-bordered, c-rounded, c-shadow.
