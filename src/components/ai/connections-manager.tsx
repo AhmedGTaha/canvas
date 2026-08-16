@@ -23,8 +23,7 @@ const EMPTY_DRAFT: Draft = { provider: "gemini", name: "", baseUrl: "", apiKey: 
  * retyping the key keeps the stored one; typing a new one replaces it and resets the
  * connection's test state, because an untested new credential is not a tested one.
  */
-export function ConnectionsManager({ workspaceId, providers, connections, onConnections }: {
-  workspaceId: string;
+export function ConnectionsManager({ providers, connections, onConnections }: {
   providers: ProviderDescriptor[];
   connections: ConnectionView[];
   onConnections: (next: ConnectionView[]) => void;
@@ -35,7 +34,7 @@ export function ConnectionsManager({ workspaceId, providers, connections, onConn
   const [notice, setNotice] = useState<string>();
 
   const descriptor = (kind: string) => providers.find((entry) => entry.kind === kind);
-  const base = `/api/workspaces/${workspaceId}/ai-connections`;
+  const base = "/api/account/ai-connections";
 
   async function call<T>(url: string, init: RequestInit, failure: string): Promise<T> {
     const response = await fetch(url, { headers: { "Content-Type": "application/json" }, ...init });

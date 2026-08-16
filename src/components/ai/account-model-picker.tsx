@@ -6,18 +6,19 @@ import { Section } from "@/components/ui/panel";
 import { Select } from "@/components/ui/form-controls";
 import { InlineAlert } from "@/components/ui/feedback";
 import { EmptyState } from "@/components/ui/states";
-import type { ProjectModelSelection } from "@/domain/ai/connections/project-model-service";
+import type { AccountModelSelection } from "@/domain/ai/connections/account-model-service";
 
 /**
- * Which connection and model this website generates with. One decision, stated in the
- * words a website owner uses, with the model's real capabilities shown next to it so an
- * image-based request never fails later for a reason nobody could have seen here.
+ * Which connection and model *you* generate with.
+ *
+ * One decision, made once, used by every website you work on — including ones you were
+ * invited to, where it is still your key and your credit being spent, never the owner's.
+ * The model's real capabilities are shown next to it so an image-based request never
+ * fails later for a reason nobody could have seen here.
  */
-export function ProjectModelPicker({ projectId, selection, onSelection, canManageConnections, onOpenConnections }: {
-  projectId: string;
-  selection: ProjectModelSelection;
-  onSelection: (next: ProjectModelSelection) => void;
-  canManageConnections: boolean;
+export function AccountModelPicker({ selection, onSelection, onOpenConnections }: {
+  selection: AccountModelSelection;
+  onSelection: (next: AccountModelSelection) => void;
   onOpenConnections: () => void;
 }) {
   const [connectionId, setConnectionId] = useState(selection.connectionId ?? "");
@@ -33,11 +34,11 @@ export function ProjectModelPicker({ projectId, selection, onSelection, canManag
   async function save() {
     setSaving(true); setError(undefined); setSaved(false);
     try {
-      const response = await fetch(`/api/projects/${projectId}/ai-settings`, {
+      const response = await fetch(`/api/account/ai-settings`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ connectionId: connectionId || null, modelRecordId: modelRecordId || null }),
       });
-      const value = await response.json() as ProjectModelSelection & { error?: string };
+      const value = await response.json() as AccountModelSelection & { error?: string };
       if (!response.ok) throw new Error(value.error || "This model selection could not be saved.");
       onSelection(value);
       setSaved(true);
@@ -48,23 +49,20 @@ export function ProjectModelPicker({ projectId, selection, onSelection, canManag
   if (!selection.options.length) {
     return <EmptyState
       title="No AI connection yet"
-      description={canManageConnections
-        ? "Connect an AI provider for this workspace, enable the models projects may use, then choose one here."
-        : "The workspace owner has not connected an AI provider yet. Until they do, this website cannot generate pages."}
-      action={canManageConnections ? <button type="button" className="button button-primary" onClick={onOpenConnections}>Add a connection</button> : undefined}
+      description="Connect an AI provider to your account, enable the models you want to use, then choose one here. Your key is used for the websites you work on, and only yours."
+      action={<button type="button" className="button button-primary" onClick={onOpenConnections}>Add a connection</button>}
     />;
   }
 
   return <>
-    <Section title="Model for this website" description="Every page and section this website generates uses this model.">
-      {selection.unavailableReason ? <InlineAlert tone="warning" title="This website's model is unavailable">{selection.unavailableReason} Existing pages are untouched; new AI requests fail until you choose another model.</InlineAlert> : null}
-      {!selection.canSelect ? <InlineAlert tone="info" title="Only the website owner can change this">You can see which model this website uses, and its usage, but not change the selection.</InlineAlert> : null}
+    <Section title="Your model" description="Every page and section you generate — on any website — uses this model, billed to your provider account.">
+      {selection.unavailableReason ? <InlineAlert tone="warning" title="Your model is unavailable">{selection.unavailableReason} Existing pages are untouched; your new AI requests fail until you choose another model.</InlineAlert> : null}
 
       <div className="ai-field-row">
         <Select
           label="Connection"
           value={connectionId}
-          disabled={!selection.canSelect || saving}
+          disabled={saving}
           onChange={(event) => { setConnectionId(event.target.value); setModelRecordId(""); setSaved(false); }}
         >
           <option value="">Not selected</option>
@@ -73,8 +71,8 @@ export function ProjectModelPicker({ projectId, selection, onSelection, canManag
         <Select
           label="Model"
           value={modelRecordId}
-          disabled={!selection.canSelect || saving || !connectionId}
-          hint={connectionId && !models.length ? "This connection has no models enabled for projects yet." : undefined}
+          disabled={saving || !connectionId}
+          hint={connectionId && !models.length ? "This connection has no models enabled yet." : undefined}
           onChange={(event) => { setModelRecordId(event.target.value); setSaved(false); }}
         >
           <option value="">Not selected</option>
@@ -93,11 +91,11 @@ export function ProjectModelPicker({ projectId, selection, onSelection, canManag
       </dl> : null}
 
       {error ? <InlineAlert tone="danger" title="That selection was not saved">{error}</InlineAlert> : null}
-      {saved && !error ? <InlineAlert tone="success" title="Saved">New AI requests for this website use this model.</InlineAlert> : null}
+      {saved && !error ? <InlineAlert tone="success" title="Saved">Your new AI requests use this model.</InlineAlert> : null}
 
-      {selection.canSelect ? <div className="form-actions">
+      <div className="form-actions">
         <button type="button" className="button button-primary" disabled={saving} data-pending={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save selection"}</button>
-      </div> : null}
+      </div>
     </Section>
   </>;
 }

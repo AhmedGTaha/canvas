@@ -1,8 +1,7 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
-import { aiConnectionModels, aiConnections, auditEvents, projectAISettings, workspaces } from "@/server/db/schema";
+import { aiConnectionModels, aiConnections, auditEvents, userAISettings } from "@/server/db/schema";
 import { DomainError } from "@/domain/shared/errors";
-import { requireWorkspaceOwner } from "@/server/permissions/access";
 import { credentialHint, decryptCredential, encryptCredential, CREDENTIAL_KEY_VERSION } from "@/server/security/credential-cipher";
 import { AIError, type AIProviderKind, type ModelCapabilities, type ProviderModelDescriptor } from "@/domain/ai/provider";
 import { createProvider, providerDescriptor, providerTimeoutMs } from "@/server/ai/provider-registry";
@@ -12,7 +11,6 @@ import { addModelSchema, createConnectionSchema, updateConnectionSchema, updateM
 /** The only shape of a connection that ever leaves the server. Never the credential. */
 export type ConnectionView = {
   id: string;
-  workspaceId: string;
   provider: AIProviderKind;
   name: string;
   baseUrl: string | null;
@@ -64,45 +62,49 @@ export function modelCapabilities(row: Pick<typeof aiConnectionModels.$inferSele
 }
 
 /**
- * Workspace AI connections.
+ * Account AI connections.
  *
- * Every method here is workspace-owner only. Credentials are encrypted before they reach
- * the database and are decrypted only inside this service, for the duration of one
- * provider call; no method returns a credential, and no view type has a field for one.
- * Project collaborators use a project's selected connection through
- * `model-resolution.ts` and never touch this service.
+ * Every method here operates on the caller's own connections and nobody else's: there is
+ * no parameter by which one account can name another's, so there is no path — accidental
+ * or deliberate — from a project, a workspace, or a collaborator to someone else's
+ * credential. Credentials are encrypted before they reach the database and are decrypted
+ * only inside this service for the duration of one provider call; no method returns a
+ * credential and no view type has a field for one.
+ *
+ * Jobs reach the right credential through `model-resolution.ts`, which resolves the
+ * account of the person who created the job.
  */
 export class AIConnectionService {
   constructor(private readonly database: Database = db) {}
 
-  private async requireOwnedWorkspace(userId: string, workspaceId: string) {
-    const [workspace] = await this.database.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
-    return requireWorkspaceOwner(userId, workspace);
-  }
-
-  /** Loads a connection and proves the caller owns the workspace that holds it. */
+  /**
+   * Loads a connection that belongs to this account.
+   *
+   * A connection owned by anyone else is reported as missing rather than forbidden: from
+   * this account's point of view it does not exist, and saying otherwise would confirm
+   * that some other account holds a connection with that id.
+   */
   private async requireOwnedConnection(userId: string, connectionId: string) {
-    const [connection] = await this.database.select().from(aiConnections).where(and(eq(aiConnections.id, connectionId), isNull(aiConnections.deletedAt))).limit(1);
+    const [connection] = await this.database.select().from(aiConnections)
+      .where(and(eq(aiConnections.id, connectionId), eq(aiConnections.userId, userId), isNull(aiConnections.deletedAt))).limit(1);
     if (!connection) throw new DomainError("NOT_FOUND", "AI connection not found.");
-    await this.requireOwnedWorkspace(userId, connection.workspaceId);
     return connection;
   }
 
-  async list(userId: string, workspaceId: string): Promise<ConnectionView[]> {
-    await this.requireOwnedWorkspace(userId, workspaceId);
+  async list(userId: string): Promise<ConnectionView[]> {
     const connections = await this.database.select().from(aiConnections)
-      .where(and(eq(aiConnections.workspaceId, workspaceId), isNull(aiConnections.deletedAt)))
+      .where(and(eq(aiConnections.userId, userId), isNull(aiConnections.deletedAt)))
       .orderBy(asc(aiConnections.createdAt));
     if (!connections.length) return [];
     const models = await this.database.select().from(aiConnectionModels)
-      .where(eq(aiConnectionModels.workspaceId, workspaceId))
+      .where(eq(aiConnectionModels.userId, userId))
       .orderBy(asc(aiConnectionModels.displayName));
     return connections.map((connection) => this.view(connection, models.filter((model) => model.connectionId === connection.id)));
   }
 
   private view(connection: typeof aiConnections.$inferSelect, models: typeof aiConnectionModels.$inferSelect[]): ConnectionView {
     return {
-      id: connection.id, workspaceId: connection.workspaceId, provider: connection.provider, name: connection.name,
+      id: connection.id, provider: connection.provider, name: connection.name,
       baseUrl: connection.baseUrl, credentialHint: connection.credentialHint,
       credentialUpdatedAt: connection.credentialUpdatedAt.toISOString(),
       lastTestStatus: connection.lastTestStatus, lastTestedAt: connection.lastTestedAt?.toISOString() ?? null,
@@ -114,7 +116,6 @@ export class AIConnectionService {
 
   async create(userId: string, input: unknown): Promise<ConnectionView> {
     const parsed = createConnectionSchema.parse(input);
-    await this.requireOwnedWorkspace(userId, parsed.workspaceId);
     const descriptor = providerDescriptor(parsed.provider);
     if (descriptor.baseUrl.required && !parsed.baseUrl) throw new DomainError("VALIDATION", "This provider needs a base URL.");
     if (!descriptor.baseUrl.supported && parsed.baseUrl) throw new DomainError("VALIDATION", "This provider does not use a base URL.");
@@ -123,17 +124,17 @@ export class AIConnectionService {
       // The ciphertext is bound to the connection id, so the row is inserted with a
       // placeholder and immediately sealed with its own identity as additional data.
       const [created] = await transaction.insert(aiConnections).values({
-        workspaceId: parsed.workspaceId, provider: parsed.provider, name: parsed.name,
+        userId, provider: parsed.provider, name: parsed.name,
         baseUrl: parsed.baseUrl, credentialCiphertext: "", credentialHint: credentialHint(parsed.apiKey),
         credentialKeyVersion: CREDENTIAL_KEY_VERSION, createdByUserId: userId,
       }).returning().catch((error: unknown) => {
-        if ((error as { cause?: { code?: string } }).cause?.code === "23505") throw new DomainError("CONFLICT", "A connection with that name already exists in this workspace.");
+        if ((error as { cause?: { code?: string } }).cause?.code === "23505") throw new DomainError("CONFLICT", "You already have a connection with that name.");
         throw error;
       });
       if (!created) throw new Error("AI connection insert failed.");
-      const ciphertext = encryptCredential(parsed.apiKey, { connectionId: created.id, workspaceId: created.workspaceId });
+      const ciphertext = encryptCredential(parsed.apiKey, { connectionId: created.id, userId });
       const [sealed] = await transaction.update(aiConnections).set({ credentialCiphertext: ciphertext }).where(eq(aiConnections.id, created.id)).returning();
-      await transaction.insert(auditEvents).values({ userId, action: "ai.connection_created", entityType: "ai_connection", entityId: created.id, metadata: { workspaceId: parsed.workspaceId, provider: parsed.provider } });
+      await transaction.insert(auditEvents).values({ userId, action: "ai.connection_created", entityType: "ai_connection", entityId: created.id, metadata: { provider: parsed.provider } });
       return this.view(sealed!, []);
     });
   }
@@ -148,7 +149,10 @@ export class AIConnectionService {
 
     const credential = parsed.apiKey
       ? {
-          credentialCiphertext: encryptCredential(parsed.apiKey, { connectionId: connection.id, workspaceId: connection.workspaceId }),
+          credentialCiphertext: encryptCredential(parsed.apiKey, { connectionId: connection.id, userId: connection.userId }),
+          // Rotating the key re-seals it against the account, so a legacy workspace
+          // binding stops being needed the moment anyone saves a new one.
+          legacyWorkspaceId: null,
           credentialHint: credentialHint(parsed.apiKey),
           credentialKeyVersion: CREDENTIAL_KEY_VERSION,
           credentialUpdatedAt: new Date(),
@@ -158,29 +162,30 @@ export class AIConnectionService {
     const [updated] = await this.database.update(aiConnections)
       .set({ name: parsed.name ?? connection.name, baseUrl, updatedAt: new Date(), ...credential })
       .where(eq(aiConnections.id, connection.id)).returning();
-    await this.database.insert(auditEvents).values({ userId, action: "ai.connection_updated", entityType: "ai_connection", entityId: connection.id, metadata: { workspaceId: connection.workspaceId, credentialRotated: Boolean(parsed.apiKey) } });
+    await this.database.insert(auditEvents).values({ userId, action: "ai.connection_updated", entityType: "ai_connection", entityId: connection.id, metadata: { credentialRotated: Boolean(parsed.apiKey) } });
     const models = await this.database.select().from(aiConnectionModels).where(eq(aiConnectionModels.connectionId, connection.id));
     return this.view(updated!, models);
   }
 
   /**
-   * Removes a connection. Projects that selected it keep their websites intact: the
-   * selection is cleared and the next generation fails with a normalized configuration
-   * error rather than silently falling back to another credential.
+   * Removes a connection. Websites this account has worked on keep every page they have:
+   * the account's selection is cleared and the next job this person starts fails with a
+   * normalized configuration error rather than silently falling back to anyone else's
+   * credential.
    */
   async remove(userId: string, connectionId: string) {
     const connection = await this.requireOwnedConnection(userId, connectionId);
     await this.database.transaction(async (transaction) => {
       await transaction.update(aiConnections).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(aiConnections.id, connection.id));
-      await transaction.update(projectAISettings).set({ connectionId: null, modelId: null, updatedAt: new Date() }).where(eq(projectAISettings.connectionId, connection.id));
-      await transaction.insert(auditEvents).values({ userId, action: "ai.connection_removed", entityType: "ai_connection", entityId: connection.id, metadata: { workspaceId: connection.workspaceId } });
+      await transaction.update(userAISettings).set({ connectionId: null, modelId: null, updatedAt: new Date() }).where(eq(userAISettings.connectionId, connection.id));
+      await transaction.insert(auditEvents).values({ userId, action: "ai.connection_removed", entityType: "ai_connection", entityId: connection.id });
     });
     return { id: connection.id };
   }
 
   /** Decrypts a credential for exactly one provider call. Never returned to a caller. */
   private credential(connection: typeof aiConnections.$inferSelect) {
-    return decryptCredential(connection.credentialCiphertext, { connectionId: connection.id, workspaceId: connection.workspaceId });
+    return decryptCredential(connection.credentialCiphertext, { connectionId: connection.id, userId: connection.userId, legacyWorkspaceId: connection.legacyWorkspaceId });
   }
 
   /**
@@ -205,20 +210,20 @@ export class AIConnectionService {
       else throw new AIError("AI_NOT_CONFIGURED", "Add at least one model ID before testing this connection.", false, undefined, "no model to probe");
       const latencyMs = Math.round(performance.now() - started);
       await this.database.update(aiConnections).set({ lastTestStatus: "passed", lastTestedAt: new Date(), lastTestError: null }).where(eq(aiConnections.id, connection.id));
-      emit("ai.connection_tested", { connectionId: connection.id, workspaceId: connection.workspaceId, provider: connection.provider, outcome: "passed", latencyMs });
+      emit("ai.connection_tested", { connectionId: connection.id, provider: connection.provider, outcome: "passed", latencyMs });
       return { status: "passed" as const, latencyMs, error: null };
     } catch (error) {
       const failure = error instanceof AIError ? error : new AIError("AI_PROVIDER_UNAVAILABLE", "This connection could not be reached.");
       await this.database.update(aiConnections).set({ lastTestStatus: "failed", lastTestedAt: new Date(), lastTestError: failure.message.slice(0, 300) }).where(eq(aiConnections.id, connection.id));
-      emit("ai.connection_tested", { connectionId: connection.id, workspaceId: connection.workspaceId, provider: connection.provider, outcome: "failed", reason: failure.code }, "warn");
+      emit("ai.connection_tested", { connectionId: connection.id, provider: connection.provider, outcome: "failed", reason: failure.code }, "warn");
       return { status: "failed" as const, latencyMs: Math.round(performance.now() - started), error: failure.message, code: failure.code };
     }
   }
 
   /**
-   * Model discovery. Discovered models arrive disabled: a workspace owner decides which
-   * of them projects may use. Capability and pricing edits an owner already made are
-   * preserved across a re-discovery.
+   * Model discovery. Discovered models arrive disabled: the account holder decides which
+   * of them Canvas may use. Capability and pricing edits they already made are preserved
+   * across a re-discovery.
    */
   async discoverModels(userId: string, connectionId: string) {
     const connection = await this.requireOwnedConnection(userId, connectionId);
@@ -240,7 +245,7 @@ export class AIConnectionService {
     await this.database.transaction(async (transaction) => {
       for (const model of models) {
         await transaction.insert(aiConnectionModels).values({
-          connectionId: connection.id, workspaceId: connection.workspaceId,
+          connectionId: connection.id, userId: connection.userId,
           modelId: model.modelId, displayName: model.displayName || model.modelId, source: "discovered", enabled: false,
           supportsStructuredOutput: model.capabilities?.structuredOutput ?? defaults.structuredOutput,
           supportsVision: model.capabilities?.vision ?? defaults.vision,
@@ -249,7 +254,7 @@ export class AIConnectionService {
         }).onConflictDoUpdate({
           target: [aiConnectionModels.connectionId, aiConnectionModels.modelId],
           // Only provider-supplied facts are refreshed. Enablement, pricing, and any
-          // capability an owner corrected by hand are theirs, not the provider's.
+          // capability the account holder corrected by hand are theirs, not the provider's.
           set: { displayName: model.displayName || model.modelId, updatedAt: new Date() },
         });
       }
@@ -264,7 +269,7 @@ export class AIConnectionService {
     const existing = await this.database.select({ id: aiConnectionModels.id }).from(aiConnectionModels).where(eq(aiConnectionModels.connectionId, connection.id));
     if (existing.length >= AI_CONNECTION_LIMITS.modelsPerConnection) throw new DomainError("VALIDATION", "This connection already has the maximum number of models.");
     const [model] = await this.database.insert(aiConnectionModels).values({
-      connectionId: connection.id, workspaceId: connection.workspaceId,
+      connectionId: connection.id, userId: connection.userId,
       modelId: parsed.modelId, displayName: parsed.displayName?.trim() || parsed.modelId, source: "manual",
       enabled: parsed.enabled ?? true,
       supportsStructuredOutput: parsed.supportsStructuredOutput ?? defaults.structuredOutput,
@@ -281,7 +286,7 @@ export class AIConnectionService {
 
   /**
    * Edits a model. A pricing change bumps `pricingVersion`, and usage rows keep the
-   * pricing they were costed with, so historical estimates never move under an owner.
+   * pricing they were costed with, so historical estimates never move underneath anyone.
    */
   async updateModel(userId: string, input: unknown) {
     const parsed = updateModelSchema.parse(input);
@@ -311,7 +316,7 @@ export class AIConnectionService {
     if (!current) throw new DomainError("NOT_FOUND", "Model not found.");
     await this.requireOwnedConnection(userId, current.connectionId);
     await this.database.transaction(async (transaction) => {
-      await transaction.update(projectAISettings).set({ modelId: null, updatedAt: new Date() }).where(eq(projectAISettings.modelId, current.id));
+      await transaction.update(userAISettings).set({ modelId: null, updatedAt: new Date() }).where(eq(userAISettings.modelId, current.id));
       await transaction.delete(aiConnectionModels).where(eq(aiConnectionModels.id, current.id));
     });
     return { id: current.id };

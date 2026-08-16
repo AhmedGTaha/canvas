@@ -18,7 +18,6 @@ const apiKeySchema = z.string().trim().min(8, "Enter the provider API key.").max
 const nameSchema = z.string().trim().min(1, "Name this connection.").max(AI_CONNECTION_LIMITS.nameCharacters);
 
 export const createConnectionSchema = z.object({
-  workspaceId: z.uuid(),
   provider: providerKindSchema,
   name: nameSchema,
   baseUrl: baseUrlSchema.nullish().transform((value) => value || null),
@@ -52,14 +51,13 @@ export const modelInputSchema = z.object({
 export const addModelSchema = modelInputSchema.extend({ connectionId: z.uuid() });
 export const updateModelSchema = modelInputSchema.partial({ modelId: true }).extend({ modelRecordId: z.uuid() });
 
-export const projectModelSelectionSchema = z.object({
-  projectId: z.uuid(),
+/** An account's own default: which connection, and which enabled model on it. */
+export const accountModelSelectionSchema = z.object({
   connectionId: z.uuid().nullable(),
   modelRecordId: z.uuid().nullable(),
 });
 
 export const testPromptSchema = z.object({
-  projectId: z.uuid(),
   prompt: z.string().trim().min(1, "Enter a test prompt.").max(2_000),
 });
 

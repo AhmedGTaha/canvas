@@ -7,6 +7,7 @@ import { signOutAction } from "@/app/actions/auth";
 import { shouldSuggestCheckpoint, useHistoryController } from "@/components/history/use-history-controller";
 import type { HistorySection } from "@/components/history/history-sidebar";
 import { ChangeReview } from "@/components/history/change-review";
+import { AddSectionDialog } from "@/components/blocks/add-section-dialog";
 import { CommandPalette } from "@/components/commands/command-palette";
 import { TaskCenter } from "@/components/tasks/task-center";
 import { createWorkspaceCommands } from "@/domain/commands/registry";
@@ -19,7 +20,7 @@ import { Explorer } from "./explorer";
 import { notePanelPushed, panelHref } from "./panel-url";
 import { PreviewStage, type Device } from "./preview-stage";
 import { TitleBar } from "./title-bar";
-import { breakpointFor, DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout, type WorkspaceBreakpoint, type WorkspaceLayout, type WorkspaceActivity } from "./workspace-layout";
+import { AGENT_PANE_RANGE, breakpointFor, DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout, PRIMARY_PANE_RANGE, type WorkspaceBreakpoint, type WorkspaceLayout, type WorkspaceActivity } from "./workspace-layout";
 import { isActiveJobStatus, isWorking, workLabel, workPhase } from "./work-state";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
@@ -33,8 +34,8 @@ type AgentState = { conversation: { id: string } | null; messages: AgentMessage[
 type ElementSelection = Omit<PreviewElementSelection, "type" | "sessionId" | "instanceId">;
 type ComposerTarget = { kind: "page"; id: string } | { kind: "block"; id: string; name: string };
 
-const PRIMARY_RANGE = [224, 440] as const;
-const AGENT_RANGE = [320, 640] as const;
+const PRIMARY_RANGE = PRIMARY_PANE_RANGE;
+const AGENT_RANGE = AGENT_PANE_RANGE;
 
 /**
  * The Canvas project workspace.
@@ -93,6 +94,9 @@ export function WorkspaceShell({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [reviewJobId, setReviewJobId] = useState<string | null>(null);
+  const [addSectionOpen, setAddSectionOpen] = useState(false);
+  const [sectionBusy, setSectionBusy] = useState(false);
+  const [sectionError, setSectionError] = useState<string>();
   const [taskSummary, setTaskSummary] = useState<ProjectTask[]>([]);
   const completedRefresh = useRef<string | null>(null);
   const pendingSelection = useRef<ElementSelection | null>(null);
@@ -281,6 +285,36 @@ export function WorkspaceShell({
     [currentPageId, currentPage?.name],
   );
   const onHistoryChanged = useCallback(() => { void refresh(); router.refresh(); }, [refresh, router]);
+
+  /* ----------------------------------------------------------- sections */
+  /*
+   * A selected element that belongs to a shared Building Block is a *usage* of that
+   * block on this page. "Remove from page" therefore removes the reference — the
+   * `<CanvasBlock />` in this page's source and the usage row that mirrors it — and
+   * leaves the section itself in the library for every other page that uses it.
+   */
+  const selectedSectionUsage = useMemo(() => (selection?.blockId && selection.usageKey && currentPageId
+    ? { blockId: selection.blockId, usageKey: selection.usageKey, name: session.manifest.blocks[selection.blockId]?.name ?? "this section" }
+    : null), [currentPageId, selection?.blockId, selection?.usageKey, session.manifest.blocks]);
+
+  const removeSelectedSection = useCallback(async () => {
+    if (!selectedSectionUsage || !currentPageId) return;
+    setSectionBusy(true); setSectionError(undefined);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/pages/${currentPageId}/sections/${encodeURIComponent(selectedSectionUsage.usageKey)}`, { method: "DELETE" });
+      const value = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(value.error || "That section could not be removed from this page.");
+      pendingSelection.current = null;
+      setSelection(null);
+      // A new Page Version is active, so the manifest the frame is running against is
+      // now stale: minting a fresh session is what makes the section actually go away.
+      await refresh();
+      router.refresh();
+    } catch (cause) { setSectionError(cause instanceof Error ? cause.message : "That section could not be removed from this page."); }
+    finally { setSectionBusy(false); }
+  }, [currentPageId, projectId, refresh, router, selectedSectionUsage]);
+
+  const onSectionAdded = useCallback(() => { void refresh(); router.refresh(); }, [refresh, router]);
   const history = useHistoryController({ projectId, target: historyTarget, onChanged: onHistoryChanged, withCheckpoints: true });
 
   // Opening History means opening the sidebar section, not a dialog. The
@@ -468,7 +502,7 @@ export function WorkspaceShell({
     <div className="ws-body">
       <ActivityBar activity={layout.activity} sidebarOpen={layout.primary} onActivity={selectActivity} onSettings={() => openPanel("overview")} onHelp={() => openPanel("shortcuts")} />
       <aside className="ws-pane ws-pane-l" aria-label={`${layout.activity} tools`}>
-        <ContextSidebar projectId={projectId} activity={layout.activity} mediaAssets={mediaAssets} mediaFolders={mediaFolders} blocks={session.manifest.blocks} history={history} historySection={historySection} onOpenPanel={openPanel} onNewBlock={() => openPanel("blocks")} onHistorySection={setHistorySection} website={<Explorer projectId={projectId} nodes={nodes} currentPageId={currentPageId} routes={routesByPageId} onSelectPage={selectPage} onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }} onOpenPagesPanel={(nodeId) => openPanel("pages", nodeId ? { node: nodeId } : undefined)} onTreeChanged={onTreeChanged} createRequest={createRequest} />} />
+        <ContextSidebar projectId={projectId} activity={layout.activity} mediaAssets={mediaAssets} mediaFolders={mediaFolders} blocks={session.manifest.blocks} history={history} historySection={historySection} onOpenPanel={openPanel} onNewBlock={() => openPanel("blocks")} onAddSection={() => setAddSectionOpen(true)} canAddSection={Boolean(currentPageId)} onHistorySection={setHistorySection} website={<Explorer projectId={projectId} nodes={nodes} currentPageId={currentPageId} routes={routesByPageId} onSelectPage={selectPage} onEditWithAgent={(pageId, pageRoute) => { selectPage(pageId, pageRoute); if (!layout.agent) toggleAgent(); }} onOpenPagesPanel={(nodeId) => openPanel("pages", nodeId ? { node: nodeId } : undefined)} onTreeChanged={onTreeChanged} createRequest={createRequest} />} />
         <div
           className="ws-resize ws-resize-r"
           role="separator"
@@ -549,6 +583,11 @@ export function WorkspaceShell({
           assets={mediaAssets}
           folders={mediaFolders}
           built={Boolean(built)}
+          sectionUsage={selectedSectionUsage}
+          sectionBusy={sectionBusy}
+          sectionError={sectionError}
+          onRemoveSection={() => void removeSelectedSection()}
+          onAddSection={() => setAddSectionOpen(true)}
           queue={queuedFollowUps}
           onPrompt={setPrompt}
           onMedia={setSelectedMediaIds}
@@ -584,6 +623,17 @@ export function WorkspaceShell({
 
     <CommandPalette projectId={projectId} userId={userId} open={paletteOpen} commands={commands} pages={commandPages} onClose={() => setPaletteOpen(false)} onPage={(page) => { if (page.type === "page") selectPage(page.id, page.routePath ?? undefined); else selectActivity("website"); }} />
     <TaskCenter projectId={projectId} open={taskCenterOpen} onClose={() => setTaskCenterOpen(false)} onReview={setReviewJobId} onOpenExport={() => openPanel("export")} onReopenAgent={() => { if (!layout.agent) toggleAgent(); }} />
+    <AddSectionDialog
+      projectId={projectId}
+      open={addSectionOpen}
+      pageId={currentPageId}
+      pageName={currentPage?.name ?? "this page"}
+      selectionAnchor={selection?.usageKey ?? selection?.canvasId ?? null}
+      selectionLabel={selection?.label ?? null}
+      projectSections={Object.values(session.manifest.blocks).map((block) => ({ id: block.id, name: block.name, isGlobal: block.isGlobal, contentStatus: block.contentStatus }))}
+      onClose={() => setAddSectionOpen(false)}
+      onAdded={onSectionAdded}
+    />
     <ChangeReview projectId={projectId} jobId={reviewJobId} onClose={() => setReviewJobId(null)} onOpenPage={(id, pageRoute) => { setReviewJobId(null); selectPage(id, pageRoute ?? undefined); }} onOpenBlock={() => { setReviewJobId(null); openPanel("blocks"); }} onHistory={() => { setReviewJobId(null); openVersions(); }} onChanged={onHistoryChanged} />
   </div>;
 }

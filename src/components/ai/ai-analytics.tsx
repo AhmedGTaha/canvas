@@ -31,7 +31,11 @@ function count(value: number) { return value.toLocaleString(); }
  * throughout: model latency and total Canvas time are never the same number, and an
  * estimate is never presented as a bill.
  */
-export function AIAnalytics({ projectId, initial }: { projectId: string; initial: AIAnalyticsSummary | null }) {
+/**
+ * Usage and cost over one scope. `endpoint` decides which: an account's own spend, or
+ * one project's activity. The component never assumes either.
+ */
+export function AIAnalytics({ endpoint, initial }: { endpoint: string; initial: AIAnalyticsSummary | null }) {
   const [period, setPeriod] = useState<AnalyticsPeriod>(initial?.period ?? "7d");
   const [summary, setSummary] = useState(initial);
   const [loading, setLoading] = useState(!initial);
@@ -40,13 +44,13 @@ export function AIAnalytics({ projectId, initial }: { projectId: string; initial
   const load = useCallback(async (next: AnalyticsPeriod) => {
     setLoading(true); setError(undefined);
     try {
-      const response = await fetch(`/api/projects/${projectId}/ai-settings/analytics?period=${next}`, { cache: "no-store" });
+      const response = await fetch(`${endpoint}?period=${next}`, { cache: "no-store" });
       const value = await response.json() as AIAnalyticsSummary & { error?: string };
       if (!response.ok) throw new Error(value.error || "AI usage could not be loaded.");
       setSummary(value);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "AI usage could not be loaded."); }
     finally { setLoading(false); }
-  }, [projectId]);
+  }, [endpoint]);
 
   // The panel is rendered with a server-loaded summary; this only covers the case where
   // that load failed, and it is deferred so the first paint is not a cascading render.

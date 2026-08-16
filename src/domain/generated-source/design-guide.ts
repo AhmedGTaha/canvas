@@ -100,14 +100,101 @@ How the classes actually behave, so you compose with them instead of against the
 - c-cluster is space-between and belongs to bars with two ends, such as a navbar or a footer row, not to body content.
 - c-stack and c-row already supply the gaps between children. Nesting a c-stack inside a c-card is how a card gets its internal spacing.
 - c-card, c-surface, c-bordered, and c-shadow are how a region separates itself from the page. Use them to break up a long run of plain sections.
-- There is no alignment or text-width class, so text runs the full width of its parent. Keep long prose inside a narrower parent such as a c-card or one side of a two-column c-grid rather than letting a paragraph span the whole container.`;
+- There is no alignment or text-width class, so text runs the full width of its parent. Keep long prose inside a narrower parent such as a c-card or one side of a two-column c-grid rather than letting a paragraph span the whole container.
+
+Collapsing navigation. This is the shape of every state toggle in this system: static classes, state on attributes.
+"use client";
+import { useState } from "react";
+export default function Navbar() {
+  const [open, setOpen] = useState(false);
+  return (
+    <nav className="c-navbar" aria-label="Primary" data-canvas-id="navbar">
+      <div className="c-container c-actions">
+        <a className="c-nav-brand" href="/"><strong>Company</strong></a>
+        <button type="button" className="c-button-secondary" aria-expanded={open} aria-controls="site-menu" onClick={() => setOpen(!open)}>{open ? "Close" : "Menu"}</button>
+        <div className="c-nav-links" id="site-menu" hidden={!open}>
+          <a className="c-link" href="/work">Work</a>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+Accordion, tabs, and filters are the same pattern with a different attribute: hidden for a disclosure, aria-selected with role="tab"/role="tabpanel" for tabs, aria-pressed on filter buttons over a list you filter in the component.
+
+A form that validates and is honest:
+<form className="c-card c-stack" data-canvas-id="enquiry">
+  <label className="c-stack" htmlFor="enquiry-email"><span>Email address</span><input id="enquiry-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+  <p className="c-muted" aria-live="polite">{valid ? "Ready to send once this form is connected." : "Enter a full email address."}</p>
+  <button type="button" className="c-button" disabled={!valid}>Send</button>
+</form>`;
+
+const CRAFT_DETAIL = `Craft detail
+These are the differences between a page that was assembled and one that was designed.
+
+Typography and rhythm.
+- One idea per line at the top of the page. A hero headline that wraps to three lines on a laptop is too long: cut words, do not shrink type.
+- Body copy belongs in a narrow parent — a c-card, or one side of a two-column c-grid — never spanning the full container, where a line runs past 90 characters and stops being readable.
+- Spacing is a rhythm, not a constant. Section header to body is closer than section to section; a card's internal gaps are tighter than the gaps between cards. c-stack and c-row already encode this, so nest them rather than adding wrapper divs to force space.
+
+Density and balance.
+- Every section earns its height. A section with one line of text in it is a decoration; either give it substance or fold it into its neighbour.
+- Alternate heavy and light. A dense card grid should be followed by something airy, and a full-bleed hero by something tight.
+- Whitespace is structural. Two related things close together and the next thing further away says more than any divider.
+
+Imagery.
+- Use approved Media where the image carries meaning: the work, the place, the product, the people. One image doing real work beats four decorating.
+- Never invent, imply, or describe an image that does not exist in the approved list. A section with no suitable Media is carried by type, surface, and a border.
+
+Contrast and colour.
+- Colours come only from project tokens, so contrast follows the project's theme. Do not put c-muted text on a c-button, and do not rely on colour alone to distinguish two things — a border, a weight, or a label does the work.
+- Reach for a gradient, a glow, or a decorative effect only when the brand notes actually call for one. In every other case, restraint reads as expensive and effects read as templated.
+
+Calls to action.
+- At most one primary c-button per section, and one clear primary action per page. Everything else is c-button-secondary or c-link.
+- The action in the hero and the action in the closing section should be the same action, worded the same way.
+
+Not this.
+- A hero, three identical feature cards, a testimonial, a call to action, in that order, on every page. It is the shape every generator produces, and it is recognisable on sight.
+- Centred text down the whole page. Centre a hero if you like; body content reads left-aligned.
+- Sections that describe the business in the abstract ("Our mission", "Why choose us") without naming anything concrete.`;
+
+const INTERACTIVITY_STANDARD = `Client-side interactivity
+Generated pages and Building Blocks are React components and may hold client state. Use it where it genuinely improves the result: a navigation menu that collapses on small screens, tabs, an accordion of questions, a stepped set of quotes, a local filter over a list, an expandable panel, a form that validates as it is typed, an active navigation state.
+
+How to write it inside the contract.
+- Add "use client" as the very first line and import { useState } from "react" when you hold state. Nothing else may be imported.
+- className must stay a static string. Never switch classes on state. Express state with attributes instead: hidden={!open}, aria-expanded={open}, aria-selected={id === active}, aria-pressed={value === current}, disabled={!valid}. The runtime stylesheet reacts to those.
+- Every interactive control is a real <button type="button"> or a real link, never a div with a click handler, so it is reachable and operable from the keyboard by construction.
+- A control that shows or hides something names what it controls: aria-controls pointing at the region's id, and aria-expanded on the control itself.
+- Regions whose content changes without a page move carry aria-live="polite" so the change is announced.
+- Keep state local and simple. No effects on mount, no timers, no auto-advancing carousels, no scroll listeners.
+
+Frontend only, and honest about it.
+- There is no backend, no database, no authentication, no payment, and no email. A form may validate, count characters, show a summary and enable or disable its own button; it may never claim to have sent, saved, booked, or charged anything.
+- When the request needs one of those, build the genuinely useful frontend — the form, the chosen date, the summary — end it in something real like a phone number or an email link, say plainly on the page that the next step happens off the site, and record the gap in summary.limitations.`;
+
+const MOTION_STANDARD = `Motion
+The shared runtime stylesheet already supplies the motion this system has: hover and press feedback on buttons and links, a lift on a card wrapped in a link, and a short reveal when a collapsed c-nav-links is shown. All of it is inside a prefers-reduced-motion: no-preference query, so a visitor who asks for less motion gets none of it, automatically.
+
+Your part is to compose so that motion has something to attach to.
+- Make an interactive thing a button or a link, and it gets its feedback for free. Wrap a whole card in a link when the whole card is clickable, and the card lifts.
+- Toggle visibility with the hidden attribute rather than by removing an element from the tree, so the reveal can play and the ids stay stable.
+- Do not attempt to write animation yourself. There is no style attribute, no CSS import, no animation class, and no CSS variables in generated source; an attempt to add motion any other way is rejected by the validator.
+- Do not ask for motion on everything. Entrances on every section, parallax, and anything that moves while being read are defects here, not polish.`;
 
 /** Full craft brief: class vocabulary, then how to compose with it, then the bar to hit. */
 export const CANVAS_CRAFT_GUIDE = `${GENERATED_RUNTIME_CLASS_GUIDE}
 
 ${DESIGN_STANDARD}
 
+${CRAFT_DETAIL}
+
 ${COPY_STANDARD}
+
+${INTERACTIVITY_STANDARD}
+
+${MOTION_STANDARD}
 
 ${COMPOSITION_PATTERNS}`;
 
@@ -118,7 +205,8 @@ ${COMPOSITION_PATTERNS}`;
 export const CANVAS_SOURCE_CONTRACT = `Hard contract
 A deterministic validator rejects the response outright on any violation below, so re-read the finished sourceCode against this list before returning.
 - Imports: react and @canvas/site-runtime only. No CSS, font, script, or dynamic imports.
-- Classes: static className strings built only from the Canvas classes above. No invented utilities, no dynamic or conditional className, no style attribute, no CSS variables, no hard-coded theme hex values.
+- Classes: static className strings built only from the Canvas classes above. No invented utilities, no dynamic or conditional className, no style attribute, no CSS variables, no hard-coded theme hex values. State goes on attributes — hidden, aria-expanded, aria-selected, aria-pressed, disabled — never on the class list.
+- Client state: allowed, with "use client" as the first line and useState imported from react. No effects, timers, refs to the document, or any other import.
 - Links and buttons: every visible text link is c-link or c-button, every button is c-button, so browser defaults never decide appearance.
 - Images: CanvasImage with an approved Media UUID. No raw img, no remote or signed URLs. c-media for content images, c-logo for a brand mark; never size an asset by its intrinsic dimensions. referencedMediaIds must match the CanvasImage mediaId values in the source exactly.
 - Routes: internal anchors may only use routes present in the supplied project structure. Folders in the page tree are groupings, not routes. Never infer a route from a requested page name; if a page is missing, omit the link and note it in summary.limitations. http, https, mailto, tel, and hash links are allowed.

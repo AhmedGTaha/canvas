@@ -1,6 +1,6 @@
 "use client";
 
-import { Blocks, ChevronRight, Clock, FileText, History, LoaderCircle, MousePointerClick, Sparkles } from "lucide-react";
+import { Blocks, ChevronRight, Clock, FileText, History, LoaderCircle, MousePointerClick, Plus, Sparkles, Unlink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Chip } from "@/components/ui/feedback";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
@@ -30,8 +30,15 @@ const STARTERS = [
  */
 export function AgentPanel({
   target, selection, selectMode, messages, job, activeJob, loading, error, prompt, selectedMediaIds, assets, folders, built,
+  sectionUsage, sectionBusy, sectionError, onRemoveSection, onAddSection,
   queue, onPrompt, onMedia, onClearSelection, onSubmit, onCancel, onCancelQueued, onEditQueued, onReview, onHide, onOpenHistory,
 }: {
+  /** Set when the selected element is a page's usage of a shared Building Block. */
+  sectionUsage: { blockId: string; usageKey: string; name: string } | null;
+  sectionBusy: boolean;
+  sectionError?: string;
+  onRemoveSection: () => void;
+  onAddSection: () => void;
   target: AgentTarget;
   selection: AgentSelection;
   selectMode: boolean;
@@ -110,6 +117,20 @@ export function AgentPanel({
         </Chip>
       </span> : null}
     </div>
+
+    {/* Composing the page, not talking to the agent: adding a section and taking one
+        off are direct acts with immediate results, so they sit above the thread and
+        never go through a prompt. */}
+    <div className="wsa-sections">
+      <button type="button" className="wsa-section-btn" disabled={!target || target.kind !== "page" || sectionBusy} onClick={onAddSection}>
+        <Plus size={13} aria-hidden="true" />Add section
+      </button>
+      {sectionUsage ? <button type="button" className="wsa-section-btn wsa-section-remove" disabled={sectionBusy} onClick={onRemoveSection}>
+        {sectionBusy ? <LoaderCircle className="spin" size={13} aria-hidden="true" /> : <Unlink size={13} aria-hidden="true" />}
+        Remove {sectionUsage.name} from this page
+      </button> : null}
+    </div>
+    {sectionError ? <p className="wsa-section-error" role="alert">{sectionError}</p> : null}
 
     <div className="wsa-thread" ref={thread}>
       {loading && !messages ? <p className="wsa-empty"><LoaderCircle className="spin" size={16} aria-hidden="true" />Opening this conversation…</p>

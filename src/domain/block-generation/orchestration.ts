@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, buildingBlockVersions, buildingBlocks, generationJobMedia, generationJobs, mediaAssets } from "@/server/db/schema";
-import { resolveProjectProvider } from "@/domain/ai/connections/model-resolution";
-import { attachJobDuration, pricingFrom, recordAIUsage } from "@/domain/ai/analytics/usage-service";
+import { resolveActorProvider } from "@/domain/ai/connections/model-resolution";
+import { attachJobDuration, pricingFrom, recordAIUsage, workspaceOfProject } from "@/domain/ai/analytics/usage-service";
 import { generateWithRepair, type ProviderCallRecorder } from "@/domain/ai/generation-runner";
-import type { ProjectProviderResolver } from "@/domain/page-generation/orchestration";
+import type { ActorProviderResolver } from "@/domain/page-generation/orchestration";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { MediaService } from "@/domain/media/service";
 import { EditingLeaseService } from "@/domain/collaboration/lease-service";
@@ -43,7 +43,7 @@ export class BlockGenerationOrchestrationService {
     private readonly database: Database = db,
     private readonly contextBuilder = new ProjectContextBuilder(),
     private readonly lifecycle = new GenerationJobLifecycle(database),
-    private readonly providerResolver: ProjectProviderResolver = (projectId) => resolveProjectProvider(projectId, database),
+    private readonly providerResolver: ActorProviderResolver = (actorUserId) => resolveActorProvider(actorUserId, database),
     private readonly leases = new EditingLeaseService(),
     private readonly access = new ProjectAccessService(),
   ) {}
@@ -110,7 +110,8 @@ export class BlockGenerationOrchestrationService {
       }));
       // project → selected connection → selected enabled model → adapter, resolved and
       // decrypted here rather than carried in the job payload.
-      const { provider, resolved } = await this.providerResolver(initial.projectId);
+      const { provider, resolved } = await this.providerResolver(initial.actorUserId);
+      const usageWorkspaceId = await workspaceOfProject(initial.projectId, this.database);
       const promptVersion = blockPromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
       await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
 
@@ -120,7 +121,7 @@ export class BlockGenerationOrchestrationService {
       const pricing = pricingFrom(resolved.model);
       const record: ProviderCallRecorder = async (entry) => {
         const row = await recordAIUsage({
-          workspaceId: resolved.workspaceId, projectId: initial.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: initial.actorUserId,
+          workspaceId: usageWorkspaceId, projectId: initial.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: initial.actorUserId,
           provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: entry.requestKind, operation: initial.operation,
           promptVersion: entry.promptVersion, succeeded: entry.succeeded, errorCode: entry.errorCode, usage: entry.usage, pricing,
           providerLatencyMs: entry.providerLatencyMs, validationDurationMs: entry.validationDurationMs,

@@ -24,7 +24,7 @@ export const aiMessageRole = pgEnum("ai_message_role", ["user", "assistant", "sy
 export const generationTargetType = pgEnum("generation_target_type", ["project", "page", "building_block"]);
 export const generationJobStatus = pgEnum("generation_job_status", ["queued", "preparing_context", "generating", "validating", "applying", "completed", "failed", "cancelled"]);
 export const exportJobStatus = pgEnum("export_job_status", ["queued", "validating", "assembling", "building", "packaging", "completed", "failed"]);
-export const changeSetOperation = pgEnum("change_set_operation", ["page_generate", "page_modify", "block_generate", "block_modify", "block_duplicate", "block_global_toggle", "block_usage_resolution", "block_archive", "page_version_restore", "block_version_restore", "checkpoint_restore", "undo", "redo"]);
+export const changeSetOperation = pgEnum("change_set_operation", ["page_generate", "page_modify", "block_generate", "block_modify", "block_duplicate", "block_global_toggle", "block_usage_resolution", "block_archive", "page_section_add", "page_section_remove", "page_version_restore", "block_version_restore", "checkpoint_restore", "undo", "redo"]);
 export const changeSetEntityType = pgEnum("change_set_entity_type", ["page", "building_block", "project"]);
 export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify", "block_generate", "block_modify"]);
 export const aiQueueStatus = pgEnum("ai_queue_status", ["queued", "paused", "claimed", "completed", "cancelled"]);
@@ -442,18 +442,27 @@ export const exportJobs = pgTable("export_jobs", {
 }, (table) => [unique("export_jobs_id_project_unique").on(table.id, table.projectId), index("export_jobs_project_created_idx").on(table.projectId, table.createdAt)]);
 
 /**
- * A workspace's own provider credential (BYOK).
+ * A person's own provider credential (BYOK).
  *
- * Only the ciphertext and a short masked hint are stored. Nothing in this table is
- * readable without the server-only Canvas master key, and no query path returns the
- * ciphertext to a browser.
+ * Connections belong to an account, never to a workspace or a project, because the
+ * credential spent on an AI job is the credential of the person who started it. Only the
+ * ciphertext and a short masked hint are stored. Nothing in this table is readable
+ * without the server-only Canvas master key, and no query path returns the ciphertext to
+ * a browser.
  */
 export const aiConnections = pgTable("ai_connections", {
   id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   provider: aiProviderKind("provider").notNull(),
   name: varchar("name", { length: 80 }).notNull(),
   baseUrl: varchar("base_url", { length: 500 }),
+  /**
+   * Set only on connections created before credentials became account-scoped. It carries
+   * no authorisation and grants no access: it exists so a credential sealed against the
+   * old workspace binding stays decryptable until the key is next saved. See
+   * `credential-cipher.ts`.
+   */
+  legacyWorkspaceId: uuid("legacy_workspace_id"),
   credentialCiphertext: text("credential_ciphertext").notNull(),
   credentialKeyVersion: integer("credential_key_version").notNull().default(1),
   credentialHint: varchar("credential_hint", { length: 24 }).notNull(),
@@ -465,12 +474,12 @@ export const aiConnections = pgTable("ai_connections", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
-}, (table) => [unique("ai_connections_id_workspace_unique").on(table.id, table.workspaceId), index("ai_connections_workspace_idx").on(table.workspaceId, table.createdAt)]);
+}, (table) => [unique("ai_connections_id_user_unique").on(table.id, table.userId), index("ai_connections_user_idx").on(table.userId, table.createdAt)]);
 
 export const aiConnectionModels = pgTable("ai_connection_models", {
   id: uuid("id").primaryKey().defaultRandom(),
   connectionId: uuid("connection_id").notNull().references(() => aiConnections.id, { onDelete: "cascade" }),
-  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   modelId: varchar("model_id", { length: 200 }).notNull(),
   displayName: varchar("display_name", { length: 200 }).notNull(),
   source: aiModelSource("source").notNull().default("manual"),
@@ -489,13 +498,14 @@ export const aiConnectionModels = pgTable("ai_connection_models", {
   unique("ai_connection_models_connection_model_unique").on(table.connectionId, table.modelId),
   unique("ai_connection_models_id_connection_unique").on(table.id, table.connectionId),
   index("ai_connection_models_connection_idx").on(table.connectionId, table.enabled),
+  index("ai_connection_models_user_idx").on(table.userId, table.enabled),
 ]);
 
-export const projectAISettings = pgTable("project_ai_settings", {
-  projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+/** One AI selection per account: which connection, and which model on it. */
+export const userAISettings = pgTable("user_ai_settings", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   connectionId: uuid("connection_id").references(() => aiConnections.id, { onDelete: "set null" }),
   modelId: uuid("model_id").references(() => aiConnectionModels.id, { onDelete: "set null" }),
-  updatedByUserId: uuid("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });
@@ -503,7 +513,9 @@ export const projectAISettings = pgTable("project_ai_settings", {
 /** One durable row per provider request. Never holds prompts, source, or credentials. */
 export const aiUsageEvents = pgTable("ai_usage_events", {
   id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  // Null for an account-scoped request such as the test console, which happens outside
+  // any workspace.
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
   connectionId: uuid("connection_id").references(() => aiConnections.id, { onDelete: "set null" }),
   generationJobId: uuid("generation_job_id"),
@@ -569,5 +581,5 @@ export type BuildingBlockVersion = typeof buildingBlockVersions.$inferSelect;
 export type BuildingBlockUsage = typeof buildingBlockUsages.$inferSelect;
 export type AIConnection = typeof aiConnections.$inferSelect;
 export type AIConnectionModel = typeof aiConnectionModels.$inferSelect;
-export type ProjectAISettings = typeof projectAISettings.$inferSelect;
+export type UserAISettings = typeof userAISettings.$inferSelect;
 export type AIUsageEvent = typeof aiUsageEvents.$inferSelect;

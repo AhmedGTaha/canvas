@@ -24,18 +24,18 @@ async function setup() {
 }
 
 describe.sequential("AI provider configuration", () => {
-  beforeEach(async () => { await sql`TRUNCATE TABLE export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
+  beforeEach(async () => { await sql`TRUNCATE TABLE ai_usage_events, ai_connection_models, user_ai_settings, ai_connections, export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterEach(() => { process.env = { ...environment }; setTelemetrySink(null); });
   afterAll(async () => { await sql.end(); });
 
-  it("fails an AI job with a plain configuration error when the project has no model selected", async () => {
+  it("fails an AI job with a plain configuration error when the actor has no model selected", async () => {
     const { owner, project, home } = await setup();
     // Creating the job still works: only the provider call needs a configured model.
     const request = await new GenerationJobService().createPageJob(owner.id, { projectId: project.id, pageId: home.id, content: "Build the homepage", selectedMediaIds: [] });
     await claimGenerationJob("worker");
     const job = await new AIOrchestrationService().process(request.job.id);
 
-    expect(job).toMatchObject({ status: "failed", errorCode: "AI_NOT_CONFIGURED", errorMessage: "This website has no AI model selected. Choose a connection and model in AI settings." });
+    expect(job).toMatchObject({ status: "failed", errorCode: "AI_NOT_CONFIGURED", errorMessage: "Your account has no AI model selected. Choose a provider and model in AI settings." });
     // A configuration problem is never retried and never damages page state.
     expect(await db.select().from(pageVersions)).toHaveLength(0);
     const [node] = await db.select().from(generationJobs).where(eq(generationJobs.id, request.job.id));
@@ -44,7 +44,7 @@ describe.sequential("AI provider configuration", () => {
 
   it("records only the provider, model, and connection id on job rows, never the key", async () => {
     const { owner, project, home } = await setup();
-    const { connection } = await ensureFixtureConnection(project.id, db, { provider: "gemini", modelId: "gemini-2.5-pro" });
+    const { connection } = await ensureFixtureConnection(owner.id, db, { provider: "gemini", modelId: "gemini-2.5-pro" });
     const request = await new GenerationJobService().createPageJob(owner.id, { projectId: project.id, pageId: home.id, content: "Build the homepage", selectedMediaIds: [] });
 
     const [job] = await db.select().from(generationJobs).where(eq(generationJobs.id, request.job.id));

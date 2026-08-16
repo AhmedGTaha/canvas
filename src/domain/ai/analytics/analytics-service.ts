@@ -36,18 +36,32 @@ const number = (value: unknown) => (value === null || value === undefined ? null
 const count = (value: unknown) => Number(value ?? 0);
 
 /**
- * Project-scoped AI analytics.
+ * AI analytics, over exactly one scope at a time.
  *
- * Every query is filtered by the project the caller was authorized for, so one project's
- * usage can never appear in another's numbers. Measurements are reported only where they
- * were actually recorded: a missing latency or token count stays null rather than being
- * inferred, and unknown cost is never summed as zero.
+ * Two scopes exist and neither can see the other's rows. A project summary is filtered by
+ * the project the caller was authorized for, so one project's usage never appears in
+ * another's numbers. An account summary is filtered by `actor_user_id`, so a person sees
+ * what *they* spent — which is the honest view now that the credential spent on a job
+ * belongs to whoever started it.
+ *
+ * Measurements are reported only where they were actually recorded: a missing latency or
+ * token count stays null rather than being inferred, and unknown cost is never summed as
+ * zero.
  */
 export class AIAnalyticsService {
   constructor(private readonly access = new ProjectAccessService()) {}
 
   async summary(userId: string, projectId: string, period: AnalyticsPeriod = "7d"): Promise<AIAnalyticsSummary> {
     await this.access.requireProjectAccess(userId, projectId);
+    return this.aggregate(sql`project_id = ${projectId}`, period);
+  }
+
+  /** This account's own usage, across every project it has worked in. */
+  async accountSummary(userId: string, period: AnalyticsPeriod = "7d"): Promise<AIAnalyticsSummary> {
+    return this.aggregate(sql`actor_user_id = ${userId}`, period);
+  }
+
+  private async aggregate(scope: ReturnType<typeof sql>, period: AnalyticsPeriod): Promise<AIAnalyticsSummary> {
     const hours = ANALYTICS_PERIODS[period];
     if (!hours) throw new DomainError("VALIDATION", "Unknown analytics period.");
     const since = sql`now() - (${hours} * interval '1 hour')`;
@@ -66,12 +80,12 @@ export class AIAnalyticsService {
         avg(validation_duration_ms) AS validation_avg,
         count(*) FILTER (WHERE cost_amount IS NULL) AS unknown_cost
       FROM ai_usage_events
-      WHERE project_id = ${projectId} AND created_at >= ${since}`;
+      WHERE ${scope} AND created_at >= ${since}`;
 
     const costs = await sql<Array<Record<string, unknown>>>`
       SELECT cost_source, cost_currency, sum(cost_amount) AS amount, count(*) AS requests
       FROM ai_usage_events
-      WHERE project_id = ${projectId} AND created_at >= ${since} AND cost_amount IS NOT NULL
+      WHERE ${scope} AND created_at >= ${since} AND cost_amount IS NOT NULL
       GROUP BY cost_source, cost_currency`;
 
     const breakdown = await sql<Array<Record<string, unknown>>>`
@@ -87,7 +101,7 @@ export class AIAnalyticsService {
         max(cost_currency) AS cost_currency,
         count(*) FILTER (WHERE cost_amount IS NULL) AS unknown_cost
       FROM ai_usage_events
-      WHERE project_id = ${projectId} AND created_at >= ${since}
+      WHERE ${scope} AND created_at >= ${since}
       GROUP BY provider, model_id
       ORDER BY requests DESC
       LIMIT 20`;
@@ -97,7 +111,7 @@ export class AIAnalyticsService {
              input_tokens, output_tokens, total_tokens, provider_latency_ms, job_duration_ms,
              cost_amount, cost_currency, cost_source
       FROM ai_usage_events
-      WHERE project_id = ${projectId} AND created_at >= ${since}
+      WHERE ${scope} AND created_at >= ${since}
       ORDER BY created_at DESC
       LIMIT 20`;
 

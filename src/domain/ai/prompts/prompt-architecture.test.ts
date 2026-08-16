@@ -216,3 +216,64 @@ describe("bounded validation repair", () => {
     expect(instruction).not.toContain("postgres://");
   });
 });
+
+/**
+ * The design, interactivity and motion guidance is craft direction, so it belongs to the
+ * shared Canvas prompt layer and must reach every provider identically. These assertions
+ * are about *where* the guidance lives as much as what it says: a rule that only one
+ * adapter sends is a rule half the product does not have.
+ */
+describe("design, interactivity and motion guidance", () => {
+  const everyRequest = () => [createPage(), modifyPage(), modifyElement(), createBlock(), modifyBlock()];
+
+  it("reaches page and block generation alike, through the shared craft guide", () => {
+    for (const request of everyRequest()) {
+      const instructions = request.systemInstructions;
+      for (const rule of ["Craft detail", "Client-side interactivity", "Motion"]) {
+        expect(instructions, `missing "${rule}"`).toContain(rule);
+      }
+    }
+  });
+
+  it("states the design qualities a generated site is judged on", () => {
+    const instructions = createPage().systemInstructions;
+    for (const rule of [
+      "Spacing is a rhythm",
+      "Whitespace is structural",
+      "Use approved Media where the image carries meaning",
+      "At most one primary c-button per section",
+      "Reach for a gradient",
+      "Centred text down the whole page",
+    ]) expect(instructions, `missing "${rule}"`).toContain(rule);
+  });
+
+  it("permits real client interactivity while keeping the source contract intact", () => {
+    const instructions = createPage().systemInstructions;
+    expect(instructions).toContain('"use client"');
+    expect(instructions).toContain("useState");
+    // State is expressed through attributes precisely because className must stay static.
+    expect(instructions).toContain("className must stay a static string");
+    expect(instructions).toContain("aria-expanded");
+    expect(instructions).toContain("aria-live");
+  });
+
+  it("keeps generated websites frontend-only and honest about it", () => {
+    for (const request of everyRequest()) {
+      expect(request.systemInstructions).toContain("Frontend only");
+      expect(request.systemInstructions).toContain("summary.limitations");
+    }
+  });
+
+  it("tells the model that motion and reduced motion come from the runtime, not the source", () => {
+    const instructions = createPage().systemInstructions;
+    expect(instructions).toContain("prefers-reduced-motion");
+    expect(instructions).toContain("Do not attempt to write animation yourself");
+    expect(instructions).toContain("Do not ask for motion on everything");
+  });
+
+  it("still refuses to make regeneration the default for a scoped change", () => {
+    const instructions = modifyPage().systemInstructions;
+    expect(instructions).toContain("Never regenerate the whole page because one section was requested to change");
+    expect(modifyElement().systemInstructions).toContain("Never regenerate the whole page because one section was requested to change");
+  });
+});

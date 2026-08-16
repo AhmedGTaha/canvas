@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BrainCircuit, CalendarDays, ChevronRight, Package, ShieldCheck, Sparkles, UserRound, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
@@ -19,13 +20,9 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { PanelLink } from "@/components/workspace/panel-link";
 import { PanelSection } from "@/components/workspace/panel-section";
 import { type PanelName } from "@/components/workspace/panel-names";
-import { AISettings } from "@/components/ai/ai-settings";
+import { AIAnalytics } from "@/components/ai/ai-analytics";
 import { ProjectInstructionService } from "@/domain/ai/instruction-service";
-import { AIConnectionService } from "@/domain/ai/connections/connection-service";
-import { ProjectModelService } from "@/domain/ai/connections/project-model-service";
 import { AIAnalyticsService } from "@/domain/ai/analytics/analytics-service";
-import { PROVIDER_KINDS, providerDescriptor } from "@/server/ai/provider-registry";
-import { credentialEncryptionAvailable } from "@/server/security/credential-cipher";
 import { BuildingBlockService } from "@/domain/blocks/service";
 import { InvitationService } from "@/domain/collaboration/invitation-service";
 import { MembershipService } from "@/domain/collaboration/membership-service";
@@ -76,7 +73,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
         <Section title="Settings for this website">
           <nav className="destination-list" aria-label="Website settings">
             <PanelLink tool="settings" className="destination"><Sparkles size={16} /><span><strong>Agent guidance</strong><small>What the agent should always know</small></span><ChevronRight size={15} /></PanelLink>
-            <PanelLink tool="ai" className="destination"><BrainCircuit size={16} /><span><strong>AI model and usage</strong><small>Which model builds this website, and what it costs</small></span><ChevronRight size={15} /></PanelLink>
+            <PanelLink tool="ai" className="destination"><BrainCircuit size={16} /><span><strong>AI activity</strong><small>What this website has generated, and what it cost</small></span><ChevronRight size={15} /></PanelLink>
             <PanelLink tool="collaborators" className="destination"><UsersRound size={16} /><span><strong>Collaborators</strong><small>Who else can work on this website</small></span><ChevronRight size={15} /></PanelLink>
             <PanelLink tool="export" className="destination"><Package size={16} /><span><strong>Export website</strong><small>Check it, build it, download the ZIP</small></span><ChevronRight size={15} /></PanelLink>
           </nav>
@@ -86,30 +83,21 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
   }
 
   if (name === "ai") {
-    let access;
-    try { access = await new ProjectService().readWithRole(user.id, projectId); } catch { notFound(); }
-    const workspaceOwner = access.workspace.ownerUserId === user.id;
-    // Connections belong to the workspace owner; the selection and its usage belong to
-    // the project. Only what the caller is entitled to see is fetched at all.
-    const [connections, selection, analytics] = await Promise.all([
-      workspaceOwner ? new AIConnectionService().list(user.id, access.workspace.id) : Promise.resolve([]),
-      new ProjectModelService().read(user.id, projectId),
-      new AIAnalyticsService().summary(user.id, projectId, "7d").catch(() => null),
-    ]);
+    // Configuration is not here any more: an API key belongs to the person who spends it,
+    // so it lives on their account. What is genuinely about this website is what it has
+    // generated and what that cost, which is what this panel shows.
+    try { await new ProjectService().read(user.id, projectId); } catch { notFound(); }
+    const analytics = await new AIAnalyticsService().summary(user.id, projectId, "7d").catch(() => null);
     return {
-      title: "AI model and usage",
-      description: "Which AI model builds this website, how it is performing, and what it costs.",
+      title: "AI activity",
+      description: "What this website has generated, how it performed, and what it cost.",
       size: "wide",
-      body: <AISettings
-        projectId={projectId}
-        workspaceId={access.workspace.id}
-        canManageConnections={workspaceOwner}
-        providers={PROVIDER_KINDS.map((kind) => providerDescriptor(kind))}
-        initialConnections={connections}
-        initialSelection={selection}
-        initialAnalytics={analytics}
-        credentialStorageAvailable={credentialEncryptionAvailable()}
-      />,
+      body: <>
+        <InlineAlert tone="info" title="AI providers are set on your account">
+          The model and API key used for your requests belong to you, not to this website, and a collaborator&apos;s requests use theirs. Change yours in <Link href="/account/ai">AI settings</Link>.
+        </InlineAlert>
+        <AIAnalytics endpoint={`/api/projects/${projectId}/ai-settings/analytics`} initial={analytics} />
+      </>,
     };
   }
 

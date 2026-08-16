@@ -309,6 +309,8 @@ describe("sidebar-first project tools", () => {
       historySection={null}
       onOpenPanel={onOpenPanel}
       onNewBlock={vi.fn()}
+      onAddSection={vi.fn()}
+      canAddSection
       onHistorySection={vi.fn()}
     />);
     return { onOpenPanel };

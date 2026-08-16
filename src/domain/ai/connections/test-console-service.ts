@@ -1,11 +1,10 @@
 import { db, type Database } from "@/server/db/client";
-import { ProjectAccessService } from "@/server/permissions/project-access";
 import { consumeRateLimit } from "@/server/rate-limit/service";
 import { AIError } from "@/domain/ai/provider";
 import { CANVAS_PROMPT_VERSIONS } from "@/domain/ai/prompts/versions";
 import { costForRequest, pricingFrom } from "@/domain/ai/analytics/pricing";
 import { recordAIUsage } from "@/domain/ai/analytics/usage-service";
-import { resolveProjectProvider, type ResolvedProjectModel } from "./model-resolution";
+import { resolveActorProvider, type ResolvedActorModel } from "./model-resolution";
 import { testPromptSchema } from "./schemas";
 import type { AIProvider } from "@/domain/ai/provider";
 
@@ -39,29 +38,26 @@ export type TestPromptResult = {
 /**
  * The AI settings test console.
  *
- * It sends one prompt straight to the project's selected provider and model and reports
- * exactly what came back. It creates no page version, no Change Set, no generation job,
- * and no AI conversation message, so a test can never modify a website or pollute the
- * agent's history. The only thing it persists is the usage record the AI analytics are
- * built from — the same normalized shape a real generation writes.
+ * It sends one prompt straight to *this account's* selected provider and model and
+ * reports exactly what came back — the caller can only ever spend their own credential,
+ * because that is the only one resolution can reach. It creates no page version, no
+ * Change Set, no generation job, and no AI conversation message, so a test can never
+ * modify a website or pollute the agent's history. The only thing it persists is the
+ * usage record the AI analytics are built from — the same normalized shape a real
+ * generation writes, attributed to the person who ran it.
  */
 export class AITestConsoleService {
   constructor(
     private readonly database: Database = db,
-    private readonly access = new ProjectAccessService(),
-    private readonly providerResolver: (projectId: string) => Promise<{ resolved: ResolvedProjectModel; provider: AIProvider }> = (projectId) => resolveProjectProvider(projectId, database),
+    private readonly providerResolver: (actorUserId: string) => Promise<{ resolved: ResolvedActorModel; provider: AIProvider }> = (actorUserId) => resolveActorProvider(actorUserId, database),
   ) {}
 
   async run(userId: string, input: unknown): Promise<TestPromptResult> {
     const parsed = testPromptSchema.parse(input);
-    // Only the project owner may spend the workspace's credential from this screen.
-    await this.access.requireProjectOwner(userId, parsed.projectId);
-    // Two independent budgets: one so a person cannot hammer the button, one so a
-    // project cannot be drained by several owners' sessions at once.
-    await consumeRateLimit("ai_test_console_user", `${userId}:${parsed.projectId}`, { attempts: 10, windowMinutes: 15 });
-    await consumeRateLimit("ai_test_console_project", parsed.projectId, { attempts: 30, windowMinutes: 15 });
+    // One budget, on the person, because the credential being spent is theirs.
+    await consumeRateLimit("ai_test_console_user", userId, { attempts: 20, windowMinutes: 15 });
 
-    const { provider, resolved } = await this.providerResolver(parsed.projectId);
+    const { provider, resolved } = await this.providerResolver(userId);
     const pricing = pricingFrom(resolved.model);
     const startedAt = new Date();
     const started = performance.now();
@@ -85,7 +81,7 @@ export class AITestConsoleService {
       const totalLatencyMs = response.timing?.providerLatencyMs ?? Math.round(performance.now() - started);
       const cost = costForRequest(response.usage, pricing, response.reportedCost);
       await recordAIUsage({
-        workspaceId: resolved.workspaceId, projectId: parsed.projectId, connectionId: resolved.connection.id, actorUserId: userId,
+        workspaceId: null, projectId: null, connectionId: resolved.connection.id, actorUserId: userId,
         provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: "test_console", operation: "test_console",
         promptVersion: CANVAS_PROMPT_VERSIONS.test_console, succeeded: true, usage: response.usage, reportedCost: response.reportedCost,
         pricing, providerLatencyMs: totalLatencyMs, startedAt,
@@ -102,7 +98,7 @@ export class AITestConsoleService {
       const failure = error instanceof AIError ? error : new AIError("AI_INTERNAL_ERROR", "Canvas could not complete this test request.");
       const totalLatencyMs = Math.round(performance.now() - started);
       await recordAIUsage({
-        workspaceId: resolved.workspaceId, projectId: parsed.projectId, connectionId: resolved.connection.id, actorUserId: userId,
+        workspaceId: null, projectId: null, connectionId: resolved.connection.id, actorUserId: userId,
         provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: "test_console", operation: "test_console",
         promptVersion: CANVAS_PROMPT_VERSIONS.test_console, succeeded: false, errorCode: failure.code,
         pricing, providerLatencyMs: totalLatencyMs, startedAt,

@@ -1,11 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, generationJobs } from "@/server/db/schema";
-import { resolveProjectProvider } from "./connections/model-resolution";
-import { attachJobDuration, pricingFrom, recordAIUsage } from "./analytics/usage-service";
+import { resolveActorProvider } from "./connections/model-resolution";
+import { attachJobDuration, pricingFrom, recordAIUsage, workspaceOfProject } from "./analytics/usage-service";
 import { CANVAS_PROMPT_VERSIONS } from "./prompts/versions";
 import { AIError } from "./provider";
-import type { ProjectProviderResolver } from "@/domain/page-generation/orchestration";
+import type { ActorProviderResolver } from "@/domain/page-generation/orchestration";
 import { ProjectContextBuilder, type ProjectContextTarget } from "./context";
 import { assembleProviderRequest } from "./prompt-assembler";
 import { GenerationJobLifecycle, safeAIError } from "./job-service";
@@ -17,7 +17,7 @@ import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnos
 const MAX_ATTEMPTS = 3;
 
 export class AIOrchestrationService {
-  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ProjectProviderResolver = (projectId) => resolveProjectProvider(projectId, database)) {}
+  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ActorProviderResolver = (actorUserId) => resolveActorProvider(actorUserId, database)) {}
 
   private async current(jobId: string) { const [job] = await this.database.select().from(generationJobs).where(eq(generationJobs.id, jobId)).limit(1); return job; }
   private async cancelIfRequested(jobId: string) {
@@ -44,7 +44,8 @@ export class AIOrchestrationService {
       observe.generationJob("started", { jobId, projectId: job.projectId, operation: "assistant" });
       if (await this.cancelIfRequested(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "generating", "Contacting AI");
-      const { provider, resolved } = await this.providerResolver(job.projectId);
+      const { provider, resolved } = await this.providerResolver(job.actorUserId);
+      const usageWorkspaceId = await workspaceOfProject(job.projectId, this.database);
       await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion: CANVAS_PROMPT_VERSIONS.assistant }).where(eq(generationJobs.id, jobId));
 
       const providerStartedAt = performance.now();
@@ -53,7 +54,7 @@ export class AIOrchestrationService {
         response = await provider.generateText(assembleProviderRequest(context, prompt.content));
       } catch (error) {
         await recordAIUsage({
-          workspaceId: resolved.workspaceId, projectId: job.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: job.actorUserId,
+          workspaceId: usageWorkspaceId, projectId: job.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: job.actorUserId,
           provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: "generation", operation: "assistant",
           promptVersion: CANVAS_PROMPT_VERSIONS.assistant, succeeded: false, errorCode: error instanceof AIError ? error.code : "AI_INTERNAL_ERROR",
           pricing: pricingFrom(resolved.model), providerLatencyMs: Math.round(performance.now() - providerStartedAt),
@@ -61,7 +62,7 @@ export class AIOrchestrationService {
         throw error;
       }
       await recordAIUsage({
-        workspaceId: resolved.workspaceId, projectId: job.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: job.actorUserId,
+        workspaceId: usageWorkspaceId, projectId: job.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: job.actorUserId,
         provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: "generation", operation: "assistant",
         promptVersion: CANVAS_PROMPT_VERSIONS.assistant, succeeded: true, usage: response.usage, pricing: pricingFrom(resolved.model),
         providerLatencyMs: response.timing?.providerLatencyMs ?? Math.round(performance.now() - providerStartedAt),

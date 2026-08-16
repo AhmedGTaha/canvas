@@ -10,6 +10,9 @@ export type TransactionLike = Parameters<Parameters<Database["transaction"]>[0]>
 export const REVERSIBLE_OPERATIONS: ChangeSetOperation[] = [
   "page_generate", "page_modify", "block_generate", "block_modify",
   "block_global_toggle", "block_archive",
+  // Composing a page from sections moves the page's active version, which is exactly
+  // what the restore engine replays, so both directions are ordinary Undo/Redo.
+  "page_section_add", "page_section_remove",
   "page_version_restore", "block_version_restore", "checkpoint_restore",
 ];
 const HISTORY_OPERATIONS: ChangeSetOperation[] = ["undo", "redo"];

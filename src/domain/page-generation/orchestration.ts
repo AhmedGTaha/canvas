@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, generationJobMedia, generationJobs, mediaAssets, pageNodes, pageVersions } from "@/server/db/schema";
-import { resolveProjectProvider, type ResolvedProjectModel } from "@/domain/ai/connections/model-resolution";
-import { attachJobDuration, pricingFrom, recordAIUsage } from "@/domain/ai/analytics/usage-service";
+import { resolveActorProvider, type ResolvedActorModel } from "@/domain/ai/connections/model-resolution";
+import { attachJobDuration, pricingFrom, recordAIUsage, workspaceOfProject } from "@/domain/ai/analytics/usage-service";
 import { generateWithRepair, type ProviderCallRecorder } from "@/domain/ai/generation-runner";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { MediaService } from "@/domain/media/service";
@@ -32,11 +32,15 @@ function failureStage(error: AIError, fallback: string) {
   return fallback;
 }
 
-/** Resolves the project's own connection, model, and adapter at execution time. */
-export type ProjectProviderResolver = (projectId: string) => Promise<{ resolved: ResolvedProjectModel; provider: AIProvider }>;
+/**
+ * Resolves the credential for a job at execution time, from the account of the person who
+ * created it. The job carries the actor's id and nothing else; the key itself is fetched,
+ * decrypted, used and discarded inside the worker.
+ */
+export type ActorProviderResolver = (actorUserId: string) => Promise<{ resolved: ResolvedActorModel; provider: AIProvider }>;
 
 export class PageGenerationOrchestrationService {
-  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ProjectProviderResolver = (projectId) => resolveProjectProvider(projectId, database), private readonly leases = new EditingLeaseService(), private readonly access = new ProjectAccessService()) {}
+  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ActorProviderResolver = (actorUserId) => resolveActorProvider(actorUserId, database), private readonly leases = new EditingLeaseService(), private readonly access = new ProjectAccessService()) {}
   private async current(jobId: string) { const [job] = await this.database.select().from(generationJobs).where(eq(generationJobs.id, jobId)).limit(1); return job; }
   private async cancellation(jobId: string) { const job = await this.current(jobId); if (!job) return true; if (!job.cancelRequestedAt && job.status !== "cancelled") return false; if (!(["completed", "failed", "cancelled"] as string[]).includes(job.status)) await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." }); return true; }
 
@@ -76,9 +80,11 @@ export class PageGenerationOrchestrationService {
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "generating", "Generating page");
       const imageParts = await Promise.all(selected.map(async (asset) => { const binary = await new MediaService().readBinary(initial.actorUserId, asset.id); if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable."); return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName }; }));
-      // project → selected connection → selected enabled model → adapter. The credential
-      // is decrypted inside this call and never travels through the job payload.
-      const { provider, resolved } = await this.providerResolver(initial.projectId);
+      // actor → their account's selected connection → selected enabled model → adapter.
+      // The credential is decrypted inside this call and never travels through the job
+      // payload, the queue row, the prompt, or anything this job writes.
+      const { provider, resolved } = await this.providerResolver(initial.actorUserId);
+      const usageWorkspaceId = await workspaceOfProject(initial.projectId, this.database);
       const promptVersion = pagePromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
       await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
 
@@ -90,7 +96,7 @@ export class PageGenerationOrchestrationService {
       const pricing = pricingFrom(resolved.model);
       const record: ProviderCallRecorder = async (entry) => {
         const row = await recordAIUsage({
-          workspaceId: resolved.workspaceId, projectId: initial.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: initial.actorUserId,
+          workspaceId: usageWorkspaceId, projectId: initial.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: initial.actorUserId,
           provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: entry.requestKind, operation: initial.operation,
           promptVersion: entry.promptVersion, succeeded: entry.succeeded, errorCode: entry.errorCode, usage: entry.usage, pricing,
           providerLatencyMs: entry.providerLatencyMs, validationDurationMs: entry.validationDurationMs,

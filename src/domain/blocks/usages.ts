@@ -83,8 +83,14 @@ export async function resolvePageBlockModules(database: Database, projectId: str
   return [...modules.values()];
 }
 
-/** Active source of the given project's blocks, used to compile a page that reuses them. */
-export async function loadActiveBlockSources(database: Database, projectId: string, blockIds: string[]) {
+/**
+ * Active source of the given project's blocks, used to compile a page that reuses them.
+ *
+ * Takes a transaction as readily as the pool, because a page edit that creates a block
+ * and references it in the same transaction has to be able to see the block it just
+ * made — reading through the pool there returns the state from before it existed.
+ */
+export async function loadActiveBlockSources(database: Pick<Database, "select">, projectId: string, blockIds: string[]) {
   if (!blockIds.length) return new Map<string, string>();
   const rows = await database.select({ blockId: buildingBlocks.id, sourceCode: buildingBlockVersions.sourceCode })
     .from(buildingBlocks)

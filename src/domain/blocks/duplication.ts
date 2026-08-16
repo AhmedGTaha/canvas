@@ -14,6 +14,25 @@ export function duplicateBlockName(baseName: string, existingNames: Iterable<str
 }
 
 /**
+ * The name a *new* block should take.
+ *
+ * Different from `duplicateBlockName` on purpose: duplicating always means "another copy
+ * of this", so it always says Copy. Installing a section from the Canvas library the
+ * first time is not a copy of anything the project has, so calling it "Classic bar Copy"
+ * is simply wrong. Later installs of the same starter fall back to a numeric suffix.
+ */
+export function uniqueBlockName(baseName: string, existingNames: Iterable<string>) {
+  const taken = new Set([...existingNames].map((name) => name.trim().toLowerCase()));
+  const base = baseName.slice(0, 120).trim();
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let index = 2; index < 1_000; index += 1) {
+    const candidate = `${base} ${index}`.slice(0, 120).trim();
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return duplicateBlockName(base, existingNames);
+}
+
+/**
  * Copies only the parts of a Block Version manifest that stay valid for a new,
  * independent block. Source stays authoritative in `source_code`.
  */

@@ -1,12 +1,14 @@
 import { sql as drizzleSql } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
-import { aiUsageEvents } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
+import { aiUsageEvents, projects } from "@/server/db/schema";
 import type { AIProviderKind, AIReportedCost, AIUsage } from "@/domain/ai/provider";
 import { costForRequest, pricingFrom, type ModelPricing } from "./pricing";
 import { emit } from "@/server/observability/telemetry";
 
 export type UsageRecordInput = {
-  workspaceId: string;
+  /** Null for an account-scoped request such as the test console. */
+  workspaceId: string | null;
   projectId: string | null;
   connectionId: string | null;
   generationJobId?: string | null;
@@ -93,3 +95,16 @@ export async function attachJobDuration(generationJobId: string, jobDurationMs: 
 }
 
 export { pricingFrom };
+
+/**
+ * The workspace a usage row is attributed to.
+ *
+ * Usage is now spent from an account's credential, but it is still *about* a project, and
+ * the analytics a workspace owner reads are aggregated by workspace. This keeps that
+ * reporting intact without letting the workspace have anything to do with which
+ * credential was used.
+ */
+export async function workspaceOfProject(projectId: string, database: Database = db) {
+  const [row] = await database.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, projectId)).limit(1);
+  return row?.workspaceId ?? null;
+}

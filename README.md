@@ -15,7 +15,7 @@ generated code never runs on the Canvas server.
 - **Media library** — private, project-scoped images served only through authenticated routes.
 - **Brand and theme** — company identity, logos, semantic light/dark color sets, and design scales resolved into CSS tokens.
 - **AI page generation** — durable jobs, immutable Page Versions, structured validation, restricted compilation.
-- **Bring your own AI** — workspace-owned provider connections (Gemini, OpenAI, Anthropic, OpenAI-compatible), encrypted credentials, per-project model selection, and per-project usage, latency and cost analytics.
+- **Bring your own AI** — account-owned provider connections (Gemini, OpenAI, Anthropic, OpenAI-compatible), encrypted credentials, one model selection per person, and usage, latency and cost analytics by account and by project.
 - **Building Blocks** — reusable sections; global blocks resolve through one stable UUID and propagate everywhere.
 - **Element-level editing** — click a region in the Preview and ask Canvas to change that region only.
 - **History** — Change Sets, Undo/Redo with conflict protection, Page/Block version history and restore, named project checkpoints.
@@ -93,10 +93,12 @@ scoped Preview token. Object keys are never exposed to clients.
 
 ## AI providers and credentials
 
-Canvas is bring-your-own-key. A **workspace owner** connects their own provider account;
-**project owners** then choose which of the workspace's enabled models a website generates
-with. No provider credential lives in the environment, and no provider is privileged over
-another.
+Canvas is bring-your-own-key, and the key belongs to a **person**. Each account connects
+its own provider and picks one model; every AI job Canvas runs uses the credential of
+whoever created that job. A collaborator generating a page on someone else's website
+spends their own credit, never the owner's, and an account with no credentials fails with
+an ordinary configuration error rather than falling back to anyone else's key. No provider
+credential lives in the environment, and no provider is privileged over another.
 
 ### Supported providers
 
@@ -115,30 +117,32 @@ envelopes stay inside their adapter.
 
 ### The workflow
 
-1. **Workspace owner** opens a project, then **AI model and usage → Connections**, and adds
-   a provider with its API key (plus a base URL for an OpenAI-compatible endpoint).
+1. Open the **account menu → AI settings → Connections** and add a provider with its API
+   key (plus a base URL for an OpenAI-compatible endpoint).
 2. **Load models** discovers what the provider offers, or model IDs are added by hand.
-   Discovered models arrive disabled; the owner enables the ones projects may use, and can
-   record each model's capabilities and pricing.
+   Discovered models arrive disabled; you enable the ones you want, and can record each
+   model's capabilities and pricing.
 3. **Test connection** proves the credential works before anything depends on it.
-4. **Project owner** picks one enabled connection and model on the **Model** tab.
-5. Generation resolves project → connection → enabled model → adapter at execution time,
-   inside the worker.
+4. Pick one enabled connection and model on the **Model** tab. That is your selection, on
+   every website you work on.
+5. Generation resolves job actor → their account's connection → enabled model → adapter at
+   execution time, inside the worker.
 
 ### Credential security
 
 The only AI secret in the environment is `CANVAS_CREDENTIAL_KEY`, a 32-byte master key.
 Provider credentials are encrypted with AES-256-GCM before they are stored, bound to the
-connection and workspace they belong to, so a ciphertext copied into another connection or
-workspace cannot be decrypted. A stored key is **never** returned to a browser — only a
-four-character hint — and never appears in logs, prompts, job rows, generation metadata,
-Preview, exports, or analytics. Only the workspace owner can create, edit, test, or remove
-a connection; project collaborators can use the project's selected model but can neither
-see nor change the credential behind it.
+connection **and the account** they belong to, so a ciphertext copied into another
+connection or another account cannot be decrypted. (Connections created before credentials
+became account-scoped keep their original workspace binding until the key is next saved,
+so nobody has to re-enter a working key.) A stored key is **never** returned to a browser
+— only a four-character hint — and never appears in logs, prompts, job rows, queue rows,
+generation metadata, Preview, exports, or analytics. There is no API by which one account
+can read, use, or even see another's connection.
 
 Removing a connection or disabling a model never damages a website: existing pages,
-versions and history are untouched, and the next AI request fails with a clear
-configuration error until another model is chosen.
+versions and history are untouched, and that person's next AI request fails with a clear
+configuration error until another model is chosen. Everyone else keeps working.
 
 ### Generation pipeline
 

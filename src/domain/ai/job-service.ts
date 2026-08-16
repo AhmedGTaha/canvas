@@ -8,16 +8,17 @@ import { createBlockJobSchema } from "@/domain/blocks/schemas";
 import { elementNotFound, findEditableElement, type ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 import { observe } from "@/server/observability/events";
-import { projectModelDescriptor } from "./connections/model-resolution";
+import { actorModelDescriptor } from "./connections/model-resolution";
 
 /**
- * Provider identity recorded on a job row at creation, from the project's current
- * selection. It is a snapshot for display only — the worker resolves the selection again
- * at execution time — and it never includes a credential. A project with no usable
- * selection still gets a job row, which then fails with a clear configuration error.
+ * Provider identity recorded on a job row at creation, from the *actor's* current account
+ * selection. It is a snapshot for display only — the worker resolves the actor's
+ * selection again at execution time — and it never includes a credential. Someone with no
+ * usable selection still gets a job row, which then fails with a clear configuration
+ * error rather than borrowing anyone else's key.
  */
-async function aiProviderRecord(database: Database, projectId: string) {
-  const descriptor = await projectModelDescriptor(projectId, database);
+async function aiProviderRecord(database: Database, actorUserId: string) {
+  const descriptor = await actorModelDescriptor(actorUserId, database);
   return { provider: descriptor?.provider ?? "unresolved", providerModel: descriptor?.model ?? null, aiConnectionId: descriptor?.connectionId ?? null };
 }
 
@@ -49,7 +50,7 @@ export class GenerationJobService {
     if (!conversation) throw new DomainError("NOT_FOUND", "Conversation not found.");
     await applyRateLimit(this.database, "user", userId, 10);
     await applyRateLimit(this.database, "project", parsed.projectId, 30);
-    const providerRecord = await aiProviderRecord(this.database, parsed.projectId);
+    const providerRecord = await aiProviderRecord(this.database, userId);
     return this.database.transaction(async (transaction) => {
       const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
       if (!message) throw new Error("User message insert failed.");
@@ -67,7 +68,7 @@ export class GenerationJobService {
     const parsed = createPageJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
-    const providerRecord = await aiProviderRecord(this.database, parsed.projectId);
+    const providerRecord = await aiProviderRecord(this.database, userId);
     try {
       return await this.database.transaction(async (transaction) => {
         const [page] = await transaction.select().from(pageNodes).where(and(eq(pageNodes.id, parsed.pageId), eq(pageNodes.projectId, parsed.projectId), eq(pageNodes.type, "page"), drizzleSql`${pageNodes.deletedAt} IS NULL`)).for("update");
@@ -116,7 +117,7 @@ export class GenerationJobService {
     const parsed = createBlockJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
-    const providerRecord = await aiProviderRecord(this.database, parsed.projectId);
+    const providerRecord = await aiProviderRecord(this.database, userId);
     try {
       return await this.database.transaction(async (transaction) => {
         const [block] = await transaction.select().from(buildingBlocks).where(and(eq(buildingBlocks.id, parsed.blockId), eq(buildingBlocks.projectId, parsed.projectId), drizzleSql`${buildingBlocks.deletedAt} IS NULL`)).for("update");

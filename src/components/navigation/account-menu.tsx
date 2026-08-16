@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, Home, LayoutGrid, LogOut, UserRound } from "lucide-react";
+import { BrainCircuit, ChevronDown, Home, LayoutGrid, LogOut, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppearanceControl } from "@/components/appearance/appearance-control";
 
@@ -41,6 +41,9 @@ export function AccountMenu({ userName, email, onSignOut }: { userName: string; 
         <Link className="menu-item" role="menuitem" href="/dashboard" onClick={() => setOpen(false)}><Home size={15} />Your websites</Link>
         <Link className="menu-item" role="menuitem" href="/workspaces" onClick={() => setOpen(false)}><LayoutGrid size={15} />Workspaces</Link>
         <Link className="menu-item" role="menuitem" href="/account" onClick={() => setOpen(false)}><UserRound size={15} />Account</Link>
+        {/* AI credentials belong to a person, so they are reached from the person's
+            menu rather than from inside whichever website happens to be open. */}
+        <Link className="menu-item" role="menuitem" href="/account/ai" onClick={() => setOpen(false)}><BrainCircuit size={15} />AI settings</Link>
         <div className="menu-separator" role="separator" />
         <button type="button" role="menuitem" className="menu-item" onClick={() => { setOpen(false); onSignOut(); }}><LogOut size={15} />Sign out</button>
       </div>

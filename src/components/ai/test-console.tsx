@@ -5,7 +5,7 @@ import { Section } from "@/components/ui/panel";
 import { Textarea } from "@/components/ui/form-controls";
 import { InlineAlert } from "@/components/ui/feedback";
 import { formatCost } from "@/domain/ai/analytics/pricing";
-import type { ProjectModelSelection } from "@/domain/ai/connections/project-model-service";
+import type { AccountModelSelection } from "@/domain/ai/connections/account-model-service";
 import type { TestPromptResult } from "@/domain/ai/connections/test-console-service";
 
 /**
@@ -15,7 +15,7 @@ import type { TestPromptResult } from "@/domain/ai/connections/test-console-serv
  * website: no page version, no change set, no agent history. Measurements the provider
  * did not report are shown as unavailable rather than filled in with a plausible number.
  */
-export function TestConsole({ projectId, selection }: { projectId: string; selection: ProjectModelSelection }) {
+export function TestConsole({ selection }: { selection: AccountModelSelection }) {
   const [prompt, setPrompt] = useState("In one sentence, what is a landing page for?");
   const [result, setResult] = useState<TestPromptResult | null>(null);
   const [sending, setSending] = useState(false);
@@ -26,7 +26,7 @@ export function TestConsole({ projectId, selection }: { projectId: string; selec
   async function send() {
     setSending(true); setError(undefined);
     try {
-      const response = await fetch(`/api/projects/${projectId}/ai-settings/test`, {
+      const response = await fetch("/api/account/ai-settings/test", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }),
       });
       const value = await response.json() as TestPromptResult & { error?: string };
@@ -38,7 +38,7 @@ export function TestConsole({ projectId, selection }: { projectId: string; selec
 
   return <Section
     title="Test model"
-    description={ready ? `Sends one prompt straight to ${selection.model?.displayName} on ${selection.connectionName}. It changes nothing on this website.` : "Choose a connection and model first."}
+    description={ready ? `Sends one prompt straight to ${selection.model?.displayName} on ${selection.connectionName}. It changes nothing on any of your websites.` : "Choose a connection and model first."}
   >
     {!ready ? <InlineAlert tone="info" title="No model selected">Pick a connection and model on the Model tab, then come back here.</InlineAlert> : null}
 
@@ -47,7 +47,7 @@ export function TestConsole({ projectId, selection }: { projectId: string; selec
       rows={3}
       value={prompt}
       disabled={!ready || sending}
-      hint="Test prompts are not added to the agent conversation for this website."
+      hint="Test prompts are never added to any website's agent conversation."
       onChange={(event) => setPrompt(event.target.value)}
     />
     <div className="form-actions">

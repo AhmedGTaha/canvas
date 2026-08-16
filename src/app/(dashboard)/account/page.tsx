@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppearanceControl } from "@/components/appearance/appearance-control";
 import { PageHeader } from "@/components/ui/page-header";
 import { requireAuthenticatedUser } from "@/server/auth/session";
@@ -10,6 +11,14 @@ export default async function AccountPage() {
       <div><dt>Name</dt><dd>{user.displayName}</dd></div>
       <div><dt>Email</dt><dd>{user.email}</dd></div>
     </dl>
+
+    <div className="form-section">
+      <div className="form-section-head">
+        <h3>AI</h3>
+        <p>The provider and model your Canvas requests use. Your key is used for the work you start, on any website — a collaborator&apos;s requests use theirs.</p>
+      </div>
+      <Link className="button button-secondary" href="/account/ai">Open AI settings</Link>
+    </div>
 
     {/* The same control as the account menu, given room to say what it does.
         Appearance is a property of Canvas, not of any one website: a project's
