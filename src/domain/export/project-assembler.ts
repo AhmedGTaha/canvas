@@ -112,7 +112,9 @@ export class ProjectAssembler {
       `<link rel="stylesheet" href="${escapeHtmlAttribute(`${input.prefix}styles/site.css`)}">`,
       input.stylesheet ? `<link rel="stylesheet" href="${escapeHtmlAttribute(input.stylesheet)}">` : "",
       `</head>`,
-      `<body class="c-page">`,
+      // The document supplies its own root element and its own classes; `styles/site.css`
+      // already themes the body, so nothing is imposed on it here.
+      `<body>`,
       input.body,
       input.script ? `<script src="${escapeHtmlAttribute(input.script)}"></script>` : "",
       `</body>`,

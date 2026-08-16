@@ -92,8 +92,9 @@ class FixtureProvider implements AIProvider { readonly capabilities = { structur
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const value = {
+      // A Building Block response carries no page metadata, so the fixture sends the
+      // same three artifacts a real provider does and nothing more.
       schemaVersion: 1, html: this.fragment.html, css: this.fragment.css ?? "", js: this.fragment.js ?? "",
-      metadata: { title: "Home", description: "The home page." },
       referencedMediaIds: this.options.referencedMediaIds ?? [],
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       summary: { headline: "Created the navbar", changes: ["Added navigation"], limitations: [] },
@@ -115,7 +116,7 @@ async function setup() {
 }
 async function runBlockJob(userId: string, projectId: string, blockId: string, fragment: Fragment, mediaIds: string[]) {
   const job = await processBlockJob(userId, projectId, blockId, fragment, mediaIds);
-  expect(job).toMatchObject({ status: "completed" });
+  expect(job).toMatchObject({ status: "completed", errorCode: null, errorDiagnostic: null });
 }
 async function processBlockJob(userId: string, projectId: string, blockId: string, fragment: Fragment, mediaIds: string[]) {
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: "Create a navbar", selectedMediaIds: mediaIds });
@@ -126,7 +127,7 @@ async function runPageJob(userId: string, projectId: string, pageId: string, fra
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "Use the navbar", selectedMediaIds: [] });
   await claimGenerationJob("worker");
   const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(fragment, { blockUsages }))).process(request.job.id);
-  expect(job).toMatchObject({ status: "completed" });
+  expect(job).toMatchObject({ status: "completed", errorCode: null, errorDiagnostic: null });
 }
 const environment = { ...process.env };
 

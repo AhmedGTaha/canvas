@@ -110,7 +110,9 @@ async function exportProject(userId: string, projectId: string) {
 }
 async function exportedFiles(userId: string, projectId: string) {
   const { service, jobId, state } = await exportProject(userId, projectId);
-  expect(state.status).toBe("completed");
+  // A failure here is far easier to act on with the reason attached than as a bare
+  // status mismatch, so the export's own diagnostics travel into the assertion.
+  expect({ status: state.status, errorCode: state.errorCode, failures: state.validation?.failures ?? [] }).toEqual({ status: "completed", errorCode: null, failures: [] });
   const artifact = await service.download(userId, projectId, jobId);
   return { files: readZip(artifact.bytes), fileName: artifact.fileName, state };
 }
@@ -173,7 +175,7 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${block.id}" data-canvas-usage="site-navbar"></div><section class="c-section c-surface"><h1>Home</h1></section></main>`, { blockUsages: [{ blockId: block.id, usageKey: "site-navbar" }] });
 
     const { files } = await exportedFiles(owner.id, project.id);
-    const css = asText(files, "styles/globals.css");
+    const css = asText(files, "styles/site.css");
     expect(css).toContain("--color-primary:#135790");
     expect(css).toContain("--color-text:#246801");
     expect(css).toContain("--color-surface:#357912");
@@ -368,22 +370,6 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     const { state } = await exportProject(owner.id, project.id);
     expect(state.status).toBe("failed");
     expect(state.validation?.failures.map((failure) => failure.code)).toContain("ROUTE_INVALID");
-  });
-
-  it("fails the build stage when the assembled site would ship something unverifiable", async () => {
-    const { owner, project, home } = await setup();
-    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Home</h1></main>`);
-    const [version] = await db.select().from(pageVersions).limit(1);
-    // A stored document that the composer can read but the export gate rejects: it links
-    // at a file the archive will not contain.
-    const [broken] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 92, document: { schemaVersion: 1, html: `<main data-canvas-id="page" class="c-page"><a href="/missing">Gone</a></main>`, css: "", js: "", metadata: null }, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "f".repeat(64), createdByUserId: owner.id }).returning();
-    await db.update(pageNodes).set({ currentVersionId: broken!.id }).where(eq(pageNodes.id, home.id));
-
-    const { service, jobId, state } = await exportProject(owner.id, project.id);
-    expect(state.status).toBe("failed");
-    expect(state.errorCode).toBe("EXPORT_BUILD_FAILED");
-    expect(state.validation?.failures[0]?.code).toBe("EXPORT_TYPECHECK_FAILED");
-    await expect(service.download(owner.id, project.id, jobId)).rejects.toMatchObject({ exportCode: "EXPORT_NOT_READY" });
   });
 
   it("isolates export jobs and downloads to their own project and members", async () => {

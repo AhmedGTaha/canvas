@@ -17,6 +17,9 @@ const FORBIDDEN_CONTENT: Array<{ pattern: RegExp; message: string }> = [
 ];
 const FORBIDDEN_PATHS = [/^api\//, /\.env/, /^node_modules\//, /(^|\/)package\.json$/];
 
+/** Canvas's own runtime stylesheet, shipped verbatim rather than generated. */
+const SHARED_STYLESHEET = "styles/site.css";
+
 /**
  * Proves the assembled archive is a working, self-contained static website.
  *
@@ -59,6 +62,10 @@ export class BuildValidator {
     const present = new Set(files.map((file) => file.path));
 
     for (const file of files) {
+      // `styles/site.css` is Canvas's own runtime stylesheet, not generated content: it
+      // legitimately defines the theme on `:root` and styles `body`, which is exactly what
+      // a generated stylesheet is forbidden from doing. Only what a model wrote is re-checked.
+      if (file.path === SHARED_STYLESHEET) continue;
       if (file.path.endsWith(".css")) {
         try { validateGeneratedCss(decoder.decode(file.contents)); }
         catch (error) { failures.push({ code: "EXPORT_UNSAFE_OUTPUT", message: "The exported website contains a stylesheet Canvas cannot verify.", entity: `${file.path}: ${message(error)}` }); }
