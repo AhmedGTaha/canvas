@@ -74,6 +74,9 @@ describe("responsive layout", () => {
     expect(compact).toMatch(/top: calc\(var\(--ws-title-h\) \+ var\(--ws-stagebar-h\)\)/);
     expect(workspace).toMatch(/--ws-stagebar-h: \d+px/);
     expect(workspace).toMatch(/\.ws-stage-bar \{[^}]*height: var\(--ws-stagebar-h\)/);
+    // The pane headers share the toolbar's height, keeping all top dividers
+    // in a continuous horizontal line across the workspace.
+    expect(workspace).toMatch(/\.ws-pane-hd \{[^}]*height: var\(--ws-stagebar-h\)/);
   });
 
   it("lets a tall dialog scroll instead of running off the viewport", () => {

@@ -37,7 +37,7 @@ cp .env.example .env          # then edit the placeholders
 docker compose up -d postgres # or point DATABASE_URL at your own PostgreSQL
 npm run db:migrate
 npm run dev                   # Canvas at http://localhost:3000
-npm run worker                # in a second terminal: AI + export worker
+npm run worker                # in a second terminal: AI + export worker (local only)
 ```
 
 `PREVIEW_TOKEN_SECRET` must be at least 32 random characters, otherwise Preview refuses to
@@ -59,7 +59,7 @@ requests fail with a clear configuration error rather than crashing.
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
 | `npm start` | Run the production build |
-| `npm run worker` | Durable worker: AI generation, export jobs, periodic housekeeping |
+| `npm run worker` | Local runner: AI generation, export jobs, periodic housekeeping. Not used in production, where generation runs on Vercel Queues |
 | `npm run maintenance` | One-shot housekeeping pass (for a scheduler/cron) |
 | `npm run db:migrate` | Apply every pending migration in order |
 | `npm test` | Full test suite |
@@ -107,6 +107,7 @@ credential lives in the environment, and no provider is privileged over another.
 | Google Gemini | provider default | Yes |
 | OpenAI | optional override | Yes |
 | Anthropic | optional override | Yes |
+| OpenCode Zen | provider default | Yes — free models only |
 | OpenAI-compatible | **required** | When the endpoint offers `/models`; otherwise add model IDs by hand |
 
 Adding another provider means adding one adapter under `src/server/ai/` and one entry in
@@ -119,6 +120,7 @@ envelopes stay inside their adapter.
 
 1. Open the **account menu → AI settings → Connections** and add a provider with its API
    key (plus a base URL for an OpenAI-compatible endpoint).
+   Adding an **OpenCode Zen** key automatically loads its currently available free models.
 2. **Load models** discovers what the provider offers, or model IDs are added by hand.
    Discovered models arrive disabled; you enable the ones you want, and can record each
    model's capabilities and pricing.
@@ -225,6 +227,8 @@ suite uses mocks and makes no paid calls.
 | `AI_PROVIDER_TIMEOUT_MS` | No | Provider timeout; defaults to `120000`. |
 | `SMOKE_AI_PROVIDER` / `SMOKE_AI_MODEL` / `SMOKE_AI_API_KEY` / `SMOKE_AI_BASE_URL` | No | Opt-in credentials for the paid provider smoke check only. |
 | `CANVAS_EXPORT_BUILD` | No | `typecheck` (default) or `full` to run a real `next build` per export. |
+| `CANVAS_GENERATION_DISPATCH` | No | `queue` or `worker`. Defaults to `queue` on Vercel and `worker` elsewhere. |
+| `CRON_SECRET` | On Vercel | Bearer token Vercel Cron presents to `/api/cron/generation-maintenance`. Without it the route refuses every request. |
 | `CANVAS_METRICS_TOKEN` | No | Enables `GET /api/internal/metrics` for callers with this bearer token. |
 
 ## Deployment
@@ -232,11 +236,26 @@ suite uses mocks and makes no paid calls.
 1. Provision PostgreSQL 15+ and persistent storage for `LOCAL_STORAGE_PATH`.
 2. Set every required variable above; set `NODE_ENV=production` and an `APP_URL` on HTTPS.
 3. Run `npm run db:migrate` before starting new application instances.
-4. Start the web process (`npm run build && npm start`) and at least one `npm run worker`.
-   The worker is required for AI generation and exports; without it those jobs stay queued.
-5. Schedule `npm run maintenance` (every few minutes is fine) if you do not run a worker,
-   or rely on the worker's built-in idle housekeeping.
-6. Probe `GET /api/health` for liveness and database reachability.
+4. Start the web process (`npm run build && npm start`).
+5. Run AI generation one of two ways:
+   - **On Vercel (default):** `vercel.json` registers `/api/queues/generation-jobs` as a
+     push consumer of the `canvas-generation-jobs` topic, and a cron calls
+     `/api/cron/generation-maintenance` every five minutes. Nothing long-running is
+     needed. Set `CRON_SECRET` so the maintenance route cannot be driven by anyone else.
+   - **On your own host:** set `CANVAS_GENERATION_DISPATCH=worker` and run at least one
+     `npm run worker`, plus `npm run maintenance` on a schedule.
+6. Export jobs are still processed by `npm run worker`: they build a project with the
+   local toolchain and are not part of the queue path.
+7. Probe `GET /api/health` for liveness and database reachability.
+
+### AI generation on Vercel Queues
+
+Creating a page, Building Block, or assistant job writes the `generation_jobs` row first,
+then publishes **only that job's id** to the queue. The consumer claims the row with a
+conditional UPDATE before doing any work, so at-least-once delivery is safe: a duplicate
+claims nothing and returns. Retries, cancellation, provider selection, progress, and
+results all continue to live in `generation_jobs`; the queue never carries prompts,
+credentials, or provider material.
 
 Preview runs in an `allow-scripts` opaque-origin iframe under a restrictive CSP. In
 production, serving the Preview routes from a **separate origin** to `APP_URL` gives the

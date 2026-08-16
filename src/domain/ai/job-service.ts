@@ -8,6 +8,7 @@ import { createBlockJobSchema } from "@/domain/blocks/schemas";
 import { elementNotFound, findEditableElement, type ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 import { observe } from "@/server/observability/events";
+import { dispatchGenerationJob } from "@/server/queue/generation-queue";
 import { actorModelDescriptor } from "./connections/model-resolution";
 
 /**
@@ -43,6 +44,17 @@ async function applyRateLimit(database: Database, scope: "user" | "project", sub
 export class GenerationJobService {
   constructor(private readonly database: Database = db, private readonly access = new ProjectAccessService()) {}
 
+  /**
+   * Hands a committed job to the durable queue.
+   *
+   * Publishing happens after the transaction commits, so the consumer can never see a
+   * message for a row that does not exist yet. Only the job id travels.
+   */
+  private async dispatch(job: typeof generationJobs.$inferSelect) {
+    await dispatchGenerationJob({ jobId: job.id, projectId: job.projectId, attempt: job.attemptCount, reason: "created" });
+    return job;
+  }
+
   async createAssistantJob(userId: string, input: unknown) {
     const parsed = createAssistantJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
@@ -51,7 +63,7 @@ export class GenerationJobService {
     await applyRateLimit(this.database, "user", userId, 10);
     await applyRateLimit(this.database, "project", parsed.projectId, 30);
     const providerRecord = await aiProviderRecord(this.database, userId);
-    return this.database.transaction(async (transaction) => {
+    const created = await this.database.transaction(async (transaction) => {
       const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
       if (!message) throw new Error("User message insert failed.");
       const targetType = conversation.pageId ? "page" as const : "project" as const;
@@ -62,6 +74,8 @@ export class GenerationJobService {
       observe.generationJob("created", { jobId: job.id, projectId: parsed.projectId, operation: "assistant" });
       return { job, message };
     });
+    await this.dispatch(created.job);
+    return created;
   }
 
   async createPageJob(userId: string, input: unknown, queueItemId?: string) {
@@ -69,8 +83,9 @@ export class GenerationJobService {
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
     const providerRecord = await aiProviderRecord(this.database, userId);
+    let created;
     try {
-      return await this.database.transaction(async (transaction) => {
+      created = await this.database.transaction(async (transaction) => {
         const [page] = await transaction.select().from(pageNodes).where(and(eq(pageNodes.id, parsed.pageId), eq(pageNodes.projectId, parsed.projectId), eq(pageNodes.type, "page"), drizzleSql`${pageNodes.deletedAt} IS NULL`)).for("update");
         if (!page) throw new DomainError("NOT_FOUND", "Page not found in this project.");
         const selectedIds = [...new Set(parsed.selectedMediaIds)];
@@ -106,6 +121,8 @@ export class GenerationJobService {
       if (code === "23505") throw new DomainError("CONFLICT", "Canvas is already updating this page.");
       throw error;
     }
+    await this.dispatch(created.job);
+    return created;
   }
 
   /**
@@ -118,8 +135,9 @@ export class GenerationJobService {
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
     const providerRecord = await aiProviderRecord(this.database, userId);
+    let created;
     try {
-      return await this.database.transaction(async (transaction) => {
+      created = await this.database.transaction(async (transaction) => {
         const [block] = await transaction.select().from(buildingBlocks).where(and(eq(buildingBlocks.id, parsed.blockId), eq(buildingBlocks.projectId, parsed.projectId), drizzleSql`${buildingBlocks.deletedAt} IS NULL`)).for("update");
         if (!block) throw new DomainError("NOT_FOUND", "Building Block not found in this project.");
         const selectedIds = [...new Set(parsed.selectedMediaIds)];
@@ -153,6 +171,8 @@ export class GenerationJobService {
       if (code === "23505") throw new DomainError("CONFLICT", "Canvas is already updating this Building Block.");
       throw error;
     }
+    await this.dispatch(created.job);
+    return created;
   }
 
   /** Block-scoped composer state: conversation, recent messages, and the current job. */
@@ -195,6 +215,11 @@ export class GenerationJobService {
     const [updated] = await this.database.update(generationJobs).set(patch).where(and(eq(generationJobs.id, jobId), eq(generationJobs.projectId, projectId), inArray(generationJobs.status, ["queued", "preparing_context", "generating", "validating", "applying"]))).returning();
     if (!updated) throw new DomainError("CONFLICT", "This job has already finished.");
     await this.database.insert(auditEvents).values({ projectId, userId, action: "ai.job_cancel_requested", entityType: "generation_job", entityId: jobId });
+    // Cancelling a queued job settles it here, so nothing else will promote the next
+    // follow-up for this target. A mid-flight cancellation is finalized by the runner,
+    // which promotes there. Kept out of the transaction: promotion creates its own job.
+    // Imported here because the follow-up queue creates jobs through this service.
+    if (updated.status === "cancelled") await (await import("@/domain/ai-queue/service")).promoteQueuedFollowUp(this.database);
     return updated;
   }
 }
@@ -214,6 +239,10 @@ export class GenerationJobLifecycle {
   }
 }
 
+export const MAX_JOB_ATTEMPTS = 3;
+/** How long a claim is trusted before another runner may take the job over. */
+export const STALE_CLAIM_INTERVAL = "5 minutes";
+
 export async function claimGenerationJob(workerId: string) {
   const rows = await sql<{ id: string }[]>`
     UPDATE generation_jobs SET status = 'preparing_context', progress_stage = 'Preparing project context', claimed_at = now(),
@@ -228,7 +257,37 @@ export async function claimGenerationJob(workerId: string) {
   return job ?? null;
 }
 
+/**
+ * Claims one specific generation job, for a queue delivery that names it.
+ *
+ * This is the idempotency boundary for at-least-once delivery: the same guards as the
+ * polling claim — due, not cancelled, inside the attempt budget, and either unclaimed or
+ * claimed long enough ago to count as abandoned — expressed as a single conditional
+ * UPDATE. A duplicate delivery of a job that is already running, already finished, or not
+ * yet due simply claims nothing and returns null.
+ */
+export async function claimGenerationJobById(jobId: string, workerId: string) {
+  const rows = await sql<{ id: string }[]>`
+    UPDATE generation_jobs SET status = 'preparing_context', progress_stage = 'Preparing project context', claimed_at = now(),
+      worker_id = ${workerId}, attempt_count = attempt_count + 1, started_at = COALESCE(started_at, now())
+    WHERE id = (SELECT id FROM generation_jobs
+      WHERE id = ${jobId}
+        AND ((status = 'queued' AND available_at <= now()) OR (status IN ('preparing_context', 'generating', 'validating', 'applying') AND claimed_at < now() - interval '5 minutes'))
+        AND attempt_count < 3 AND cancel_requested_at IS NULL
+      FOR UPDATE SKIP LOCKED)
+    RETURNING id`;
+  if (!rows[0]) return null;
+  const [job] = await db.select().from(generationJobs).where(eq(generationJobs.id, jobId)).limit(1);
+  return job ?? null;
+}
+
 export function safeAIError(error: unknown) {
   if (error instanceof AIError) return error;
-  return new AIError("AI_INTERNAL_ERROR", "Canvas could not complete this AI request.");
+  return new AIError(
+    "AI_INTERNAL_ERROR",
+    "Canvas could not complete this AI request.",
+    false,
+    undefined,
+    error instanceof Error ? error.message : String(error),
+  );
 }

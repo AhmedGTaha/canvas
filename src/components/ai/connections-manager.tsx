@@ -56,10 +56,18 @@ export function ConnectionsManager({ providers, connections, onConnections }: {
   async function createConnection() {
     if (!draft) return;
     await run("create", async () => {
-      await call(base, { method: "POST", body: JSON.stringify({ provider: draft.provider, name: draft.name, baseUrl: draft.baseUrl || null, apiKey: draft.apiKey }) }, "This AI connection could not be saved.");
+      const connection = await call<{ connection: ConnectionView }>(base, { method: "POST", body: JSON.stringify({ provider: draft.provider, name: draft.name, baseUrl: draft.baseUrl || null, apiKey: draft.apiKey }) }, "This AI connection could not be saved.");
+      // Keep a valid connection visible even if its first model-list request is
+      // temporarily unavailable; the card offers a retry through Load free models.
       setDraft(null);
       await reload();
-    }, "Connection added. Load its models, then enable the ones projects may use.");
+      if (connection.connection.provider === "opencode") {
+        await call(`${base}/${connection.connection.id}/models/discover`, { method: "POST" }, "OpenCode connected, but its free models could not be loaded.");
+        await reload();
+      }
+    }, draft.provider === "opencode"
+      ? "OpenCode connected. Its free models are ready to enable."
+      : "Connection added. Load its models, then enable the ones projects may use.");
   }
 
   return <>
@@ -160,8 +168,8 @@ function ConnectionCard({ connection, descriptor, busy, onBusy, onReload, onRemo
         Test connection
       </button>
       {connection.supportsModelListing ? <button type="button" className="button button-secondary button-sm" disabled={busy === `models:${connection.id}`} data-pending={busy === `models:${connection.id}`}
-        onClick={() => void onBusy(`models:${connection.id}`, async () => { await call(`${base}/${connection.id}/models/discover`, { method: "POST" }, "Models could not be loaded."); await onReload(); }, "Models loaded. Enable the ones projects may use.")}>
-        <RefreshCw size={14} />Load models
+        onClick={() => void onBusy(`models:${connection.id}`, async () => { await call(`${base}/${connection.id}/models/discover`, { method: "POST" }, "Models could not be loaded."); await onReload(); }, connection.provider === "opencode" ? "Free models loaded. Enable the ones projects may use." : "Models loaded. Enable the ones projects may use.")}>
+        <RefreshCw size={14} />{connection.provider === "opencode" ? "Load free models" : "Load models"}
       </button> : null}
       <button type="button" className="button button-ghost button-sm" onClick={() => setRotating((current) => !current)}>Replace key</button>
       <ConfirmationDialog

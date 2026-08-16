@@ -5,5 +5,6 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextCoreWebVitals,
   ...nextTypeScript,
-  globalIgnores([".next/**", "coverage/**", "next-env.d.ts"]),
+  // .vercel/output holds the compiled deployment produced by `vercel build`.
+  globalIgnores([".next/**", ".vercel/**", "coverage/**", "next-env.d.ts"]),
 ]);

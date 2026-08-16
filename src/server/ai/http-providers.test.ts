@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AnthropicProvider } from "./anthropic-provider";
 import { OpenAIProvider, normalizeBaseUrl } from "./openai-provider";
+import { OpenCodeProvider } from "./opencode-provider";
 import type { AIRequest } from "@/domain/ai/provider";
 
 /**
@@ -114,6 +115,16 @@ describe("OpenAI adapter", () => {
     await expect(provider().listModels()).resolves.toEqual([{ modelId: "gpt-5", displayName: "gpt-5" }, { modelId: "gpt-5-mini", displayName: "gpt-5-mini" }]);
     fetchMock.mockReturnValueOnce(json({ data: [] }));
     await expect(provider().listModels()).rejects.toMatchObject({ code: "AI_MODEL_LISTING_UNSUPPORTED" });
+  });
+
+  it("uses the OpenCode endpoint and exposes only its free models", async () => {
+    fetchMock.mockReturnValue(json({ data: [{ id: "deepseek-v4-flash-free" }, { id: "big-pickle" }, { id: "glm-5.2" }] }));
+    const openCode = new OpenCodeProvider("oc-test-key", "deepseek-v4-flash-free", 5_000, CAPABLE);
+    await expect(openCode.listModels()).resolves.toEqual([
+      { modelId: "deepseek-v4-flash-free", displayName: "deepseek-v4-flash-free" },
+      { modelId: "big-pickle", displayName: "big-pickle" },
+    ]);
+    expect(fetchMock.mock.calls[0]![0]).toBe("https://opencode.ai/zen/v1/models");
   });
 
   it("refuses a request that needs a capability the model does not have", async () => {

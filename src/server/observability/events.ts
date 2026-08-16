@@ -29,6 +29,16 @@ export const observe = {
     if (typeof fields.providerLatencyMs === "number") metrics.observe("generation.provider_latency_ms", fields.providerLatencyMs, { operation: fields.operation });
     emit(`generation.${action}`, fields, action === "failed" ? "error" : "info");
   },
+  /** Handing a generation job to (or withholding it from) the durable queue. */
+  generationDispatch(action: "published" | "skipped" | "failed", fields: { jobId: string; projectId?: string; mode: "queue" | "worker"; reason: string; attempt?: number; round?: number; duplicate?: boolean; error?: string }) {
+    metrics.count("generation.dispatch", { action, mode: fields.mode });
+    emit(`generation.dispatch_${action}`, fields, action === "failed" ? "error" : "info");
+  },
+  /** One consumer delivery of a generation job, including deliveries that do no work. */
+  generationDelivery(action: "processed" | "requeued" | "skipped" | "deferred" | "watchdog", fields: { jobId: string; projectId?: string; reason?: string; status?: string; deliveryCount?: number; retryAfterSeconds?: number; round?: number; verdict?: string }) {
+    metrics.count("generation.delivery", { action, reason: fields.reason });
+    emit(`generation.delivery_${action}`, fields);
+  },
   validationFailed(kind: "page" | "block" | "export" | "restore", fields: { projectId?: string; jobId?: string; entityId?: string; reason?: string; diagnostic?: string | null; pipelineStage?: string; provider?: string | null; model?: string | null }) {
     metrics.count("validation.failure", { kind });
     emit("validation.failed", { kind, ...fields }, "warn");

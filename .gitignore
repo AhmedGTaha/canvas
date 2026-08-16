@@ -8,3 +8,5 @@ coverage/
 .DS_Store
 tsconfig.tsbuildinfo
 .canvas-storage/
+.vercel
+.env*

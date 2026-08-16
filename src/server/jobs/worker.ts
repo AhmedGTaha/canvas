@@ -4,10 +4,22 @@ import { claimGenerationJob } from "@/domain/ai/job-service";
 import { ExportService, claimExportJob } from "@/domain/export/export-service";
 import { MaintenanceService } from "@/domain/maintenance/service";
 import { emit } from "@/server/observability/telemetry";
-import { AIOrchestrationService } from "@/domain/ai/orchestration-service";
-import { finalizeQueuedFollowUp, promoteQueuedFollowUp } from "@/domain/ai-queue/service";
+import { runClaimedGenerationJob } from "@/server/jobs/generation-execution";
+import { promoteQueuedFollowUp } from "@/domain/ai-queue/service";
+import { generationDispatchMode } from "@/server/queue/generation-queue";
 import { sql } from "@/server/db/client";
 
+/**
+ * Development-only runner.
+ *
+ * Production runs generation through the Vercel Queues push consumer at
+ * `/api/queues/generation-jobs`; nothing here is required for it. This process exists so
+ * a local checkout can run generation without a linked Vercel project, and it is still
+ * the only runner for export jobs, which build a project with the local toolchain.
+ *
+ * It shares `runClaimedGenerationJob` with the consumer, so generation is orchestrated in
+ * exactly one place.
+ */
 const workerId = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
 let stopping = false;
 const MAINTENANCE_INTERVAL_MS = 5 * 60_000;
@@ -16,11 +28,17 @@ process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
 
 async function run() {
-  emit("worker.started", { workerId });
+  if (generationDispatchMode() === "queue") {
+    // Jobs are published to Vercel Queues, so polling here would race the consumer.
+    emit("worker.generation_disabled", { workerId, reason: "dispatch_mode_queue" }, "warn");
+  }
+  emit("worker.started", { workerId, generationDispatch: generationDispatchMode() });
   while (!stopping) {
-    await promoteQueuedFollowUp();
-    const job = await claimGenerationJob(workerId);
-    if (job) { const result = await new AIOrchestrationService().process(job.id); if (result && ["completed", "failed", "cancelled"].includes(result.status)) await finalizeQueuedFollowUp(job.id, result.status); continue; }
+    if (generationDispatchMode() === "worker") {
+      await promoteQueuedFollowUp();
+      const job = await claimGenerationJob(workerId);
+      if (job) { await runClaimedGenerationJob(job.id); continue; }
+    }
     const exportJob = await claimExportJob(workerId);
     if (exportJob) { await new ExportService().process(exportJob.id); continue; }
     // Housekeeping runs on the idle path so it never delays queued work.

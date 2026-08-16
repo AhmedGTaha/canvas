@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "fluid": true,
+  "functions": {
+    "src/app/api/queues/generation-jobs/route.ts": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "canvas-generation-jobs",
+          "retryAfterSeconds": 30
+        }
+      ]
+    },
+    "src/app/api/cron/generation-maintenance/route.ts": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/generation-maintenance",
+      "schedule": "0 4 * * *"
+    }
+  ]
+}

@@ -40,7 +40,7 @@ async function workspaceWithProject(label: string) {
 }
 
 /** Gives one person a connection with one enabled, priced model, and selects it. */
-async function connectAccount(userId: string, options: { key?: string; modelId?: string; name?: string; provider?: "gemini" | "openai" | "anthropic" | "openai_compatible" } = {}) {
+async function connectAccount(userId: string, options: { key?: string; modelId?: string; name?: string; provider?: "gemini" | "openai" | "anthropic" | "opencode" | "openai_compatible" } = {}) {
   const service = new AIConnectionService();
   const connection = await service.create(userId, {
     provider: options.provider ?? "openai", name: options.name ?? "My key",

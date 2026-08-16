@@ -233,7 +233,10 @@
   flex: none;
   align-items: center;
   gap: var(--sp-3);
-  height: 38px;
+  /* Keep every workspace surface below the title bar on one baseline. The
+     center preview uses --ws-stagebar-h; side-pane headers need the same
+     height so their bottom borders do not step above the preview toolbar. */
+  height: var(--ws-stagebar-h);
   padding: 0 var(--sp-3) 0 var(--sp-6);
   border-bottom: 1px solid var(--border-subtle);
 }

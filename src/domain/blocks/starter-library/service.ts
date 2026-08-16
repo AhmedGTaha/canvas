@@ -56,7 +56,7 @@ export class StarterSectionService {
     const sourceCode = starter.build(context);
     await validateGeneratedBlockSource({ sourceCode, approvedMediaIds: scope.approvedMediaIds, activeRoutes: scope.activeRoutes })
       .catch((error: unknown) => {
-        throw new DomainError("VALIDATION", error instanceof Error && error.message ? error.message : "That starter section could not be prepared.");
+        throw new DomainError("VALIDATION", typeof error === "object" && error !== null && "diagnostic" in error && typeof error.diagnostic === "string" ? error.diagnostic : error instanceof Error && error.message ? error.message : "That starter section could not be prepared.");
       });
     return { starter, bundle: await compileGeneratedBlock(sourceCode) };
   }

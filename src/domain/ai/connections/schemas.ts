@@ -8,7 +8,7 @@ export const AI_CONNECTION_LIMITS = {
   modelsPerConnection: 200,
 } as const;
 
-export const providerKindSchema = z.enum(["gemini", "openai", "anthropic", "openai_compatible"]);
+export const providerKindSchema = z.enum(["gemini", "openai", "anthropic", "opencode", "openai_compatible"]);
 
 /** Only absolute http(s) endpoints. Credentials must never travel over a guessed scheme. */
 const baseUrlSchema = z.string().trim().max(AI_CONNECTION_LIMITS.baseUrlCharacters)

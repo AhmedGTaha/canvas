@@ -2,6 +2,7 @@ import type { AIProvider, AIProviderKind, ModelCapabilities, ProviderConnectionC
 import { GeminiProvider } from "./gemini-provider";
 import { OpenAIProvider, OPENAI_DEFAULT_BASE_URL } from "./openai-provider";
 import { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } from "./anthropic-provider";
+import { OpenCodeProvider, OPENCODE_DEFAULT_BASE_URL } from "./opencode-provider";
 
 /**
  * The provider registry.
@@ -48,6 +49,14 @@ export const PROVIDER_DESCRIPTORS: Record<AIProviderKind, ProviderDescriptor> = 
     credentialLabel: "API key",
     help: "Create a key in the Anthropic console.",
   },
+  opencode: {
+    kind: "opencode", label: "OpenCode Zen",
+    baseUrl: { supported: false, required: false, default: OPENCODE_DEFAULT_BASE_URL },
+    supportsModelListing: true,
+    defaultCapabilities: { structuredOutput: true, vision: false },
+    credentialLabel: "OpenCode API key",
+    help: "Create an API key in OpenCode Zen. Canvas loads only the free models available to that key.",
+  },
   openai_compatible: {
     kind: "openai_compatible", label: "OpenAI-compatible",
     baseUrl: { supported: true, required: true, placeholder: "https://your-endpoint/v1" },
@@ -77,6 +86,7 @@ export function createProvider(config: ProviderConnectionConfig): AIProvider {
     case "gemini": return new GeminiProvider(apiKey, model, timeoutMs, capabilities);
     case "anthropic": return new AnthropicProvider(apiKey, model, timeoutMs, { baseUrl, capabilities });
     case "openai": return new OpenAIProvider(apiKey, model, timeoutMs, { baseUrl, capabilities, provider: "openai" });
+    case "opencode": return new OpenCodeProvider(apiKey, model, timeoutMs, capabilities);
     case "openai_compatible": return new OpenAIProvider(apiKey, model, timeoutMs, { baseUrl, capabilities, provider: "openai_compatible" });
   }
 }

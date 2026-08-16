@@ -51,7 +51,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
     // The reason is recorded operationally and shown as a plain sentence in the frame,
     // instead of a blanket "Preview could not be loaded." with nothing behind it.
     const preview = error instanceof PreviewError ? error : null;
-    observe.previewSessionFailed({ code: errorCode(error), reason: preview?.detail });
+    observe.previewSessionFailed({ code: errorCode(error), reason: preview?.detail ?? (error instanceof Error ? error.message : undefined) });
     const status = preview?.previewCode === "PREVIEW_NOT_CONFIGURED" ? 500 : preview?.previewCode === "PREVIEW_COMPILE_FAILED" ? 422 : 403;
     const code = preview?.previewCode ?? "PREVIEW_UNAVAILABLE";
     return new Response(renderPreviewErrorDocument({

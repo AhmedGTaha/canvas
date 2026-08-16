@@ -17,7 +17,7 @@ export class AIError extends Error {
 }
 
 /** Providers Canvas can talk to. Adapters are the only place provider specifics live. */
-export type AIProviderKind = "gemini" | "openai" | "anthropic" | "openai_compatible";
+export type AIProviderKind = "gemini" | "openai" | "anthropic" | "opencode" | "openai_compatible";
 
 export type AIContentPart = { type: "text"; text: string } | { type: "image"; mimeType: string; data: Uint8Array };
 export type AIProviderMessage = { role: "user" | "assistant"; parts: AIContentPart[] };
