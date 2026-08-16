@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
-import { findStarterSection, STARTER_CATEGORIES, STARTER_SECTIONS, starterCatalogView, startersByCategory, type StarterContext } from "./catalog";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
+import { findStarterSection, starterDocument, STARTER_CATEGORIES, STARTER_SECTIONS, starterCatalogView, startersByCategory, type StarterContext } from "./catalog";
 
 /** A project with real pages, which is what a navbar template needs to link to. */
 const PROJECT: StarterContext = {
@@ -57,34 +57,42 @@ describe("built-in starter section catalog", () => {
     expect(findStarterSection("navbar-classic")?.name).toBe("Classic bar");
   });
 
-  it.each(STARTER_SECTIONS.map((section) => [section.id, section] as const))("%s passes generated-source validation in a real project", async (_id, section) => {
-    const manifest = await validateGeneratedBlockSource({ sourceCode: section.build(PROJECT), ...scope(PROJECT) });
+  it.each(STARTER_SECTIONS.map((section) => [section.id, section] as const))("%s passes generated-document validation in a real project", (_id, section) => {
+    const { manifest } = validateGeneratedBlockDocument({ document: starterDocument(section.build(PROJECT)), ...scope(PROJECT) });
     expect(manifest.editableElements.length).toBeGreaterThan(0);
     expect(manifest.usesClientInteractivity).toBe(section.interactive);
     // Templates cannot depend on project Media, because a brand-new project has none.
     expect(manifest.referencedMediaIds).toEqual([]);
   });
 
-  it.each(STARTER_SECTIONS.map((section) => [section.id, section] as const))("%s also installs into a project with no pages yet", async (_id, section) => {
-    await expect(validateGeneratedBlockSource({ sourceCode: section.build(NEW_PROJECT), ...scope(NEW_PROJECT) })).resolves.toBeTruthy();
+  it.each(STARTER_SECTIONS.map((section) => [section.id, section] as const))("%s also installs into a project with no pages yet", (_id, section) => {
+    expect(validateGeneratedBlockDocument({ document: starterDocument(section.build(NEW_PROJECT)), ...scope(NEW_PROJECT) }).manifest).toBeTruthy();
   });
 
   it("links navigation at the routes the project actually has", () => {
     const navbar = findStarterSection("navbar-classic")!;
-    const source = navbar.build(PROJECT);
-    for (const link of PROJECT.links) expect(source).toContain(`href="${link.href}"`);
+    const { html } = navbar.build(PROJECT);
+    for (const link of PROJECT.links) expect(html).toContain(`href="${link.href}"`);
     // And invents nothing when there is nowhere to point.
-    expect(navbar.build(NEW_PROJECT)).not.toContain('href="/menu"');
+    expect(navbar.build(NEW_PROJECT).html).not.toContain('href="/menu"');
+  });
+
+  it("keeps every starter's markup, styles, and behaviour in separate fields", () => {
+    for (const section of STARTER_SECTIONS) {
+      const fragment = section.build(PROJECT);
+      expect(fragment.html, section.id).not.toMatch(/<style|<script|className=/);
+      expect(Boolean(fragment.js?.trim()), section.id).toBe(section.interactive);
+    }
   });
 
   it("never claims backend behaviour in a form-bearing starter", () => {
-    const forms = STARTER_SECTIONS.filter((section) => /<form|<input|<textarea/.test(section.build(PROJECT)));
+    const forms = STARTER_SECTIONS.filter((section) => /<form|<input|<textarea/.test(section.build(PROJECT).html));
     expect(forms.length).toBeGreaterThan(0);
     for (const section of forms) {
-      const source = section.build(PROJECT);
-      expect(source).not.toMatch(/<form[^>]*\s(action|method)=/);
+      const { html } = section.build(PROJECT);
+      expect(html).not.toMatch(/<form[^>]*\s(action|method)=/);
       // Each one says out loud that nothing is submitted.
-      expect(source).toMatch(/does not send|cannot hold|before launch|Connect|connected/i);
+      expect(html).toMatch(/does not send|cannot hold|before launch|Connect|connected/i);
     }
   });
 });

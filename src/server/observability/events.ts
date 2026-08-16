@@ -43,9 +43,9 @@ export const observe = {
     metrics.count("validation.failure", { kind });
     emit("validation.failed", { kind, ...fields }, "warn");
   },
-  previewCompileFailed(fields: { projectId: string; pageId?: string; versionId?: string; reason?: string }) {
-    metrics.count("preview.compile_failure");
-    emit("preview.compile_failed", fields, "error");
+  previewDocumentFailed(fields: { projectId: string; pageId?: string; versionId?: string; reason?: string }) {
+    metrics.count("preview.document_failure");
+    emit("preview.document_failed", fields, "error");
   },
   previewSessionFailed(fields: { projectId?: string; code: string; reason?: string }) {
     metrics.count("preview.session_failure", { code: fields.code });

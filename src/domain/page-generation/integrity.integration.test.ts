@@ -14,8 +14,8 @@ describe.sequential("Page Version database integrity", () => {
     const id = randomUUID(); const [owner] = await db.insert(users).values({ id, email: `${id}@test.dev`, normalizedEmail: `${id}@test.dev`, displayName: "Owner" }).returning();
     const workspace = await new WorkspaceService().create(owner!.id, { name: "Workspace" }); const project = await new ProjectService().create(owner!.id, { workspaceId: workspace.id, name: "Site" }); const pages = new PageTreeService();
     const first = await pages.create(owner!.id, { projectId: project.id, type: "page", name: "Home" }); const second = await pages.create(owner!.id, { projectId: project.id, type: "page", name: "About" });
-    const [version] = await db.insert(pageVersions).values({ projectId: project.id, pageId: first.id, versionNumber: 1, sourceCode: "export default function Page(){return <main/>}", manifest: {}, seoMetadata: {}, changeSummary: {}, sourceHash: "a".repeat(64), createdByUserId: owner!.id }).returning();
-    await expect(db.update(pageVersions).set({ sourceCode: "changed" }).where(eq(pageVersions.id, version!.id))).rejects.toMatchObject({ cause: { code: "55000" } });
+    const [version] = await db.insert(pageVersions).values({ projectId: project.id, pageId: first.id, versionNumber: 1, document: { schemaVersion: 1, html: `<main data-canvas-id="page"><h1>Page</h1></main>`, css: "", js: "", metadata: null }, manifest: {}, seoMetadata: {}, changeSummary: {}, sourceHash: "a".repeat(64), createdByUserId: owner!.id }).returning();
+    await expect(db.update(pageVersions).set({ document: { schemaVersion: 1, html: "<main data-canvas-id=\"x\"></main>", css: "", js: "", metadata: null } }).where(eq(pageVersions.id, version!.id))).rejects.toMatchObject({ cause: { code: "55000" } });
     await expect(db.update(pageNodes).set({ currentVersionId: version!.id }).where(eq(pageNodes.id, second.id))).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 });

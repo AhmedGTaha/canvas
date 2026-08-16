@@ -2,11 +2,16 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { buildingBlockVersions, buildingBlocks, mediaAssets, pageNodes, pageVersions, projectBrandSettings, projectThemeSettings, projects } from "@/server/db/schema";
 import { AIError } from "@/domain/ai/provider";
 import { reconcilePageBlockUsages } from "@/domain/blocks/usages";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
-import { validateGeneratedPageSource } from "@/domain/page-generation/validator";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
+import { validateGeneratedPageDocument } from "@/domain/page-generation/validator";
+import { isLegacyVersion, versionDocument } from "@/domain/generated-source/stored-version";
 import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
 import { restoreInvalid } from "./errors";
 import type { TransactionLike } from "./change-set-service";
+
+function legacyRestoreMessage(kind: "page" | "Building Block") {
+  return `This ${kind} version was built with an earlier version of Canvas and can no longer be restored. Ask Canvas to rebuild it instead.`;
+}
 
 export type PageTarget = { pageId: string; versionId: string | null };
 export type BlockTarget = { blockId: string; versionId: string | null; isGlobal?: boolean; archived?: boolean };
@@ -69,20 +74,26 @@ export async function validateRestorePlan(transaction: TransactionLike, projectI
     ? await transaction.select().from(buildingBlockVersions).where(and(eq(buildingBlockVersions.projectId, projectId), inArray(buildingBlockVersions.id, projectedVersionIds)))
     : [];
   const blockVersionById = new Map(blockVersionRows.map((version) => [version.id, version]));
-  const availableBlockIds = new Set<string>(); const blockSources = new Map<string, string>();
+  const availableBlockIds = new Set<string>();
   for (const [blockId, projected] of projectedBlocks) {
     if (projected.archived || !projected.versionId) continue;
     const version = blockVersionById.get(projected.versionId);
     if (!version || version.buildingBlockId !== blockId) throw restoreInvalid("A Building Block version in this restore is no longer available.", `block ${blockId}`);
-    availableBlockIds.add(blockId); blockSources.set(blockId, version.sourceCode);
+    availableBlockIds.add(blockId);
   }
 
   for (const target of plan.blocks) {
     if (!target.versionId) continue;
     const version = blockVersionById.get(target.versionId);
     if (!version) throw restoreInvalid("A Building Block version in this restore is no longer available.", `version ${target.versionId}`);
+    // A Version written before the static-document format is history, not content: it
+    // cannot be rendered, so activating it would leave the project with a section that
+    // does not display. Restoring it is refused with a reason rather than half-applied.
+    if (isLegacyVersion(version)) throw restoreInvalid(legacyRestoreMessage("Building Block"), "version predates the static document format");
+    const document = versionDocument(version);
+    if (!document) throw restoreInvalid("This Building Block version can no longer be restored: its content could not be read.", `version ${target.versionId}`);
     try {
-      await validateGeneratedBlockSource({ sourceCode: version.sourceCode, approvedMediaIds, activeRoutes, declaredMediaIds: manifestMediaIds(version.manifest) });
+      validateGeneratedBlockDocument({ document, approvedMediaIds, activeRoutes, declaredMediaIds: manifestMediaIds(version.manifest) });
     } catch (error) {
       throw restoreInvalid("This Building Block version can no longer be restored: it uses media or links that are no longer available.", error instanceof AIError ? error.diagnostic : undefined);
     }
@@ -97,11 +108,14 @@ export async function validateRestorePlan(transaction: TransactionLike, projectI
     if (!target.versionId) continue;
     const version = pageVersionById.get(target.versionId);
     if (!version || version.pageId !== target.pageId) throw restoreInvalid("A page version in this restore is no longer available.", `version ${target.versionId}`);
+    if (isLegacyVersion(version)) throw restoreInvalid(legacyRestoreMessage("page"), "version predates the static document format");
+    const document = versionDocument(version);
+    if (!document) throw restoreInvalid("This page version can no longer be restored: its content could not be read.", `version ${target.versionId}`);
     try {
-      await validateGeneratedPageSource({
-        sourceCode: version.sourceCode, approvedMediaIds, activeRoutes,
+      validateGeneratedPageDocument({
+        document, approvedMediaIds, activeRoutes,
         declaredMediaIds: manifestMediaIds(version.manifest), availableBlockIds,
-        declaredBlockUsages: manifestUsages(version.manifest), blockSources,
+        declaredBlockUsages: manifestUsages(version.manifest),
       });
     } catch (error) {
       throw restoreInvalid("This page version can no longer be restored: it uses media, links, or Building Blocks that are no longer available.", error instanceof AIError ? error.diagnostic : undefined);

@@ -30,6 +30,10 @@ import { initialPreviewRoute } from "@/generated-runtime/runtime/router";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
 import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
+/** Media as the sandboxed Preview resolves it: a session URL, never a storage key. */
+const previewMedia = (mediaId: string) => ({ url: `/api/preview/media/${mediaId}`, width: 800, height: 600, altText: null });
+
+
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 /** Set CANVAS_E2E_BUILD=1 to also npm install and next build the exported project. */
 const RUN_STANDALONE_BUILD = process.env.CANVAS_E2E_BUILD === "1";
@@ -41,7 +45,7 @@ class FixtureProvider implements AIProvider { readonly capabilities = { structur
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const value = {
-      schemaVersion: 1, sourceCode: this.source, referencedMediaIds: this.options.referencedMediaIds ?? [],
+      schemaVersion: 1, html: this.source, referencedMediaIds: this.options.referencedMediaIds ?? [],
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       ...(this.options.targetCanvasId === undefined ? {} : { targetCanvasId: this.options.targetCanvasId }),
       summary: { headline: "Applied", changes: ["Updated the website"], limitations: [] },
@@ -156,8 +160,7 @@ describe.sequential("Canvas critical journey", () => {
   });
 
   it("6. generates the Home page with Canvas", async () => {
-    const source = `import { CanvasImage } from "@canvas/site-runtime";
-export default function Page(){return <main className="c-page"><section data-canvas-id="hero-main" data-canvas-label="Hero" className="c-section c-container"><CanvasImage mediaId="${state.mediaId}" alt="Acme" className="c-media" /><h1>Industrial supplies since 1947</h1></section><article data-canvas-id="pricing-card" className="c-card"><p>Spacious plan details</p></article></main>}`;
+    const source = `<main class="c-page"><section data-canvas-id="hero-main" data-canvas-label="Hero" class="c-section c-container"><img data-canvas-media="${state.mediaId}" alt="Acme" class="c-media"><h1>Industrial supplies since 1947</h1></section><article data-canvas-id="pricing-card" class="c-card"><p>Spacious plan details</p></article></main>`;
     await runPageJob(state.ownerId!, state.projectId!, state.homeId!, "Create the homepage", source, { referencedMediaIds: [state.mediaId!] });
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, state.homeId!));
     expect(node?.currentVersionId).toBeTruthy();
@@ -167,10 +170,10 @@ export default function Page(){return <main className="c-page"><section data-can
     const session = await new PreviewManifestService().createSession(state.ownerId!, state.projectId!);
     expect(session.manifest.pages).toHaveLength(2);
     const route = initialPreviewRoute(session.manifest);
-    const generated = await new GeneratedPageContentProvider().get(state.projectId!, state.homeId!, session.manifest.pages.find((page) => page.pageId === state.homeId)!.currentVersionId!);
-    expect(generated?.bundle).toContain("Industrial supplies since 1947");
+    const generated = await new GeneratedPageContentProvider().get(state.projectId!, state.homeId!, session.manifest.pages.find((page) => page.pageId === state.homeId)!.currentVersionId!, previewMedia);
+    expect(generated?.composed.html).toContain("Industrial supplies since 1947");
     // The preview document is identical across device modes: only the parent frame resizes.
-    const documents = (["desktop", "tablet", "mobile"] as const).map(() => renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: route, initialMode: "light", generatedBundle: generated!.bundle }));
+    const documents = (["desktop", "tablet", "mobile"] as const).map(() => renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: route, initialMode: "light", generated: generated!.composed }));
     for (const document of documents) {
       expect(document).toContain("generated-root");
       expect(document).toContain("width=device-width,initial-scale=1");
@@ -182,30 +185,30 @@ export default function Page(){return <main className="c-page"><section data-can
   it("8. creates a global Navbar building block", async () => {
     const navbar = await new BuildingBlockService().create(state.ownerId!, { projectId: state.projectId!, name: "Global Navbar", kind: "navbar", isGlobal: true });
     await runBlockJob(state.ownerId!, state.projectId!, navbar.id, "Create a navbar with my logo and pages",
-      `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Block(){return <nav data-canvas-id="navbar-root" className="c-container" aria-label="Main"><CanvasImage mediaId="${state.mediaId}" alt="Acme" className="c-media" /><a href="/">Home</a><a href="/contact">Contact</a></nav>}`,
+      `<nav data-canvas-id="navbar-root" class="c-container" aria-label="Main"><img data-canvas-media="${state.mediaId}" alt="Acme" class="c-media"><a href="/">Home</a><a href="/contact">Contact</a></nav>`,
       { referencedMediaIds: [state.mediaId!] });
     state.navbarId = navbar.id;
 
     const usage = [{ blockId: navbar.id, usageKey: "site-navbar" }];
-    await runPageJob(state.ownerId!, state.projectId!, state.homeId!, "Use the navbar", `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${navbar.id}" usageKey="site-navbar" /><section data-canvas-id="hero-main" className="c-section c-container"><h1>Industrial supplies since 1947</h1></section><article data-canvas-id="pricing-card" className="c-card"><p>Spacious plan details</p></article></main>}`, { blockUsages: usage });
+    await runPageJob(state.ownerId!, state.projectId!, state.homeId!, "Use the navbar", `<main class="c-page"><div data-canvas-block="${navbar.id}" data-canvas-usage="site-navbar"></div><section data-canvas-id="hero-main" class="c-section c-container"><h1>Industrial supplies since 1947</h1></section><article data-canvas-id="pricing-card" class="c-card"><p>Spacious plan details</p></article></main>`, { blockUsages: usage });
     expect(await db.select().from(buildingBlockUsages)).toHaveLength(1);
   });
 
   it("9. creates another page that reuses the global navbar", async () => {
     const usage = [{ blockId: state.navbarId!, usageKey: "site-navbar" }];
-    await runPageJob(state.ownerId!, state.projectId!, state.contactId!, "Build the contact page with the navbar", `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${state.navbarId}" usageKey="site-navbar" /><section data-canvas-id="contact-form" className="c-section c-container"><h1>Contact Acme</h1></section></main>}`, { blockUsages: usage });
+    await runPageJob(state.ownerId!, state.projectId!, state.contactId!, "Build the contact page with the navbar", `<main class="c-page"><div data-canvas-block="${state.navbarId}" data-canvas-usage="site-navbar"></div><section data-canvas-id="contact-form" class="c-section c-container"><h1>Contact Acme</h1></section></main>`, { blockUsages: usage });
     expect(await db.select().from(buildingBlockUsages)).toHaveLength(2);
   });
 
   it("10. updates the navbar from the page tree and propagates it everywhere", async () => {
     await runBlockJob(state.ownerId!, state.projectId!, state.navbarId!, "Rename the Contact link and tighten spacing",
-      `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Block(){return <nav data-canvas-id="navbar-root" className="c-container" aria-label="Main"><CanvasImage mediaId="${state.mediaId}" alt="Acme" className="c-media" /><a href="/">Home</a><a href="/contact">Contact us</a></nav>}`,
+      `<nav data-canvas-id="navbar-root" class="c-container" aria-label="Main"><img data-canvas-media="${state.mediaId}" alt="Acme" class="c-media"><a href="/">Home</a><a href="/contact">Contact us</a></nav>`,
       { referencedMediaIds: [state.mediaId!] });
     const pageVersionCount = (await db.select().from(pageVersions)).length;
     for (const pageId of [state.homeId!, state.contactId!]) {
       const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, pageId));
-      const rendered = await new GeneratedPageContentProvider().get(state.projectId!, pageId, node!.currentVersionId!);
-      expect(rendered?.bundle).toContain("Contact us");
+      const rendered = await new GeneratedPageContentProvider().get(state.projectId!, pageId, node!.currentVersionId!, previewMedia);
+      expect(rendered?.composed.html).toContain("Contact us");
     }
     // Propagation never rewrites page source.
     expect((await db.select().from(pageVersions)).length).toBe(pageVersionCount);
@@ -214,16 +217,16 @@ export default function Page(){return <main className="c-page"><section data-can
   it("11. selects an element and modifies just that element", async () => {
     const before = await new VersionRestoreService().listPageVersions(state.ownerId!, state.projectId!, state.homeId!);
     await runPageJob(state.ownerId!, state.projectId!, state.homeId!, "Make this card more compact",
-      `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${state.navbarId}" usageKey="site-navbar" /><section data-canvas-id="hero-main" className="c-section c-container"><h1>Industrial supplies since 1947</h1></section><article data-canvas-id="pricing-card" className="c-card"><p>Compact plan details</p></article></main>}`,
+      `<main class="c-page"><div data-canvas-block="${state.navbarId}" data-canvas-usage="site-navbar"></div><section data-canvas-id="hero-main" class="c-section c-container"><h1>Industrial supplies since 1947</h1></section><article data-canvas-id="pricing-card" class="c-card"><p>Compact plan details</p></article></main>`,
       { blockUsages: [{ blockId: state.navbarId!, usageKey: "site-navbar" }], selection: { canvasId: "pricing-card" }, targetCanvasId: "pricing-card" });
 
     const after = await new VersionRestoreService().listPageVersions(state.ownerId!, state.projectId!, state.homeId!);
     expect(after.versions.length).toBe(before.versions.length + 1);
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, state.homeId!));
     const [version] = await db.select().from(pageVersions).where(eq(pageVersions.id, node!.currentVersionId!));
-    expect(version?.sourceCode).toContain("Compact plan details");
+    expect(version?.document as { html: string }).toMatchObject({ html: expect.stringContaining("Compact plan details") });
     // The untouched hero survives the targeted edit.
-    expect(version?.sourceCode).toContain("Industrial supplies since 1947");
+    expect(version?.document as { html: string }).toMatchObject({ html: expect.stringContaining("Industrial supplies since 1947") });
     state.homeVersionBeforeUndo = node!.currentVersionId!;
   });
 
@@ -232,7 +235,7 @@ export default function Page(){return <main className="c-page"><section data-can
     expect(result.source.operation).toBe("page_modify");
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, state.homeId!));
     const [version] = await db.select().from(pageVersions).where(eq(pageVersions.id, node!.currentVersionId!));
-    expect(version?.sourceCode).toContain("Spacious plan details");
+    expect(version?.document as { html: string }).toMatchObject({ html: expect.stringContaining("Spacious plan details") });
     expect(node?.currentVersionId).not.toBe(state.homeVersionBeforeUndo);
   });
 
@@ -241,7 +244,7 @@ export default function Page(){return <main className="c-page"><section data-can
     await new HistoryService().redo(state.ownerId!, state.projectId!);
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, state.homeId!));
     expect(node?.currentVersionId).toBe(state.homeVersionBeforeUndo);
-    expect(await new GeneratedPageContentProvider().get(state.projectId!, state.homeId!, node!.currentVersionId!).then((result) => result?.bundle)).toContain("Compact plan details");
+    expect(await new GeneratedPageContentProvider().get(state.projectId!, state.homeId!, node!.currentVersionId!, previewMedia).then((result) => result?.composed.html)).toContain("Compact plan details");
   });
 
   it("14. creates a named checkpoint, which clears the pending-change count", async () => {
@@ -272,7 +275,7 @@ export default function Page(){return <main className="c-page"><section data-can
 
   it("16. lets the collaborator edit another page", async () => {
     await runPageJob(state.collaboratorId!, state.projectId!, state.contactId!, "Add opening hours",
-      `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${state.navbarId}" usageKey="site-navbar" /><section data-canvas-id="contact-form" className="c-section c-container"><h1>Contact Acme</h1><p>Open weekdays 9 to 5.</p></section></main>}`,
+      `<main class="c-page"><div data-canvas-block="${state.navbarId}" data-canvas-usage="site-navbar"></div><section data-canvas-id="contact-form" class="c-section c-container"><h1>Contact Acme</h1><p>Open weekdays 9 to 5.</p></section></main>`,
       { blockUsages: [{ blockId: state.navbarId!, usageKey: "site-navbar" }] });
     const contactVersions = await new VersionRestoreService().listPageVersions(state.ownerId!, state.projectId!, state.contactId!);
     expect(contactVersions.versions[0]).toMatchObject({ actor: "Teammate", isCurrent: true });

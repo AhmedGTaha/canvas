@@ -49,7 +49,7 @@ describe("bounded validation repair", () => {
     const run = await generateWithRepair({
       provider, request, schema, promptVersion: "canvas-page-modify-v2", record,
       validate: async (data) => {
-        if (data.sourceCode === "invalid") throw new AIError("AI_GENERATED_SOURCE_INVALID", "rejected", false, undefined, "forbidden import: node:fs");
+        if (data.sourceCode === "invalid") throw new AIError("AI_GENERATED_DOCUMENT_INVALID", "rejected", false, undefined, "forbidden import: node:fs");
         return data.sourceCode;
       },
     });
@@ -62,7 +62,7 @@ describe("bounded validation repair", () => {
     expect(repairInstruction.text).toContain("forbidden import: node:fs");
     expect(records.map((entry) => entry.requestKind)).toEqual(["generation", "repair"]);
     expect(records.map((entry) => entry.succeeded)).toEqual([false, true]);
-    expect(records[0]!.errorCode).toBe("AI_GENERATED_SOURCE_INVALID");
+    expect(records[0]!.errorCode).toBe("AI_GENERATED_DOCUMENT_INVALID");
   });
 
   it("stops after the repair bound instead of looping", async () => {
@@ -70,8 +70,8 @@ describe("bounded validation repair", () => {
     const { record, records } = recorder();
     await expect(generateWithRepair({
       provider, request, schema, promptVersion: "canvas-page-modify-v2", record,
-      validate: async () => { throw new AIError("AI_GENERATED_SOURCE_INVALID", "rejected", false, undefined, "still invalid"); },
-    })).rejects.toMatchObject({ code: "AI_GENERATED_SOURCE_INVALID" });
+      validate: async () => { throw new AIError("AI_GENERATED_DOCUMENT_INVALID", "rejected", false, undefined, "still invalid"); },
+    })).rejects.toMatchObject({ code: "AI_GENERATED_DOCUMENT_INVALID" });
 
     // One initial attempt plus the bounded repairs, and not one call more.
     expect(provider.requests).toHaveLength(MAX_VALIDATION_REPAIR_ATTEMPTS + 1);

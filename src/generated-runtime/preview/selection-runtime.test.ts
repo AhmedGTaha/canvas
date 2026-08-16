@@ -18,7 +18,7 @@ const manifest: ProjectPreviewManifest = projectPreviewManifestSchema.parse({
   media: {}, blocks: { [blockId]: { id: blockId, name: "Global Navbar", kind: "navbar", isGlobal: true, activeVersionId: "00000000-0000-4000-8000-00000000000a", contentStatus: "generated" } }, navigation: [],
 });
 
-/** Generated markup the compiled bundle would have mounted into #generated-root. */
+/** The composed markup the Preview response now carries inside #generated-root. */
 const generatedMarkup = `
   <main class="c-page">
     <section data-canvas-id="hero-main" data-canvas-label="Hero"><h1 data-canvas-id="hero-title">Welcome</h1></section>
@@ -35,15 +35,13 @@ type Posted = { type: string; [key: string]: unknown };
  */
 function bootPreview(document_: string, markup: string, instance = instanceId) {
   const posted: Posted[] = [];
-  const dom = new JSDOM(`<!doctype html><html><body><div id="preview-root" aria-live="polite"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://preview.invalid/" });
+  const dom = new JSDOM(`<!doctype html><html><body><div id="preview-root" aria-live="polite"><div id="generated-root" class="generated-page-root">${markup}</div></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://preview.invalid/" });
   const view = dom.window as unknown as Window & typeof globalThis;
   Object.defineProperty(view, "parent", { configurable: true, value: { postMessage: (message: Posted) => { posted.push(message); } } });
   const script = /<script nonce="nonce">([\s\S]*?)<\/script>/.exec(document_)?.[1];
   if (!script) throw new Error("preview script not found");
   view.eval(script);
-  const root = view.document.getElementById("generated-root");
-  if (!root) throw new Error("generated root not rendered");
-  root.innerHTML = markup;
+  if (!view.document.getElementById("generated-root")) throw new Error("generated root not rendered");
   return {
     posted, dom, view, document: view.document,
     node: (canvasId: string) => view.document.querySelector(`[data-canvas-id="${canvasId}"]`)!,
@@ -57,7 +55,7 @@ function bootPreview(document_: string, markup: string, instance = instanceId) {
 }
 
 function pageDocument() {
-  return renderPreviewDocument({ manifest, nonce: "nonce", parentOrigin, instanceId, initialRoute: "/", initialMode: "light", generatedBundle: "/* bundle */" });
+  return renderPreviewDocument({ manifest, nonce: "nonce", parentOrigin, instanceId, initialRoute: "/", initialMode: "light", generated: { html: generatedMarkup, css: "", js: "" } });
 }
 
 describe("preview element selection runtime", () => {
@@ -155,8 +153,9 @@ describe("preview element selection runtime", () => {
   });
 
   it("selects inside the Building Block preview document with the block as owner", () => {
-    const document_ = renderBlockPreviewDocument({ manifest, nonce: "nonce", parentOrigin, instanceId, initialMode: "light", block: { id: blockId, name: "Global Navbar", contentStatus: "generated" }, blockBundle: "/* bundle */" });
-    const preview = bootPreview(document_, `<nav data-canvas-id="navbar-root"><a href="/contact" data-canvas-id="navbar-contact-link">Contact</a></nav>`);
+    const blockMarkup = `<nav data-canvas-id="navbar-root"><a href="/contact" data-canvas-id="navbar-contact-link">Contact</a></nav>`;
+    const document_ = renderBlockPreviewDocument({ manifest, nonce: "nonce", parentOrigin, instanceId, initialMode: "light", block: { id: blockId, name: "Global Navbar", contentStatus: "generated" }, generated: { html: blockMarkup, css: "", js: "" } });
+    const preview = bootPreview(document_, blockMarkup);
     preview.fromParent({ type: "CANVAS_SET_SELECT_MODE", enabled: true });
     preview.click("navbar-contact-link");
     expect(preview.last("CANVAS_ELEMENT_SELECTED")).toMatchObject({ canvasId: "navbar-contact-link", blockId, usageKey: null, pageId: null });

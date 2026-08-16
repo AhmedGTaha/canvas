@@ -16,14 +16,18 @@ import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
 import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
-const navbarV1 = `export default function Block(){return <nav className="c-container" aria-label="Main"><span>Navbar version one</span></nav>}`;
-const navbarV2 = `export default function Block(){return <nav className="c-container" aria-label="Main"><span>Navbar version two</span></nav>}`;
-const footerSource = `export default function Block(){return <footer className="c-container"><span>Footer content</span></footer>}`;
-const plainPage = `export default function Page(){return <main className="c-page"><h1>Plain page</h1></main>}`;
+/** Media as the sandboxed Preview resolves it: a session URL, never a storage key. */
+const previewMedia = (mediaId: string) => ({ url: `/api/preview/media/${mediaId}`, width: 800, height: 600, altText: null });
+
+
+const navbarV1 = `<nav data-canvas-id="page" class="c-container" aria-label="Main"><span>Navbar version one</span></nav>`;
+const navbarV2 = `<nav data-canvas-id="page" class="c-container" aria-label="Main"><span>Navbar version two</span></nav>`;
+const footerSource = `<footer data-canvas-id="page" class="c-container"><span>Footer content</span></footer>`;
+const plainPage = `<main data-canvas-id="page" class="c-page"><h1>Plain page</h1></main>`;
 
 function pageUsing(usages: Array<{ blockId: string; usageKey: string }>) {
-  const references = usages.map((usage) => `<CanvasBlock blockId="${usage.blockId}" usageKey="${usage.usageKey}" />`).join("");
-  return `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page">${references}<h1>Page body</h1></main>}`;
+  const references = usages.map((usage) => `<div data-canvas-block="${usage.blockId}" data-canvas-usage="${usage.usageKey}"></div>`).join("");
+  return `<main data-canvas-id="page" class="c-page">${references}<h1>Page body</h1></main>`;
 }
 
 /** Deterministic provider so Phase 9 behaviour is verified without real AI credentials. */
@@ -33,7 +37,7 @@ class FixtureProvider implements AIProvider { readonly capabilities = { structur
   async generateText(): Promise<AIResponse> { return { text: "unused", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     // Block responses have no blockUsages field: a block may not embed another block.
-    const value = { schemaVersion: 1, sourceCode: this.source, referencedMediaIds: [], ...(this.blockUsages.length ? { blockUsages: this.blockUsages } : {}), summary: this.summary };
+    const value = { schemaVersion: 1, html: this.source, referencedMediaIds: [], ...(this.blockUsages.length ? { blockUsages: this.blockUsages } : {}), summary: this.summary };
     return { text: JSON.stringify(value), structuredData: validator.parse(value), provider: this.name, model: this.model, usage: { totalTokens: 10 } };
   }
 }
@@ -74,12 +78,12 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect(job).toMatchObject({ status: "completed", operation: "block_generate" });
     const versions = await db.select().from(buildingBlockVersions);
     expect(versions).toHaveLength(1);
-    expect(versions[0]).toMatchObject({ versionNumber: 1, sourceCode: navbarV1 });
+    expect(versions[0]).toMatchObject({ versionNumber: 1, document: { html: navbarV1 } });
     const [stored] = await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id));
     expect(stored?.currentVersionId).toBe(versions[0]!.id);
 
-    const compiled = await new BuildingBlockContentProvider().getActive(project.id, navbar.id);
-    expect(compiled?.bundle).toContain("Navbar version one");
+    const compiled = await new BuildingBlockContentProvider().getActive(project.id, navbar.id, previewMedia);
+    expect(compiled?.composed.html).toContain("Navbar version one");
     const manifest = (await new PreviewManifestService().createSession(owner.id, project.id)).manifest;
     expect(manifest.blocks[navbar.id]).toMatchObject({ isGlobal: true, contentStatus: "generated", activeVersionId: versions[0]!.id });
   });
@@ -94,7 +98,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
 
     expect(job).toMatchObject({ status: "completed" });
     const versions = await db.select().from(buildingBlockVersions);
-    expect(versions[0]).toMatchObject({ sourceCode: navbarV1, changeSummary: { headline: "H".repeat(120), changes: ["C".repeat(200)], limitations: ["L".repeat(200)] } });
+    expect(versions[0]).toMatchObject({ document: { html: navbarV1 }, changeSummary: { headline: "H".repeat(120), changes: ["C".repeat(200)], limitations: ["L".repeat(200)] } });
   });
 
   it("modifies a block into a new version while the previous version stays intact", async () => {
@@ -107,7 +111,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect(job).toMatchObject({ status: "completed", operation: "block_modify", baseBlockVersionId: v1!.id });
     const versions = await db.select().from(buildingBlockVersions);
     expect(versions.map((version) => version.versionNumber).sort()).toEqual([1, 2]);
-    expect(versions.find((version) => version.id === v1!.id)?.sourceCode).toBe(navbarV1);
+    expect(versions.find((version) => version.id === v1!.id)?.document).toMatchObject({ html: navbarV1 });
     const [stored] = await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id));
     expect(stored?.currentVersionId).toBe(versions.find((version) => version.versionNumber === 2)!.id);
   });
@@ -119,8 +123,8 @@ describe.sequential("Phase 9 Building Blocks", () => {
     await runBlockJob(owner.id, project.id, navbar.id, "Create", navbarV1);
     const [v1] = await db.select().from(buildingBlockVersions);
 
-    const unsafe = await runBlockJob(owner.id, project.id, navbar.id, "Add tracking", `export default function Block(){fetch("/api/track");return <nav/>}`);
-    expect(unsafe.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
+    const unsafe = await runBlockJob(owner.id, project.id, navbar.id, "Add tracking", `export default function Block(){fetch("/api/track");return <nav></nav>}`);
+    expect(unsafe.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_DOCUMENT_INVALID" });
     expect(await db.select().from(buildingBlockVersions)).toHaveLength(1);
     expect((await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id)))[0]?.currentVersionId).toBe(v1!.id);
 
@@ -161,13 +165,13 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect(copy).toMatchObject({ name: "Global Navbar Copy", kind: "navbar", isGlobal: true });
     const copyVersions = await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.buildingBlockId, copy.id));
     expect(copyVersions).toHaveLength(1);
-    expect(copyVersions[0]).toMatchObject({ versionNumber: 1, sourceCode: navbarV1 });
+    expect(copyVersions[0]).toMatchObject({ versionNumber: 1, document: { html: navbarV1 } });
     expect(copyVersions[0]!.id).not.toBe((await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.buildingBlockId, navbar.id)))[0]!.id);
 
     await runBlockJob(owner.id, project.id, navbar.id, "Change the original", navbarV2);
     const [storedCopy] = await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, copy.id));
     expect(storedCopy?.currentVersionId).toBe(copyVersions[0]!.id);
-    expect((await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.id, copyVersions[0]!.id)))[0]?.sourceCode).toBe(navbarV1);
+    expect((await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.id, copyVersions[0]!.id)))[0]?.document).toMatchObject({ html: navbarV1 });
   });
 
   it("propagates a global block change to every page usage without new Page Versions", async () => {
@@ -181,7 +185,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     await runPageJob(owner.id, project.id, about.id, "Use the same navbar", pageUsing(usage), usage);
 
     // Pages reference the stable block UUID rather than cloning its markup.
-    const pageSources = (await db.select().from(pageVersions)).map((version) => version.sourceCode);
+    const pageSources = (await db.select().from(pageVersions)).map((version) => (version.document as { html: string }).html);
     expect(pageSources).toHaveLength(2);
     for (const source of pageSources) { expect(source).toContain(navbar.id); expect(source).not.toContain("Navbar version one"); }
     const usages = await db.select().from(buildingBlockUsages);
@@ -189,8 +193,8 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect(usages.every((row) => row.buildingBlockVersionId === null)).toBe(true);
 
     const provider = new GeneratedPageContentProvider();
-    const homeBefore = await provider.get(project.id, home.id, (await db.select().from(pageNodes).where(eq(pageNodes.id, home.id)))[0]!.currentVersionId!);
-    expect(homeBefore?.bundle).toContain("Navbar version one");
+    const homeBefore = await provider.get(project.id, home.id, (await db.select().from(pageNodes).where(eq(pageNodes.id, home.id)))[0]!.currentVersionId!, previewMedia);
+    expect(homeBefore?.composed.html).toContain("Navbar version one");
 
     await runBlockJob(owner.id, project.id, navbar.id, "Update the navbar", navbarV2);
 
@@ -198,9 +202,9 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect(pageVersionCount).toBe(2);
     for (const pageId of [home.id, about.id]) {
       const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, pageId));
-      const rendered = await provider.get(project.id, pageId, node!.currentVersionId!);
-      expect(rendered?.bundle).toContain("Navbar version two");
-      expect(rendered?.bundle).not.toContain("Navbar version one");
+      const rendered = await provider.get(project.id, pageId, node!.currentVersionId!, previewMedia);
+      expect(rendered?.composed.html).toContain("Navbar version two");
+      expect(rendered?.composed.html).not.toContain("Navbar version one");
     }
     expect((await db.select().from(buildingBlockUsages)).every((row) => row.buildingBlockVersionId === null)).toBe(true);
   });
@@ -218,9 +222,9 @@ describe.sequential("Phase 9 Building Blocks", () => {
 
     await runBlockJob(owner.id, project.id, card.id, "Change it", navbarV2);
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
-    const rendered = await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!);
-    expect(rendered?.bundle).toContain("Navbar version one");
-    expect(rendered?.bundle).not.toContain("Navbar version two");
+    const rendered = await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!, previewMedia);
+    expect(rendered?.composed.html).toContain("Navbar version one");
+    expect(rendered?.composed.html).not.toContain("Navbar version two");
   });
 
   it("reconciles active usage rows when a page moves from one block to another", async () => {
@@ -248,7 +252,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
 
     const hallucinated = [{ blockId: randomUUID(), usageKey: "nav" }];
     const invalid = await runPageJob(owner.id, project.id, home.id, "Add a navbar", pageUsing(hallucinated), hallucinated);
-    expect(invalid.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
+    expect(invalid.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_DOCUMENT_INVALID" });
 
     const stranger = await makeUser("stranger");
     const otherWorkspace = await new WorkspaceService().create(stranger.id, { name: "Other" });
@@ -257,13 +261,13 @@ describe.sequential("Phase 9 Building Blocks", () => {
     await runBlockJob(stranger.id, otherProject.id, foreignBlock.id, "Create", navbarV1);
     const foreignUsage = [{ blockId: foreignBlock.id, usageKey: "nav" }];
     const crossProject = await runPageJob(owner.id, project.id, home.id, "Use their navbar", pageUsing(foreignUsage), foreignUsage);
-    expect(crossProject.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
+    expect(crossProject.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_DOCUMENT_INVALID" });
 
     const archived = await blocks.create(owner.id, { projectId: project.id, name: "Old Hero", kind: "hero" });
     await blocks.archive(owner.id, { projectId: project.id, blockId: archived.id });
     const archivedUsage = [{ blockId: archived.id, usageKey: "hero" }];
     const archivedResult = await runPageJob(owner.id, project.id, home.id, "Use the archived hero", pageUsing(archivedUsage), archivedUsage);
-    expect(archivedResult.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_SOURCE_INVALID" });
+    expect(archivedResult.job).toMatchObject({ status: "failed", errorCode: "AI_GENERATED_DOCUMENT_INVALID" });
 
     const [current] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
     expect(current?.currentVersionId).toBe(baseline!.id);
@@ -284,12 +288,12 @@ describe.sequential("Phase 9 Building Blocks", () => {
     expect((await db.select().from(buildingBlockUsages))[0]?.buildingBlockVersionId).toBeNull();
     await runBlockJob(owner.id, project.id, navbar.id, "Update", navbarV2);
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
-    expect((await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!))?.bundle).toContain("Navbar version two");
+    expect((await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!, previewMedia))?.composed.html).toContain("Navbar version two");
 
     await blocks.setGlobal(owner.id, { projectId: project.id, blockId: navbar.id, isGlobal: false });
     const [v2] = await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.versionNumber, 2));
     expect((await db.select().from(buildingBlockUsages))[0]?.buildingBlockVersionId).toBe(v2!.id);
-    expect((await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!))?.bundle).toContain("Navbar version two");
+    expect((await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!, previewMedia))?.composed.html).toContain("Navbar version two");
   });
 
   it("attaches and detaches one page's copy of a shared block without touching the others", async () => {
@@ -314,7 +318,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     await runBlockJob(owner.id, project.id, navbar.id, "Update", navbarV2);
     const bundleOf = async (pageId: string) => {
       const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, pageId));
-      return (await new GeneratedPageContentProvider().get(project.id, pageId, node!.currentVersionId!))?.bundle;
+      return (await new GeneratedPageContentProvider().get(project.id, pageId, node!.currentVersionId!, previewMedia))?.composed.html;
     };
     expect(await bundleOf(home.id)).toContain("Navbar version one");
     expect(await bundleOf(about.id)).toContain("Navbar version two");
@@ -454,7 +458,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     const otherWorkspace = await new WorkspaceService().create(stranger.id, { name: "Other" });
     const otherProject = await new ProjectService().create(stranger.id, { workspaceId: otherWorkspace.id, name: "Other Site" });
     await expect(blocks.read(stranger.id, otherProject.id, navbar.id)).rejects.toMatchObject({ blockCode: "BLOCK_NOT_FOUND" });
-    expect(await new BuildingBlockContentProvider().getActive(otherProject.id, navbar.id)).toBeNull();
+    expect(await new BuildingBlockContentProvider().getActive(otherProject.id, navbar.id, previewMedia)).toBeNull();
     const [job] = await db.select().from(generationJobs).where(and(eq(generationJobs.projectId, project.id), eq(generationJobs.operation, "block_generate")));
     await expect(new GenerationJobService().get(stranger.id, project.id, job!.id)).rejects.toThrow(/do not have access/);
   });

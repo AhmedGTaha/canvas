@@ -13,36 +13,36 @@ const context = {
 const generate = () => assembleBlockGenerationRequest({
   context,
   userRequest: "Create a navbar",
-  currentSource: null,
+  currentDocument: null,
   block: { name: "Global Navbar", kind: "navbar", isGlobal: true },
   imageParts: [],
 });
 
 describe("Building Block generation prompt", () => {
-  it("makes the no-inline-style contract explicit in both instructions and structured schema", () => {
+  it("makes the markup, style, and script contract explicit in both instructions and schema", () => {
     const request = generate();
-    expect(request.systemInstructions).toContain("No invented utilities, no dynamic or conditional className, no style attribute");
-    expect(request.systemInstructions).toContain("no CSS variables, no hard-coded theme hex values");
-    expect(request.systemInstructions).toContain("re-read the complete sourceCode once against the hard contract");
-    const schema = request.responseSchema as { properties: { sourceCode: { description: string } } };
-    expect(schema.properties.sourceCode.description).toContain("JSX style attributes");
-    expect(schema.properties.sourceCode.description).toContain("forbidden");
+    expect(request.systemInstructions).toContain("No style attributes and no on* handlers — behaviour lives in js");
+    expect(request.systemInstructions).toContain("re-read the complete html, css, and js once against the hard contract");
+    const schema = request.responseSchema as { properties: { html: { description: string }; css: { description: string }; js: { description: string } } };
+    expect(schema.properties.html.description).toContain("No <html>, <head>, <body>, <style>, <script>");
+    expect(schema.properties.css.description).toContain("No @import, no url()");
+    expect(schema.properties.js.description).toContain("no eval or new Function");
   });
 
   it("requires the shared token-backed navbar and logo vocabulary", () => {
     const request = generate();
     expect(request.structuredContext).toMatchObject({ theme: context.theme });
     expect(request.systemInstructions).toContain("c-navbar");
-    expect(request.systemInstructions).toContain("c-nav-brand wrapping a c-logo CanvasImage");
-    expect(request.systemInstructions).toContain("browser defaults never decide appearance");
+    expect(request.systemInstructions).toContain("c-nav-brand wrapping a c-logo image");
     expect(request.systemInstructions).toContain("update automatically when that theme changes");
   });
 
   it("keeps the editable-region contract intact", () => {
     const instructions = generate().systemInstructions;
     expect(instructions).toContain("^[a-z0-9][a-z0-9-]{0,63}$");
-    expect(instructions).toContain("Never a variable, index, property access, template literal");
+    expect(instructions).toContain("Every document needs at least one");
     expect(instructions).toContain("Never tag every element, a trivial wrapper");
+    expect(instructions).toContain("Nothing in js may read, write, or construct a data-canvas attribute");
     expect(instructions).toContain("keep every existing data-canvas-id on every region that survives");
   });
 
@@ -53,7 +53,11 @@ describe("Building Block generation prompt", () => {
     expect(instructions).toContain("Composition patterns");
     expect(instructions).toContain("Placeholder text is a defect");
     expect(instructions).toContain("the page-level \"5 to 8 sections\" target does not apply");
-    expect(instructions).toContain("Never use CanvasBlock inside block source");
+    expect(instructions).toContain("Never use a data-canvas-block host inside block html");
+  });
+
+  it("tells the model that Canvas scopes a block's styles and ids when it is composed", () => {
+    expect(generate().systemInstructions).toContain("scoped to that block when Canvas composes it onto a page");
   });
 
   it("re-anchors the user request after the project context", () => {

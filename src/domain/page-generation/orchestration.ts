@@ -12,15 +12,17 @@ import { DomainError } from "@/domain/shared/errors";
 import { AIError, type AIProvider } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
-import { loadActiveBlockSources, reconcilePageBlockUsages } from "@/domain/blocks/usages";
+import { reconcilePageBlockUsages } from "@/domain/blocks/usages";
 import { recordChangeSet } from "@/domain/history/change-set-service";
 import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
-import { generatedPageResponseSchema, type PageChangeSummary } from "./contract";
+import { generatedPageResponseSchema, pageDocumentFrom, type PageChangeSummary } from "./contract";
 import { assemblePageGenerationRequest, pagePromptVersion } from "./prompt";
-import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
+import { validateGeneratedPageDocument, type GeneratedPageManifest } from "./validator";
+import type { GeneratedDocument } from "@/domain/generated-source/document";
+import { isLegacyVersion, versionDocument } from "@/domain/generated-source/stored-version";
 import { observe } from "@/server/observability/events";
-import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
+import { documentValidationStage, persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 import { repairGeneratedCanvasIds } from "@/domain/generated-source/canvas-id-repair";
 
 function summaryMessage(summary: PageChangeSummary) { return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n"); }
@@ -28,7 +30,7 @@ function failureStage(error: AIError, fallback: string) {
   if (error.code === "AI_RESPONSE_SCHEMA_INVALID") return "response_schema";
   if (error.code === "AI_RESPONSE_MALFORMED") return "response_parse";
   if (error.code === "AI_RESPONSE_EMPTY" || error.code === "AI_RESPONSE_TRUNCATED") return "provider_response";
-  if (error.code === "AI_GENERATED_SOURCE_INVALID") return "source_validation";
+  if (error.code === "AI_GENERATED_DOCUMENT_INVALID") return documentValidationStage(error.diagnostic ?? "");
   return fallback;
 }
 
@@ -68,8 +70,13 @@ export class PageGenerationOrchestrationService {
       // created; it must still exist in the baseline this job is actually modifying.
       const selectedElement = readResolvedSelection(initial.contextMetadata);
       if (selectedElement) {
-        if (!base || !findEditableElement(base.manifest, selectedElement.canvasId)) elementStale();
+        if (!base || isLegacyVersion(base) || !findEditableElement(base.manifest, selectedElement.canvasId)) elementStale();
       }
+      // A Version written before the static-document format cannot be edited in place:
+      // there is no safe way to turn a compiled React component back into markup. The
+      // request becomes a rebuild of the page instead of a modification of it, which is
+      // the only outcome that leaves the user with a working page.
+      const baseDocument = versionDocument(base ?? null);
       const existingIds = base && base.manifest && typeof base.manifest === "object" && "referencedMediaIds" in base.manifest && Array.isArray(base.manifest.referencedMediaIds) ? base.manifest.referencedMediaIds.filter((id): id is string => typeof id === "string") : [];
       const contextMediaIds = [...new Set([...selected.map(({ id }) => id), ...existingIds])];
       const context = await this.contextBuilder.build({ projectId: initial.projectId, actorUserId: initial.actorUserId, target: { type: "page", id: initial.targetId }, selectedMediaIds: contextMediaIds, conversationId: initial.conversationId, operation: initial.operation });
@@ -88,7 +95,7 @@ export class PageGenerationOrchestrationService {
       const promptVersion = pagePromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
       await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
 
-      const providerRequest = assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal });
+      const providerRequest = assemblePageGenerationRequest({ context, userRequest: prompt.content, currentDocument: baseDocument, selectedElement, imageParts, signal: providerAbort.signal });
       const approved = new Set(context.media.map(({ id }) => id)); const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
       // Only Building Blocks declared in the assembled context, active in this project,
       // and already generated may be referenced. Anything else is a rejected reference.
@@ -108,20 +115,19 @@ export class PageGenerationOrchestrationService {
         provider, request: providerRequest, schema: generatedPageResponseSchema, promptVersion, record,
         onCandidate: async (candidate) => { await this.database.update(generationJobs).set({ provider: candidate.provider, providerModel: candidate.model, providerRequestId: candidate.providerRequestId, usageMetadata: candidate.usage }).where(eq(generationJobs.id, jobId)); },
         validate: async (data) => {
-          const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(data.blockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
-          const repaired = repairGeneratedCanvasIds(data.sourceCode);
-          const manifest = await validateGeneratedPageSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds, availableBlockIds, declaredBlockUsages: data.blockUsages, blockSources });
+          const repaired = repairGeneratedCanvasIds(data.html);
+          const { manifest, document } = validateGeneratedPageDocument({ document: { ...pageDocumentFrom(data), html: repaired.html }, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds, availableBlockIds, declaredBlockUsages: data.blockUsages });
           if (selectedElement) {
             const { targetCanvasId, targetRemoved } = data;
             if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
             if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
           }
-          return { manifest, sourceCode: repaired.sourceCode };
+          return { manifest, document };
         },
       });
       const response = run.response;
       const manifest: GeneratedPageManifest = run.validated.manifest;
-      const repaired = { sourceCode: run.validated.sourceCode };
+      const document = run.validated.document;
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
 
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -131,7 +137,7 @@ export class PageGenerationOrchestrationService {
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "applying", "Applying page update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
-      const completed = await this.commit({ jobId, sourceCode: repaired.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
+      const completed = await this.commit({ jobId, document, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
       const jobDurationMs = performance.now() - startedAt;
       await attachJobDuration(jobId, jobDurationMs, this.database);
       observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: jobDurationMs, providerLatencyMs: run.providerLatencyMs, repairAttempts: run.repairAttempts, promptVersion });
@@ -142,7 +148,7 @@ export class PageGenerationOrchestrationService {
       if (!current || ["completed", "failed", "cancelled"].includes(current.status)) return current ?? null;
       if (current.cancelRequestedAt || error.code === "AI_JOB_CANCELLED") await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." });
       else if (error.retryable && current.attemptCount < 3) await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + 1_000 * 2 ** Math.max(0, current.attemptCount - 1)), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
-      else { const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic); const pipelineStage = failureStage(error, current.progressStage); await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic }); await attachJobDuration(jobId, performance.now() - startedAt, this.database); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic }); if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_SOURCE_INVALID"].includes(error.code)) observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel }); }
+      else { const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic); const pipelineStage = failureStage(error, current.progressStage); await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic }); await attachJobDuration(jobId, performance.now() - startedAt, this.database); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic }); if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_DOCUMENT_INVALID"].includes(error.code)) observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel }); }
       return this.current(jobId);
     } finally {
       if (heartbeat) clearInterval(heartbeat);
@@ -160,7 +166,7 @@ export class PageGenerationOrchestrationService {
     }
   }
 
-  private async commit(input: { jobId: string; sourceCode: string; manifest: GeneratedPageManifest; summary: PageChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
+  private async commit(input: { jobId: string; document: GeneratedDocument; manifest: GeneratedPageManifest; summary: PageChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
     return this.database.transaction(async (transaction) => {
       const [job] = await transaction.select().from(generationJobs).where(eq(generationJobs.id, input.jobId)).for("update");
       if (!job) throw new AIError("AI_INTERNAL_ERROR", "Generation job not found.");
@@ -184,7 +190,7 @@ export class PageGenerationOrchestrationService {
         summary: `${page.name}: ${input.summary.headline}`, generationJobId: job.id,
         items: [{ entityType: "page", entityId: page.id, beforeVersionId: job.basePageVersionId, afterVersionId: versionId }],
       });
-      const [version] = await transaction.insert(pageVersions).values({ id: versionId, changeSetId: changeSet.id, projectId: job.projectId, pageId: page.id, versionNumber: (latest?.versionNumber ?? 0) + 1, sourceCode: input.sourceCode, manifest, seoMetadata: { title: page.pageTitle, description: page.metaDescription }, changeSummary: input.summary, sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id }).returning();
+      const [version] = await transaction.insert(pageVersions).values({ id: versionId, changeSetId: changeSet.id, projectId: job.projectId, pageId: page.id, versionNumber: (latest?.versionNumber ?? 0) + 1, document: input.document, sourceFormat: "static_html", manifest, seoMetadata: { title: input.document.metadata?.title ?? page.pageTitle, description: input.document.metadata?.description ?? page.metaDescription }, changeSummary: input.summary, sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id }).returning();
       if (!version) throw new AIError("AI_INTERNAL_ERROR", "Page version could not be created.");
       await transaction.update(pageNodes).set({ currentVersionId: version.id, updatedAt: new Date() }).where(eq(pageNodes.id, page.id));
       const [message] = await transaction.insert(aiMessages).values({ conversationId: job.conversationId, role: "assistant", content: summaryMessage(input.summary), metadata: { generationJobId: job.id, pageVersionId: version.id, summary: input.summary } }).returning();

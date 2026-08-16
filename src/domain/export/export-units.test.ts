@@ -1,15 +1,13 @@
-import { readFileSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { EXPORT_DEPENDENCIES } from "./dependencies";
-import { assertSafeExportPath, componentName, fileStem, mediaExtension, routeDirectory } from "./naming";
-import { transformGeneratedSource, requiresClientRuntime } from "./source-transform";
+import { assertSafeExportPath, componentName, fileStem, mediaExtension, pageFilePath, relativeRootPrefix } from "./naming";
+import { BuildValidator } from "./build-validator";
 import { ZipPackager } from "./zip-packager";
 
 const blockId = "11111111-1111-4111-8111-111111111111";
 const mediaId = "22222222-2222-4222-8222-222222222222";
-const media = new Map([[mediaId, { assetPath: "/assets/logo-abcd1234.png", width: 320, height: 120, altText: "Fallback" }]]);
-const blocks = new Map([[`${blockId}:site-navbar`, { componentName: "GlobalNavbarAB12CD", importPath: "@/components/blocks/GlobalNavbarAB12CD" }]]);
+const encoder = new TextEncoder();
+const file = (path: string, contents: string) => ({ path, contents: encoder.encode(contents) });
 
 describe("export naming", () => {
   it("derives deterministic component names that do not depend on the display name alone", () => {
@@ -27,17 +25,24 @@ describe("export naming", () => {
     expect(fileStem("///", mediaId, "image")).toMatch(/^image-[0-9a-f]{8}$/);
   });
 
-  it("maps routes to app directories and rejects unsafe segments", () => {
-    expect(routeDirectory("/")).toBe("app");
-    expect(routeDirectory("/about")).toBe("app/about");
-    expect(routeDirectory("/company/team")).toBe("app/company/team");
-    for (const route of ["/../etc", "/About", "/a b", "/x/../../y", "/%2e%2e"]) expect(() => routeDirectory(route)).toThrow();
+  it("maps routes to static HTML files and rejects unsafe segments", () => {
+    expect(pageFilePath("/")).toBe("index.html");
+    expect(pageFilePath("/about")).toBe("about.html");
+    expect(pageFilePath("/company/team")).toBe("company/team.html");
+    for (const route of ["/../etc", "/About", "/a b", "/x/../../y", "/%2e%2e"]) expect(() => pageFilePath(route)).toThrow();
+  });
+
+  it("computes the relative path from a page back to the archive root", () => {
+    expect(relativeRootPrefix("index.html")).toBe("");
+    expect(relativeRootPrefix("about.html")).toBe("");
+    expect(relativeRootPrefix("company/team.html")).toBe("../");
+    expect(relativeRootPrefix("a/b/c.html")).toBe("../../");
   });
 
   it("rejects export paths that could escape the archive root", () => {
-    expect(assertSafeExportPath("app/page.tsx")).toBe("app/page.tsx");
+    expect(assertSafeExportPath("styles/site.css")).toBe("styles/site.css");
     expect(assertSafeExportPath(".gitignore")).toBe(".gitignore");
-    for (const path of ["../secret", "app/../../etc/passwd", "/etc/passwd", "app//page.tsx", "app/", "a/./b", "app/page tsx", "app/pa|ge.tsx"]) {
+    for (const path of ["../secret", "app/../../etc/passwd", "/etc/passwd", "app//page.html", "app/", "a/./b", "app/page html", "app/pa|ge.css"]) {
       expect(() => assertSafeExportPath(path), path).toThrow();
     }
   });
@@ -49,75 +54,62 @@ describe("export naming", () => {
     expect(() => mediaExtension("text/html")).toThrow();
   });
 
-  it("keeps exported dependency versions in step with the Canvas runtime", () => {
-    const canvas = JSON.parse(readFileSync("package.json", "utf8")) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
-    for (const [name, version] of Object.entries(EXPORT_DEPENDENCIES.dependencies)) expect(canvas.dependencies[name], name).toBe(version);
-    for (const [name, version] of Object.entries(EXPORT_DEPENDENCIES.devDependencies)) expect(canvas.devDependencies[name], name).toBe(version);
-  });
 });
 
-describe("generated source transformation", () => {
-  it("rewrites Canvas primitives and strips editor-only metadata", () => {
-    const sourceCode = `import { CanvasBlock, CanvasImage } from "@canvas/site-runtime";
-export default function GeneratedPage(){return <main className="c-page" data-canvas-id="root" data-canvas-label="Page"><CanvasBlock blockId="${blockId}" usageKey="site-navbar" /><section data-canvas-id="hero"><CanvasImage mediaId="${mediaId}" alt="Acme" className="c-media" /></section></main>}`;
-    const result = transformGeneratedSource({ sourceCode, media, blocks, componentName: "HomeContent", forceClient: false });
+describe("static output validation", () => {
+  const validator = new BuildValidator();
+  const page = (body: string, head = "") => `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n${head}</head>\n<body class="c-page">\n${body}\n</body>\n</html>\n`;
 
-    expect(result.code).toContain(`import GlobalNavbarAB12CD from "@/components/blocks/GlobalNavbarAB12CD";`);
-    expect(result.code).toContain("export default function HomeContent(");
-    expect(result.code).toContain("<GlobalNavbarAB12CD />");
-    expect(result.code).toContain(`src="/assets/logo-abcd1234.png"`);
-    expect(result.code).toContain(`alt="Acme"`);
-    expect(result.code).toContain(`className="canvas-image c-media"`);
-    expect(result.code).toContain("width={320}");
-    expect(result.code).toContain("height={120}");
-    expect(result.code).toContain(`className="c-page"`);
-    for (const forbidden of ["data-canvas-id", "data-canvas-label", "@canvas/site-runtime", "CanvasBlock", "CanvasImage", blockId, mediaId]) {
-      expect(result.code, forbidden).not.toContain(forbidden);
+  it("passes a self-contained static site", async () => {
+    const failures = await validator.validate([
+      file("index.html", page(`<main><a href="about.html">About</a><img src="assets/logo.png" alt="Logo"></main>`, `<link rel="stylesheet" href="styles/site.css">\n`)),
+      file("about.html", page(`<main><a href="index.html">Home</a></main>`, `<link rel="stylesheet" href="styles/site.css">\n`)),
+      file("styles/site.css", `.c-page{color:var(--color-text)}`),
+      file("assets/logo.png", "binary"),
+    ]);
+    expect(failures).toEqual([]);
+  });
+
+  it("rejects a page that links to a file the archive does not contain", async () => {
+    const failures = await validator.validate([file("index.html", page(`<main><a href="missing.html">Gone</a></main>`))]);
+    expect(failures[0]).toMatchObject({ code: "EXPORT_BROKEN_REFERENCE" });
+  });
+
+  it("rejects editor-only Canvas attributes and preview URLs", async () => {
+    const attributes = await validator.validate([file("index.html", page(`<main data-canvas-id="root"></main>`))]);
+    expect(attributes[0]).toMatchObject({ code: "EXPORT_UNSAFE_OUTPUT" });
+    const preview = await validator.validate([file("index.html", page(`<main><img src="/api/preview/media/abc" alt="x"></main>`))]);
+    expect(preview[0]).toMatchObject({ code: "EXPORT_UNSAFE_OUTPUT" });
+  });
+
+  it("rejects backend and build files", async () => {
+    for (const path of ["api/handler.js", "package.json", ".env"]) {
+      const failures = await validator.validate([file(path, "{}")]);
+      expect(failures[0], path).toMatchObject({ code: "EXPORT_BACKEND_CODE" });
     }
-    expect(result.mediaIds).toEqual([mediaId]);
-    expect(result.blocks).toHaveLength(1);
   });
 
-  it("falls back to the media alt text and keeps other attributes", () => {
-    const sourceCode = `import { CanvasImage } from "@canvas/site-runtime";\nexport default function P(){return <CanvasImage mediaId="${mediaId}" className="c-media" />}`;
-    const result = transformGeneratedSource({ sourceCode, media, blocks, componentName: "P", forceClient: false });
-    expect(result.code).toContain(`alt="Fallback"`);
-    expect(result.code).toContain(`className="canvas-image c-media"`);
+  it("re-checks the shipped stylesheet and script with the generator's own validators", async () => {
+    const css = await validator.validate([file("index.html", page("<main></main>")), file("styles/x.css", `@import url("https://x.example/a.css");`)]);
+    expect(css[0]).toMatchObject({ code: "EXPORT_UNSAFE_OUTPUT" });
+    const js = await validator.validate([file("index.html", page("<main></main>")), file("scripts/x.js", `;(function(parent,top){"use strict";\nfetch("/x");\n})();`)]);
+    expect(js[0]).toMatchObject({ code: "EXPORT_UNSAFE_OUTPUT" });
   });
 
-  it("adds the client directive when needed and keeps an existing one first", () => {
-    const interactive = `"use client";\nimport { useState } from "react";\nexport default function B(){const [open,setOpen]=useState(false);return <div onClick={()=>setOpen(!open)} data-canvas-id="x" />}`;
-    const kept = transformGeneratedSource({ sourceCode: interactive, media, blocks, componentName: "Faq", forceClient: true });
-    expect(kept.code.indexOf(`"use client"`)).toBe(0);
-    expect(kept.code.match(/use client/g)).toHaveLength(1);
-
-    const added = transformGeneratedSource({ sourceCode: `export default function B(){return <div data-canvas-id="x" />}`, media, blocks, componentName: "Faq", forceClient: true });
-    expect(added.code.indexOf(`"use client"`)).toBe(0);
+  it("rejects a page whose markup Canvas can no longer read", async () => {
+    const failures = await validator.validate([file("index.html", page("<main><section></main>"))]);
+    expect(failures[0]).toMatchObject({ code: "EXPORT_INVALID_DOCUMENT" });
   });
 
-  it("places block imports after an existing client directive", () => {
-    const sourceCode = `"use client";\nimport { CanvasBlock } from "@canvas/site-runtime";\nexport default function P(){return <CanvasBlock blockId="${blockId}" usageKey="site-navbar" />}`;
-    const result = transformGeneratedSource({ sourceCode, media, blocks, componentName: "P", forceClient: true });
-    expect(result.code.indexOf(`"use client"`)).toBeLessThan(result.code.indexOf("import GlobalNavbarAB12CD"));
-  });
-
-  it("refuses to emit a component with an unresolved reference", () => {
-    const unknown = "33333333-3333-4333-8333-333333333333";
-    expect(() => transformGeneratedSource({ sourceCode: `import { CanvasImage } from "@canvas/site-runtime";\nexport default function P(){return <CanvasImage mediaId="${unknown}" alt="x" />}`, media, blocks, componentName: "P", forceClient: false })).toThrow(/could not resolve media/);
-    expect(() => transformGeneratedSource({ sourceCode: `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function P(){return <CanvasBlock blockId="${unknown}" usageKey="nav" />}`, media, blocks, componentName: "P", forceClient: false })).toThrow(/could not resolve Building Block/);
-  });
-
-  it("detects client interactivity from the manifest or the source", () => {
-    expect(requiresClientRuntime("export default function P(){return <div/>}", { usesClientInteractivity: true })).toBe(true);
-    expect(requiresClientRuntime("const [a,b]=useState(1)", {})).toBe(true);
-    expect(requiresClientRuntime(`<button onClick={() => run()} />`, {})).toBe(true);
-    expect(requiresClientRuntime("export default function P(){return <div/>}", { usesClientInteractivity: false })).toBe(false);
+  // Nothing in the output needs Node.js, npm, React, or a build step any more.
+  it("never emits a package manifest or a framework dependency", async () => {
+    const failures = await validator.validate([file("package.json", `{"dependencies":{"next":"16.3.0"}}`)]);
+    expect(failures).not.toEqual([]);
   });
 });
 
 describe("zip packaging", () => {
   const packager = new ZipPackager();
-  const encoder = new TextEncoder();
 
   it("produces a deterministic archive readable by the standard format", () => {
     const files = [

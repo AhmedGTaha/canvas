@@ -3,10 +3,21 @@ import { GENERATED_RUNTIME_CSS, generatedThemeCss } from "./runtime-css";
 
 function serialized(value: unknown) { return JSON.stringify(value).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029"); }
 
-export function renderPreviewDocument(input: { manifest: ProjectPreviewManifest; nonce: string; parentOrigin: string; instanceId: string; initialRoute: string; initialMode: "light" | "dark"; generatedBundle?: string }) {
+/** One composed generated document, ready to be placed in the Preview frame. */
+export type PreviewGeneratedContent = { html: string; css: string; js: string };
+
+/**
+ * The generated document is written into the Preview response by the server rather than
+ * built by the frame's own script. There is no compile step to wait for and no bundle to
+ * execute: the markup is already the validated, canonically re-serialized HTML, so the
+ * frame paints it directly and the only script that runs is the Preview runtime plus
+ * whatever behaviour the document itself declared.
+ */
+export function renderPreviewDocument(input: { manifest: ProjectPreviewManifest; nonce: string; parentOrigin: string; instanceId: string; initialRoute: string; initialMode: "light" | "dark"; generated?: PreviewGeneratedContent }) {
   const manifest = projectPreviewManifestSchema.parse(input.manifest);
-  const config = serialized({ manifest, parentOrigin: new URL(input.parentOrigin).origin, instanceId: input.instanceId, initialRoute: input.initialRoute, initialMode: input.initialMode, generated: Boolean(input.generatedBundle) });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(manifest.brand.companyName)} preview</title><style nonce="${input.nonce}">${runtimeCss}${generatedRuntimeCss}${selectionCss}${manifestThemeCss(manifest)}</style></head><body><div id="preview-root" aria-live="polite"></div><script nonce="${input.nonce}">"use strict";(()=>{const config=${config};const manifest=config.manifest;const sessionId=manifest.previewSessionId;let route=normalize(config.initialRoute),mode=config.initialMode;const root=document.getElementById("preview-root");
+  const config = serialized({ manifest, parentOrigin: new URL(input.parentOrigin).origin, instanceId: input.instanceId, initialRoute: input.initialRoute, initialMode: input.initialMode, generated: Boolean(input.generated) });
+  const generatedRoot = input.generated ? `<div id="generated-root" class="generated-page-root">${input.generated.html}</div>` : "";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(manifest.brand.companyName)} preview</title><style nonce="${input.nonce}">${runtimeCss}${generatedRuntimeCss}${selectionCss}${manifestThemeCss(manifest)}${input.generated?.css ?? ""}</style></head><body><div id="preview-root" aria-live="polite">${generatedRoot}</div><script nonce="${input.nonce}">"use strict";(()=>{const config=${config};const manifest=config.manifest;const sessionId=manifest.previewSessionId;let route=normalize(config.initialRoute),mode=config.initialMode;const root=document.getElementById("preview-root");
 const valid=manifest&&manifest.manifestVersion===1&&manifest.projectId&&manifest.routes&&Array.isArray(manifest.pages)&&manifest.theme&&manifest.media;if(!valid)throw new Error("Invalid preview manifest");
 function normalize(value){try{const path=new URL(value,"https://preview.invalid").pathname.replace(/\\/{2,}/g,"/");return path.length>1?path.replace(/\\/$/,""):"/"}catch{return"/"}}
 function send(message){parent.postMessage({...message,sessionId,instanceId:config.instanceId},config.parentOrigin)}
@@ -15,7 +26,11 @@ function media(id){return id?manifest.media[id]||null:null}
 function logo(){return media(manifest.brand.logoMediaIds[mode])}
 function navItems(items,container){items.forEach(item=>{if(item.type==="group"){const details=el("details","nav-group");const summary=el("summary",null,item.label);details.append(summary);const group=el("div","nav-children");navItems(item.children,group);details.append(group);container.append(details)}else{const link=el("a",route===item.route?"active":"",item.label);link.href=item.route;link.dataset.route=item.route;container.append(link);if(item.children.length){const children=el("div","nav-children");navItems(item.children,children);container.append(children)}}})}
 function applyTheme(){document.documentElement.dataset.theme=mode}
-function render(){applyTheme();root.replaceChildren();const resolved=manifest.routes[route];const page=resolved?manifest.pages.find(item=>item.pageId===resolved.pageId):null;if(page&&page.contentStatus==="generated"&&config.generated){const generated=el("div","generated-page-root");generated.id="generated-root";root.append(generated)}else{const shell=el("div","site-shell");const header=el("header","site-header");const brand=el("div","site-brand");const currentLogo=logo();if(currentLogo){const image=document.createElement("img");image.src=currentLogo.previewUrl;image.alt=currentLogo.altText||manifest.brand.companyName;brand.append(image)}else brand.append(el("strong",null,manifest.brand.companyName));header.append(brand);const nav=el("nav","site-nav");nav.setAttribute("aria-label","Website navigation");navItems(manifest.navigation,nav);header.append(nav);shell.append(header);const main=el("main","site-main");if(page){main.dataset.canvasId="preview:"+page.pageId+":placeholder-root";main.append(el("span","site-kicker","Website preview"),el("h1",null,page.name),el("p","site-lead","This page is ready to be built. Canvas will display your website content here when it is ready."));const routeLabel=el("p","route-label","Page route: "+page.canonicalRoute);main.append(routeLabel);const cards=el("section","sample-grid");cards.append(sample("Project theme","Your colors, spacing, typography, borders, and shadows are active."),sample("Responsive layout","Switch Canvas device modes to see this page adapt."));main.append(cards)}else{main.append(el("span","site-kicker","404"),el("h1",null,"Page not found"),el("p","site-lead","This route is not part of the current project preview."))}shell.append(main);root.append(shell)}send({type:"CANVAS_ROUTE_CHANGED",route,pageId:page?page.pageId:null})}
+function render(){applyTheme();const resolved=manifest.routes[route];const page=resolved?manifest.pages.find(item=>item.pageId===resolved.pageId):null;
+// A generated document is already in the response. Only the unbuilt placeholder and the
+// 404 state are constructed here, and only when there is nothing to leave alone.
+if(!config.generated){root.replaceChildren();const shell=el("div","site-shell");const header=el("header","site-header");const brand=el("div","site-brand");const currentLogo=logo();if(currentLogo){const image=document.createElement("img");image.src=currentLogo.previewUrl;image.alt=currentLogo.altText||manifest.brand.companyName;brand.append(image)}else brand.append(el("strong",null,manifest.brand.companyName));header.append(brand);const nav=el("nav","site-nav");nav.setAttribute("aria-label","Website navigation");navItems(manifest.navigation,nav);header.append(nav);shell.append(header);const main=el("main","site-main");if(page){main.dataset.canvasId="preview:"+page.pageId+":placeholder-root";main.append(el("span","site-kicker","Website preview"),el("h1",null,page.name),el("p","site-lead","This page is ready to be built. Canvas will display your website content here when it is ready."));const routeLabel=el("p","route-label","Page route: "+page.canonicalRoute);main.append(routeLabel);const cards=el("section","sample-grid");cards.append(sample("Project theme","Your colors, spacing, typography, borders, and shadows are active."),sample("Responsive layout","Switch Canvas device modes to see this page adapt."));main.append(cards)}else{main.append(el("span","site-kicker","404"),el("h1",null,"Page not found"),el("p","site-lead","This route is not part of the current project preview."))}shell.append(main);root.append(shell)}
+send({type:"CANVAS_ROUTE_CHANGED",route,pageId:page?page.pageId:null})}
 function sample(title,body){const card=el("article","sample-card");card.append(el("h2",null,title),el("p",null,body));return card}
 function currentPageId(){return manifest.routes[route]?manifest.routes[route].pageId:null}
 ${selectionRuntimeScript("null")}
@@ -26,7 +41,7 @@ function previewRoute(){return route}
 function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\\/\\/[^\\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
 function reportPreviewFailure(detail){send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:previewRoute(),pageId:currentPageId(),message:"This part of your website could not be displayed.",detail})}
 addEventListener("error",event=>reportPreviewFailure(previewDetail(event)));
-addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route})})()</script>${input.generatedBundle ? `<script nonce="${input.nonce}">${safeScript(input.generatedBundle)}</script>` : ""}</body></html>`;
+addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});render();send({type:"CANVAS_PREVIEW_READY",route})})()</script>${generatedScript(input.nonce, input.generated)}</body></html>`;
 }
 
 /**
@@ -34,23 +49,37 @@ addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;r
  * theme tokens, and Media resolution as the page preview: the block simply renders
  * inside a neutral project-theme canvas instead of a routed page.
  */
-export function renderBlockPreviewDocument(input: { manifest: ProjectPreviewManifest; nonce: string; parentOrigin: string; instanceId: string; initialMode: "light" | "dark"; block: { id: string; name: string; contentStatus: "unbuilt" | "generated" }; blockBundle?: string }) {
+export function renderBlockPreviewDocument(input: { manifest: ProjectPreviewManifest; nonce: string; parentOrigin: string; instanceId: string; initialMode: "light" | "dark"; block: { id: string; name: string; contentStatus: "unbuilt" | "generated" }; generated?: PreviewGeneratedContent }) {
   const manifest = projectPreviewManifestSchema.parse(input.manifest);
-  const config = serialized({ manifest, parentOrigin: new URL(input.parentOrigin).origin, instanceId: input.instanceId, initialMode: input.initialMode, block: input.block, generated: Boolean(input.blockBundle) });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(input.block.name)} preview</title><style nonce="${input.nonce}">${runtimeCss}${generatedRuntimeCss}${blockPreviewCss}${selectionCss}${manifestThemeCss(manifest)}</style></head><body><div id="preview-root" aria-live="polite"></div><script nonce="${input.nonce}">"use strict";(()=>{const config=${config};const manifest=config.manifest;const sessionId=manifest.previewSessionId;const root=document.getElementById("preview-root");let mode=config.initialMode;
+  const config = serialized({ manifest, parentOrigin: new URL(input.parentOrigin).origin, instanceId: input.instanceId, initialMode: input.initialMode, block: input.block, generated: Boolean(input.generated) });
+  const generatedRoot = input.generated ? `<div class="block-canvas"><div id="generated-root" class="generated-page-root block-surface">${input.generated.html}</div></div>` : "";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(input.block.name)} preview</title><style nonce="${input.nonce}">${runtimeCss}${generatedRuntimeCss}${blockPreviewCss}${selectionCss}${manifestThemeCss(manifest)}${input.generated?.css ?? ""}</style></head><body><div id="preview-root" aria-live="polite">${generatedRoot}</div><script nonce="${input.nonce}">"use strict";(()=>{const config=${config};const manifest=config.manifest;const sessionId=manifest.previewSessionId;const root=document.getElementById("preview-root");let mode=config.initialMode;
 const valid=manifest&&manifest.manifestVersion===1&&manifest.projectId&&manifest.theme&&manifest.media;if(!valid)throw new Error("Invalid preview manifest");
 function send(message){parent.postMessage({...message,sessionId,instanceId:config.instanceId},config.parentOrigin)}
 function el(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
 function currentPageId(){return null}
 ${selectionRuntimeScript("config.block.id")}
-function render(){document.documentElement.dataset.theme=mode;root.replaceChildren();const canvas=el("div","block-canvas");if(config.generated){const host=el("div","generated-page-root block-surface");host.id="generated-root";canvas.append(host)}else{const empty=el("div","block-empty");empty.append(el("span","site-kicker","Building Block"),el("h1",null,config.block.name),el("p","site-lead","Describe this block and Canvas will create it."));canvas.append(empty)}root.append(canvas)}
+function render(){document.documentElement.dataset.theme=mode;if(config.generated)return;root.replaceChildren();const canvas=el("div","block-canvas");const empty=el("div","block-empty");empty.append(el("span","site-kicker","Building Block"),el("h1",null,config.block.name),el("p","site-lead","Describe this block and Canvas will create it."));canvas.append(empty);root.append(canvas)}
 document.addEventListener("click",event=>{const link=event.target.closest("a[href]");if(link)event.preventDefault()});
 addEventListener("message",event=>{if(event.origin!==config.parentOrigin)return;const data=event.data;if(!data||data.sessionId!==sessionId||data.instanceId!==config.instanceId)return;if(handleSelectionMessage(data))return;if(data.type==="CANVAS_SET_THEME"&&(data.mode==="light"||data.mode==="dark")){mode=data.mode;document.documentElement.dataset.theme=mode}else if(data.type==="CANVAS_REFRESH")location.reload()});
 function previewRoute(){return "/"}
 function previewDetail(event){try{const error=event&&event.error;const parts=[];if(event&&event.message)parts.push(String(event.message));else if(error&&error.message)parts.push(String(error.message));if(event&&event.lineno)parts.push("line "+event.lineno);const text=parts.join(" @ ")||"unknown error";return text.replace(/https?:\\/\\/[^\\s)]+/g,"[url]").slice(0,180)}catch{return"unknown error"}}
 function reportPreviewFailure(detail){send({type:"CANVAS_PREVIEW_ERROR",code:"RUNTIME_ERROR",route:previewRoute(),pageId:currentPageId(),message:"This part of your website could not be displayed.",detail})}
 addEventListener("error",event=>reportPreviewFailure(previewDetail(event)));
-addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});globalThis.__CANVAS_PREVIEW__={media:manifest.media};render();send({type:"CANVAS_PREVIEW_READY",route:"/"})})()</script>${input.blockBundle ? `<script nonce="${input.nonce}">${safeScript(input.blockBundle)}</script>` : ""}</body></html>`;
+addEventListener("unhandledrejection",event=>{const reason=event&&event.reason;reportPreviewFailure(previewDetail({message:reason&&reason.message?reason.message:String(reason)}))});render();send({type:"CANVAS_PREVIEW_READY",route:"/"})})()</script>${generatedScript(input.nonce, input.generated)}</body></html>`;
+}
+
+/**
+ * The document's own behaviour, last and separate.
+ *
+ * It runs under the same nonce CSP as the Preview runtime — there is no `unsafe-inline`
+ * and no relaxed `script-src` anywhere in this response — and it has already been through
+ * the JavaScript validator and been wrapped in a scope whose parameters shadow the
+ * globals that could leave the frame.
+ */
+function generatedScript(nonce: string, generated?: PreviewGeneratedContent) {
+  if (!generated?.js.trim()) return "";
+  return `<script nonce="${nonce}">${safeScript(generated.js)}</script>`;
 }
 
 const blockPreviewCss = `.block-canvas{min-height:100vh;padding:0;background:var(--color-background)}.block-surface{min-height:100vh}.block-empty{display:grid;align-content:center;justify-items:start;gap:var(--space-sm);min-height:60vh;padding:clamp(24px,6vw,64px)}.block-empty h1{margin:0;font-size:clamp(1.5rem,4vw,2.25rem)}`;

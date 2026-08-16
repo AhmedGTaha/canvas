@@ -8,8 +8,10 @@ import { EditingLeaseService } from "@/domain/collaboration/lease-service";
 import { DomainError } from "@/domain/shared/errors";
 import { recordChangeSet } from "@/domain/history/change-set-service";
 import { projectIdSchema } from "@/domain/projects/schemas";
-import { validateGeneratedPageSource } from "@/domain/page-generation/validator";
-import { loadActiveBlockSources, reconcilePageBlockUsages } from "./usages";
+import { validateGeneratedPageDocument } from "@/domain/page-generation/validator";
+import { emptyDocument, type GeneratedDocument } from "@/domain/generated-source/document";
+import { requireVersionDocument, versionDocument } from "@/domain/generated-source/stored-version";
+import { reconcilePageBlockUsages } from "./usages";
 import { existingUsageKeys, insertBlockUsageIntoSource, PageSourceEditError, removeBlockUsageFromSource, usageKeyFor } from "./page-sections-source";
 import { blockNotFound, blockNotGenerated } from "./errors";
 import { StarterSectionService } from "./starter-library/service";
@@ -45,18 +47,15 @@ export const removeSectionSchema = z.object({
 /**
  * The document a page that has never been built starts from.
  *
- * Deliberately the smallest thing the generated-source validator accepts: one `c-page`
- * wrapper and nothing else, so the first section someone adds is the first thing on the
- * page rather than competing with placeholder content.
+ * Deliberately the smallest thing the validator accepts: one `c-page` wrapper carrying a
+ * Canvas element id and nothing else, so the first section someone adds is the first
+ * thing on the page rather than competing with placeholder content.
  */
-const EMPTY_PAGE_SOURCE = `export default function Page() {
-  return (
-    <div className="c-page">
-    </div>
-  );
-}
-`;
-const EMPTY_PAGE_VERSION = { id: null as string | null, sourceCode: EMPTY_PAGE_SOURCE } as typeof pageVersions.$inferSelect;
+const EMPTY_PAGE_DOCUMENT: GeneratedDocument = {
+  ...emptyDocument(),
+  html: `<div class="c-page" data-canvas-id="page-root" data-canvas-label="Page"></div>`,
+  metadata: { title: null, description: null },
+};
 
 /**
  * Composing a page out of reusable sections.
@@ -68,7 +67,7 @@ const EMPTY_PAGE_VERSION = { id: null as string | null, sourceCode: EMPTY_PAGE_S
  * removes the page's *reference* to it, which is why the block stays in the library and
  * every other page that uses it is unaffected.
  *
- * The edited source goes through the same validator as generated source, so a
+ * The edited markup goes through the same validator as generated output, so a
  * composition edit can never store something the Preview or the export would reject.
  */
 export class PageSectionService {
@@ -81,17 +80,17 @@ export class PageSectionService {
 
   async addSection(userId: string, input: unknown) {
     const parsed = addSectionSchema.parse(input);
-    return this.edit(userId, parsed.projectId, parsed.pageId, async (page, version, transaction) => {
+    return this.edit(userId, parsed.projectId, parsed.pageId, async (page, document, transaction) => {
       const block = parsed.starterId
         ? await this.starters.createWithin(transaction, userId, { projectId: parsed.projectId, starterId: parsed.starterId })
         : (await transaction.select().from(buildingBlocks)
             .where(and(eq(buildingBlocks.id, parsed.blockId!), eq(buildingBlocks.projectId, parsed.projectId), isNull(buildingBlocks.deletedAt))).limit(1))[0];
       if (!block) throw blockNotFound();
       if (!block.currentVersionId) throw blockNotGenerated();
-      const usageKey = usageKeyFor(block.name, existingUsageKeys(version.sourceCode));
-      const sourceCode = insertBlockUsageIntoSource(version.sourceCode, { blockId: block.id, usageKey, placement: parsed.placement });
+      const usageKey = usageKeyFor(block.name, existingUsageKeys(document.html));
+      const html = insertBlockUsageIntoSource(document.html, { blockId: block.id, usageKey, placement: parsed.placement });
       return {
-        sourceCode,
+        document: { ...document, html },
         operation: "page_section_add" as const,
         summary: `${page.name}: added ${block.name}`,
         audit: { action: "page.section_added", metadata: { pageId: page.id, blockId: block.id, usageKey, placement: parsed.placement.position } },
@@ -102,12 +101,12 @@ export class PageSectionService {
 
   async removeSection(userId: string, input: unknown) {
     const parsed = removeSectionSchema.parse(input);
-    return this.edit(userId, parsed.projectId, parsed.pageId, async (page, version) => {
-      const usages = existingUsageKeys(version.sourceCode);
+    return this.edit(userId, parsed.projectId, parsed.pageId, async (page, document) => {
+      const usages = existingUsageKeys(document.html);
       if (!usages.includes(parsed.usageKey)) throw new DomainError("NOT_FOUND", "That section is not on this page.");
-      const sourceCode = removeBlockUsageFromSource(version.sourceCode, parsed.usageKey);
+      const html = removeBlockUsageFromSource(document.html, parsed.usageKey);
       return {
-        sourceCode,
+        document: { ...document, html },
         operation: "page_section_remove" as const,
         summary: `${page.name}: removed the ${parsed.usageKey} section`,
         audit: { action: "page.section_removed", metadata: { pageId: page.id, usageKey: parsed.usageKey } },
@@ -128,8 +127,8 @@ export class PageSectionService {
     userId: string,
     projectId: string,
     pageId: string,
-    plan: (page: typeof pageNodes.$inferSelect, version: typeof pageVersions.$inferSelect, transaction: Parameters<Parameters<Database["transaction"]>[0]>[0]) => Promise<{
-      sourceCode: string;
+    plan: (page: typeof pageNodes.$inferSelect, document: GeneratedDocument, transaction: Parameters<Parameters<Database["transaction"]>[0]>[0]) => Promise<{
+      document: GeneratedDocument;
       operation: "page_section_add" | "page_section_remove";
       summary: string;
       audit: { action: string; metadata: Record<string, unknown> };
@@ -156,13 +155,17 @@ export class PageSectionService {
          * goes through the same validator, the same usage reconciliation, and the same
          * Change Set as any other version, and Undo returns the page to unbuilt.
          */
-        const version = page.currentVersionId
-          ? (await transaction.select().from(pageVersions)
-              .where(and(eq(pageVersions.id, page.currentVersionId), eq(pageVersions.projectId, projectId), eq(pageVersions.pageId, page.id))).limit(1))[0]
-          : EMPTY_PAGE_VERSION;
-        if (!version) throw new DomainError("NOT_FOUND", "This page has no active version.");
+        let document = EMPTY_PAGE_DOCUMENT;
+        if (page.currentVersionId) {
+          const [active] = await transaction.select().from(pageVersions)
+            .where(and(eq(pageVersions.id, page.currentVersionId), eq(pageVersions.projectId, projectId), eq(pageVersions.pageId, page.id))).limit(1);
+          if (!active) throw new DomainError("NOT_FOUND", "This page has no active version.");
+          // A Version from before the static-document format has no markup to edit, so
+          // composition is refused with the same explanation the Preview gives.
+          document = requireVersionDocument(active);
+        }
 
-        const planned = await plan(page, version, transaction).catch((error: unknown) => {
+        const planned = await plan(page, document, transaction).catch((error: unknown) => {
           if (error instanceof PageSourceEditError) throw new DomainError(error.reason === "usage-not-found" || error.reason === "anchor-not-found" ? "NOT_FOUND" : "VALIDATION", error.message);
           throw error;
         });
@@ -170,20 +173,22 @@ export class PageSectionService {
         const scope = await this.validationScope(transaction, projectId);
         // Read through the transaction: a starter created a moment ago in this same
         // transaction is not visible through the pool.
-        const blockSources = await loadActiveBlockSources(transaction, projectId, [...scope.availableBlockIds]);
-        const manifest = await validateGeneratedPageSource({
-          sourceCode: planned.sourceCode,
-          approvedMediaIds: scope.approvedMediaIds,
-          activeRoutes: scope.activeRoutes,
-          availableBlockIds: scope.availableBlockIds,
-          blockSources,
-        }).catch((error: unknown) => {
+        let validated;
+        try {
+          validated = validateGeneratedPageDocument({
+            document: planned.document,
+            approvedMediaIds: scope.approvedMediaIds,
+            activeRoutes: scope.activeRoutes,
+            availableBlockIds: scope.availableBlockIds,
+          });
+        } catch (error: unknown) {
           // The shared validator speaks to the agent ("try a simpler request"), which is
-          // the wrong advice here: nobody wrote this source by hand. Report what actually
+          // the wrong advice here: nobody wrote this markup by hand. Report what actually
           // failed, which for a composition edit is always something concrete.
           const detail = (error as { diagnostic?: string }).diagnostic;
           throw new DomainError("VALIDATION", detail ? `The page could not be rebuilt with that change: ${detail}` : "The page could not be rebuilt with that change.");
-        });
+        }
+        const { manifest } = validated;
 
         // Usage rows and the activated version are written together, exactly as a
         // generation commit does, so page state and usage state cannot disagree.
@@ -198,7 +203,7 @@ export class PageSectionService {
         const changeSummary = { headline: planned.summary.slice(0, 120), changes: [], limitations: [] };
         const [created] = await transaction.insert(pageVersions).values({
           id: versionId, changeSetId: changeSet.id, projectId, pageId: page.id,
-          versionNumber: (latest?.versionNumber ?? 0) + 1, sourceCode: planned.sourceCode,
+          versionNumber: (latest?.versionNumber ?? 0) + 1, document: validated.document, sourceFormat: "static_html",
           manifest: { ...manifest, blockUsages: resolved }, seoMetadata: { title: page.pageTitle, description: page.metaDescription },
           changeSummary, sourceHash: manifest.sourceHash, createdByUserId: userId,
         }).returning();
@@ -212,7 +217,7 @@ export class PageSectionService {
     }
   }
 
-  /** What the shared generated-source validator is allowed to accept for this project. */
+  /** What the shared generated-document validator is allowed to accept for this project. */
   private async validationScope(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], projectId: string) {
     const [media, pages, blocks] = await Promise.all([
       transaction.select({ id: mediaAssets.id }).from(mediaAssets).where(and(eq(mediaAssets.projectId, projectId), isNull(mediaAssets.deletedAt))),
@@ -234,7 +239,9 @@ export async function listPageSectionUsages(database: Database, projectId: strin
   if (!page?.currentVersionId) return [];
   const [version] = await database.select().from(pageVersions).where(eq(pageVersions.id, page.currentVersionId)).limit(1);
   if (!version) return [];
-  const keys = existingUsageKeys(version.sourceCode);
+  const document = versionDocument(version);
+  if (!document) return [];
+  const keys = existingUsageKeys(document.html);
   const rows = await database.select({ block: buildingBlocks, version: buildingBlockVersions })
     .from(buildingBlocks)
     .leftJoin(buildingBlockVersions, eq(buildingBlockVersions.id, buildingBlocks.currentVersionId))

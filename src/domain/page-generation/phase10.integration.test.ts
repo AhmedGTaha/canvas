@@ -13,15 +13,19 @@ import type { AIProvider, AIRequest, AIResponse, StructuredValidator } from "@/d
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
 import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
+/** Media as the sandboxed Preview resolves it: a session URL, never a storage key. */
+const previewMedia = (id: string) => ({ url: `/api/preview/media/${id}`, width: 40, height: 40, altText: null });
+
+
 const HERO = `<section data-canvas-id="hero-main" data-canvas-label="Hero"><h1>Original hero</h1></section>`;
-const page = (body: string) => `export default function Page(){return <main className="c-page">${HERO}${body}</main>}`;
+const page = (body: string) => `<main data-canvas-id="page" class="c-page">${HERO}${body}</main>`;
 const pageV1 = page(`<article data-canvas-id="pricing-card-pro"><h2>Pro plan</h2><p>Spacious pricing card</p></article>`);
 const pageCompactCard = page(`<article data-canvas-id="pricing-card-pro"><h2>Pro plan</h2><p>Compact pricing card</p></article>`);
 const pageWithoutCard = page(``);
-const pageWithoutHero = `export default function Page(){return <main className="c-page"><article data-canvas-id="pricing-card-pro">Pro</article></main>}`;
-const navbarV1 = `export default function Block(){return <nav data-canvas-id="navbar-root" aria-label="Main"><span>Navbar version one</span></nav>}`;
-const navbarV2 = `export default function Block(){return <nav data-canvas-id="navbar-root" aria-label="Main"><span>Navbar version two</span></nav>}`;
-const pageUsingNavbar = (blockId: string) => `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${blockId}" usageKey="site-navbar" />${HERO}</main>}`;
+const pageWithoutHero = `<main class="c-page"><article data-canvas-id="pricing-card-pro">Pro</article></main>`;
+const navbarV1 = `<nav data-canvas-id="navbar-root" aria-label="Main"><span>Navbar version one</span></nav>`;
+const navbarV2 = `<nav data-canvas-id="navbar-root" aria-label="Main"><span>Navbar version two</span></nav>`;
+const pageUsingNavbar = (blockId: string) => `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${blockId}" data-canvas-usage="site-navbar"></div>${HERO}</main>`;
 
 type FixtureOptions = { targetCanvasId?: string | null; targetRemoved?: boolean; blockUsages?: Array<{ blockId: string; usageKey: string }>; block?: boolean };
 
@@ -32,7 +36,7 @@ class FixtureProvider implements AIProvider { readonly capabilities = { structur
   async generateText(): Promise<AIResponse> { return { text: "unused", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const value = {
-      schemaVersion: 1, sourceCode: this.source, referencedMediaIds: [],
+      schemaVersion: 1, html: this.source, referencedMediaIds: [],
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       ...(this.options.targetCanvasId === undefined ? {} : { targetCanvasId: this.options.targetCanvasId }),
       ...(this.options.targetRemoved === undefined ? {} : { targetRemoved: this.options.targetRemoved }),
@@ -86,11 +90,11 @@ describe.sequential("Phase 10 element-level editing", () => {
     const second = await activeSource(home.id);
     expect(second.id).not.toBe(first.id);
     expect(second.versionNumber).toBe(2);
-    expect(second.sourceCode).toContain("Compact pricing card");
+    expect(second.document as { html: string }).toMatchObject({ html: expect.stringContaining("Compact pricing card") });
     // The unrelated hero region is byte-for-byte unchanged and keeps its Canvas ID.
-    expect(second.sourceCode).toContain(HERO);
-    expect(second.sourceCode).not.toContain("Spacious pricing card");
-    expect((await db.select().from(pageVersions).where(eq(pageVersions.id, first.id)))[0]?.sourceCode).toBe(pageV1);
+    expect(second.document as { html: string }).toMatchObject({ html: expect.stringContaining(HERO) });
+    expect(second.document as { html: string }).not.toMatchObject({ html: expect.stringContaining("Spacious pricing card") });
+    expect((await db.select().from(pageVersions).where(eq(pageVersions.id, first.id)))[0]?.document).toMatchObject({ html: pageV1 });
 
     // The targeted element is persisted with the prompt message and the job.
     const messages = await db.select().from(aiMessages);
@@ -159,7 +163,7 @@ describe.sequential("Phase 10 element-level editing", () => {
     // Removal is allowed when the result declares it.
     const removed = await runPageJob(owner.id, project.id, home.id, "Delete this card", pageWithoutCard, { selection: { canvasId: "pricing-card-pro" }, targetCanvasId: null, targetRemoved: true });
     expect(removed.job).toMatchObject({ status: "completed" });
-    expect((await activeSource(home.id)).sourceCode).toBe(pageWithoutCard);
+    expect((await activeSource(home.id)).document).toMatchObject({ html: pageWithoutCard });
   });
 
   it("keeps targeted edits inside the existing job, lease, cancellation, and concurrency rules", async () => {
@@ -210,9 +214,9 @@ describe.sequential("Phase 10 element-level editing", () => {
     const provider = new GeneratedPageContentProvider();
     for (const target of [home, about]) {
       const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, target.id));
-      const rendered = await provider.get(project.id, target.id, node!.currentVersionId!);
-      expect(rendered?.bundle).toContain("Navbar version two");
-      expect(rendered?.bundle).not.toContain("Navbar version one");
+      const rendered = await provider.get(project.id, target.id, node!.currentVersionId!, previewMedia);
+      expect(rendered?.composed.html).toContain("Navbar version two");
+      expect(rendered?.composed.html).not.toContain("Navbar version one");
     }
     expect((await db.select().from(pageVersions)).length).toBe(pageVersionCount);
     expect((await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id)))[0]?.isGlobal).toBe(true);

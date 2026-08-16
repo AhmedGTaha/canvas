@@ -80,7 +80,7 @@ export async function generateWithRepair<TResponse, TValidated>(input: {
     } catch (error) {
       const validationMs = Math.round(performance.now() - validationStartedAt);
       validationDurationMs += validationMs;
-      const repairable = error instanceof AIError && error.code === "AI_GENERATED_SOURCE_INVALID";
+      const repairable = error instanceof AIError && error.code === "AI_GENERATED_DOCUMENT_INVALID";
       await input.record({ requestKind, promptVersion, succeeded: false, errorCode: error instanceof AIError ? error.code : "AI_INTERNAL_ERROR", usage: response.usage, providerLatencyMs, validationDurationMs: validationMs });
       if (!repairable || repairAttempts >= maxRepairAttempts) throw error;
       repairAttempts += 1;

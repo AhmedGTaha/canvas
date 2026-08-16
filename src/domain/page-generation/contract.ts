@@ -1,7 +1,18 @@
 import { z } from "zod";
-import { changeSummaryProperty, generatedSourceProperty, mediaIdsProperty, schemaVersionProperty, targetCanvasIdProperty, targetRemovedProperty } from "@/domain/generated-source/response-schema";
+import {
+  changeSummaryProperty,
+  cssProperty,
+  documentMetadataProperty,
+  htmlProperty,
+  javascriptProperty,
+  mediaIdsProperty,
+  schemaVersionProperty,
+  targetCanvasIdProperty,
+  targetRemovedProperty,
+} from "@/domain/generated-source/response-schema";
+import { generatedDocumentMetadataSchema } from "@/domain/generated-source/document";
+import { GENERATED_CSS_MAX_BYTES, GENERATED_DOCUMENT_MAX_BYTES, GENERATED_HTML_MAX_BYTES, GENERATED_JS_MAX_BYTES } from "@/domain/generated-source/limits";
 
-export const PAGE_SOURCE_MAX_BYTES = 102_400;
 export const PAGE_MEDIA_ATTACHMENT_LIMIT = 5;
 
 export const SUMMARY_HEADLINE_MAX = 120;
@@ -9,9 +20,9 @@ export const SUMMARY_ITEM_MAX = 200;
 
 /**
  * The change summary is display-only prose. Providers routinely overshoot its character
- * limits by a few words while returning otherwise valid source, and `maxLength` is not a
- * keyword Gemini honours, so the limit cannot be enforced at the provider. Clamping here
- * keeps a cosmetic overrun from failing the whole generation job, exactly as
+ * limits by a few words while returning an otherwise valid document, and `maxLength` is
+ * not a keyword Gemini honours, so the limit cannot be enforced at the provider. Clamping
+ * here keeps a cosmetic overrun from failing the whole generation job, exactly as
  * `repairGeneratedCanvasIds` absorbs cosmetic ID deviations. The limits themselves stay:
  * `changeSets.summary` is a varchar(300) built from a page name plus this headline.
  */
@@ -38,12 +49,12 @@ export const MEDIA_REFERENCE_LIMIT = 20;
 /**
  * Gemini does not enforce `format: "uuid"` inside `responseJsonSchema`, so a model that
  * declares one invented reference alongside real ones (a filename, a placeholder) fails
- * the whole job at the schema stage, before the source validator — the real authority on
- * Media references — ever runs. A non-UUID entry cannot name an approved Media asset, so
- * it carries no meaning and is dropped, exactly as over-length summary prose is clamped.
- * Nothing is widened: `validateGeneratedSource` still derives the manifest from the
- * source, rejects any mediaId that is not approved, and still fails a declaration that
- * disagrees with the source.
+ * the whole job at the schema stage, before the document validator — the real authority
+ * on Media references — ever runs. A non-UUID entry cannot name an approved Media asset,
+ * so it carries no meaning and is dropped, exactly as over-length summary prose is
+ * clamped. Nothing is widened: `validateGeneratedDocument` still derives the manifest
+ * from the markup, rejects any media reference that is not approved, and still fails a
+ * declaration that disagrees with the document.
  */
 export const declaredMediaIdsSchema = z.array(z.string())
   .transform((ids) => ids.filter((id) => z.uuid().safeParse(id).success))
@@ -56,24 +67,40 @@ export const generatedBlockUsageSchema = z.object({
   usageKey: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "Block usage keys use lowercase letters, numbers, and hyphens."),
 }).strict();
 
+const byteLimited = (limit: number, label: string) =>
+  z.string().refine((value) => Buffer.byteLength(value, "utf8") <= limit, `Generated ${label} exceeds ${limit} bytes.`);
+
+/**
+ * One generated page as the provider returns it: markup, styles, behaviour, page
+ * metadata, and the declarations Canvas cross-checks the document against.
+ */
 export const generatedPageResponseSchema = z.object({
   schemaVersion: z.literal(1),
-  sourceCode: z.string().min(1).refine((value) => Buffer.byteLength(value, "utf8") <= PAGE_SOURCE_MAX_BYTES, "Generated page source exceeds 100 KB."),
+  html: byteLimited(GENERATED_HTML_MAX_BYTES, "HTML").pipe(z.string().min(1)),
+  css: byteLimited(GENERATED_CSS_MAX_BYTES, "CSS").nullish().transform((value) => value ?? ""),
+  js: byteLimited(GENERATED_JS_MAX_BYTES, "JavaScript").nullish().transform((value) => value ?? ""),
+  metadata: generatedDocumentMetadataSchema.nullish().transform((value) => value ?? { title: null, description: null }),
   referencedMediaIds: declaredMediaIdsSchema,
   blockUsages: z.array(generatedBlockUsageSchema).max(PAGE_BLOCK_USAGE_LIMIT).default([]),
   targetCanvasId: z.string().max(64).nullish().transform((value) => value ?? null),
   targetRemoved: z.boolean().nullish().transform((value) => value ?? false),
   summary: pageChangeSummarySchema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  const total = Buffer.byteLength(value.html, "utf8") + Buffer.byteLength(value.css, "utf8") + Buffer.byteLength(value.js, "utf8");
+  if (total > GENERATED_DOCUMENT_MAX_BYTES) context.addIssue({ code: "custom", message: `The generated document exceeds ${GENERATED_DOCUMENT_MAX_BYTES} bytes.` });
+});
 
 export type GeneratedPageResponse = z.infer<typeof generatedPageResponseSchema>;
 export type PageChangeSummary = z.infer<typeof pageChangeSummarySchema>;
 
 export const generatedPageResponseJsonSchema = {
-  type: "object", additionalProperties: false, required: ["schemaVersion", "sourceCode", "referencedMediaIds", "summary"],
+  type: "object", additionalProperties: false, required: ["schemaVersion", "html", "css", "js", "metadata", "referencedMediaIds", "summary"],
   properties: {
     schemaVersion: schemaVersionProperty,
-    sourceCode: generatedSourceProperty,
+    html: htmlProperty,
+    css: cssProperty,
+    js: javascriptProperty,
+    metadata: documentMetadataProperty,
     referencedMediaIds: mediaIdsProperty,
     blockUsages: {
       type: "array", maxItems: PAGE_BLOCK_USAGE_LIMIT,
@@ -84,10 +111,15 @@ export const generatedPageResponseJsonSchema = {
           usageKey: { type: "string", description: "Stable lowercase key, unique within this page, using letters, numbers, and hyphens." },
         },
       },
-      description: "Every CanvasBlock reference in the source, and nothing else.",
+      description: "Every data-canvas-block reference in the html, and nothing else.",
     },
     targetCanvasId: targetCanvasIdProperty,
     targetRemoved: targetRemovedProperty,
     summary: changeSummaryProperty,
   },
 } as const;
+
+/** The document half of a page response, ready for the deterministic validator. */
+export function pageDocumentFrom(response: GeneratedPageResponse) {
+  return { schemaVersion: 1 as const, html: response.html, css: response.css, js: response.js, metadata: response.metadata };
+}

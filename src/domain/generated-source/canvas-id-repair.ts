@@ -1,50 +1,44 @@
-import ts from "typescript";
 import { CANVAS_ID_PATTERN } from "./limits";
+import { attributeValue, parseHtmlFragment, serializeHtml, setAttribute, walkElements } from "./html/parser";
 
 export type CanvasIdRepair = { from: string; to: string };
-
-function staticAttributeValue(attribute: ts.JsxAttribute) {
-  const initializer = attribute.initializer;
-  if (!initializer) return null;
-  if (ts.isStringLiteral(initializer)) return initializer.text;
-  if (ts.isJsxExpression(initializer) && initializer.expression && (ts.isStringLiteral(initializer.expression) || ts.isNoSubstitutionTemplateLiteral(initializer.expression))) return initializer.expression.text;
-  return null;
-}
 
 function normalizedCanvasId(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64).replace(/-+$/g, "");
 }
 
 /**
- * Repairs only one-to-one malformed static ID literals. Dynamic expressions cannot be
- * mapped to rendered elements safely, and any duplicate/collision leaves source intact
- * so the validator rejects it with an explicit diagnostic.
+ * Repairs cosmetically malformed Canvas element IDs before validation rejects them.
+ *
+ * Models reliably produce IDs that mean the right thing but are spelled wrong for the
+ * contract — `Hero_Section`, `pricing card 1`. Failing a whole generation over that wastes
+ * a paid request, so a one-to-one normalization is applied first. Anything ambiguous is
+ * left exactly as it was so the validator rejects it with an explicit diagnostic: a
+ * duplicate source value or a collision after normalizing could silently move which
+ * region a stored selection points at.
  */
-export function repairGeneratedCanvasIds(sourceCode: string): { sourceCode: string; repairs: CanvasIdRepair[] } {
-  const file = ts.createSourceFile("generated.tsx", sourceCode, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
-  const parseDiagnostics = (file as ts.SourceFile & { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
-  if (parseDiagnostics.length) return { sourceCode, repairs: [] };
-  const attributes: Array<{ attribute: ts.JsxAttribute; value: string | null }> = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isJsxAttribute(node) && node.name.getText(file) === "data-canvas-id") attributes.push({ attribute: node, value: staticAttributeValue(node) });
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  // A dynamic ID or duplicate source value is inherently ambiguous. Do not partially
-  // repair around it because that could change selection ownership unpredictably.
-  if (attributes.some(({ value }) => value === null)) return { sourceCode, repairs: [] };
-  const raw = attributes.map(({ value }) => value!);
-  if (new Set(raw).size !== raw.length) return { sourceCode, repairs: [] };
-  const normalized = raw.map((value) => CANVAS_ID_PATTERN.test(value) ? value : normalizedCanvasId(value));
-  if (normalized.some((value) => !CANVAS_ID_PATTERN.test(value)) || new Set(normalized).size !== normalized.length) return { sourceCode, repairs: [] };
+export function repairGeneratedCanvasIds(html: string): { html: string; repairs: CanvasIdRepair[] } {
+  let nodes;
+  try { nodes = parseHtmlFragment(html); } catch { return { html, repairs: [] }; }
 
-  const edits = attributes.flatMap(({ attribute, value }, index) => {
+  const targets: Array<{ element: Parameters<Parameters<typeof walkElements>[1]>[0]; value: string }> = [];
+  walkElements(nodes, (element) => {
+    const value = attributeValue(element, "data-canvas-id");
+    if (value !== null) targets.push({ element, value });
+  });
+  if (!targets.length) return { html, repairs: [] };
+
+  const raw = targets.map(({ value }) => value);
+  if (new Set(raw).size !== raw.length) return { html, repairs: [] };
+  const normalized = raw.map((value) => (CANVAS_ID_PATTERN.test(value) ? value : normalizedCanvasId(value)));
+  if (normalized.some((value) => !CANVAS_ID_PATTERN.test(value)) || new Set(normalized).size !== normalized.length) return { html, repairs: [] };
+
+  const repairs: CanvasIdRepair[] = [];
+  targets.forEach(({ element, value }, index) => {
     const replacement = normalized[index]!;
-    if (replacement === value) return [];
-    const initializer = attribute.initializer!;
-    return [{ start: initializer.getStart(file), end: initializer.getEnd(), text: JSON.stringify(replacement), from: value!, to: replacement }];
-  }).sort((left, right) => right.start - left.start);
-  let repaired = sourceCode;
-  for (const edit of edits) repaired = repaired.slice(0, edit.start) + edit.text + repaired.slice(edit.end);
-  return { sourceCode: repaired, repairs: edits.map(({ from, to }) => ({ from, to })).reverse() };
+    if (replacement === value) return;
+    setAttribute(element, "data-canvas-id", replacement);
+    repairs.push({ from: value, to: replacement });
+  });
+  return repairs.length ? { html: serializeHtml(nodes), repairs } : { html, repairs: [] };
 }

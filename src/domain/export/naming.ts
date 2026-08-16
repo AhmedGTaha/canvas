@@ -33,16 +33,26 @@ export function mediaExtension(mimeType: string) {
 }
 
 /**
- * Maps a site route to its Next.js App Router directory. Every segment is re-derived
- * from a strict slug pattern, so no route can escape the app directory.
+ * Maps a site route to the HTML file that serves it.
+ *
+ * `/` is `index.html` and `/about` is `about.html`, which is the layout every static host
+ * serves without configuration and the only one that also works when the folder is opened
+ * straight from disk. A nested route keeps its shape as a directory. Every segment is
+ * re-derived from a strict slug pattern, so no route can escape the archive root.
  */
-export function routeDirectory(route: string) {
-  if (route === "/") return "app";
+export function pageFilePath(route: string) {
+  if (route === "/") return "index.html";
   const segments = route.replace(/^\//, "").split("/");
   for (const segment of segments) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(segment)) throw new Error(`Unsafe route segment for export: ${segment}`);
   }
-  return ["app", ...segments].join("/");
+  return `${segments.join("/")}.html`;
+}
+
+/** The `../` prefix that gets from one exported page back to the archive root. */
+export function relativeRootPrefix(filePath: string) {
+  const depth = filePath.split("/").length - 1;
+  return "../".repeat(depth);
 }
 
 /** Rejects anything that could escape the archive root when a file is written. */

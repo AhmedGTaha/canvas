@@ -1,18 +1,19 @@
 import { computePageRoutes } from "@/domain/pages/routes";
-import { validateGeneratedPageSource } from "@/domain/page-generation/validator";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
+import { validateGeneratedPageDocument } from "@/domain/page-generation/validator";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
+import { isLegacyVersion, versionDocument } from "@/domain/generated-source/stored-version";
 import { AIError } from "@/domain/ai/provider";
 import { getObjectStorage, type ObjectStorage } from "@/server/storage";
-import { mediaExtension, routeDirectory } from "./naming";
+import { mediaExtension, pageFilePath } from "./naming";
 import { manifestList, type ExportProjectState } from "./project-state";
 
 export type ExportFailure = { code: string; message: string; entity?: string };
 export type ExportValidationReport = { ok: boolean; checks: Array<{ name: string; passed: boolean }>; failures: ExportFailure[]; pageCount: number; blockCount: number; mediaCount: number };
 
 /**
- * Validates that the project's *active* state can become a standalone site. Generated
- * source is re-checked with the same validators Canvas uses when the version was
- * created, so no unsafe import, network call, or backend behaviour can reach the ZIP.
+ * Validates that the project's *active* state can become a standalone static site. Every
+ * document is re-checked with the same validators Canvas uses when the version was
+ * created, so no unsafe markup, style, or script can reach the ZIP.
  */
 export class ExportValidator {
   constructor(private readonly storage: ObjectStorage = getObjectStorage()) {}
@@ -30,7 +31,7 @@ export class ExportValidator {
       for (const page of state.pages) {
         const expected = computed.get(page.node.id);
         if (!expected || expected !== page.route) failures.push({ code: "ROUTE_INVALID", message: `The URL for “${page.node.name}” is out of date. Open Pages and re-save it.`, entity: page.node.name });
-        else routeDirectory(page.route);
+        else pageFilePath(page.route);
       }
       routes = new Set(state.pages.map((page) => page.route));
       if (routes.size !== state.pages.length) failures.push({ code: "ROUTE_COLLISION", message: "Two pages share the same website URL." });
@@ -86,30 +87,39 @@ export class ExportValidator {
     // Security/import/backend validation, re-run exactly as Canvas runs it on write.
     mark = failures.length;
     const approvedMediaIds = new Set([...state.media.keys()]);
-    const availableBlockIds = new Set<string>(); const blockSources = new Map<string, string>();
-    for (const versionId of blockVersionIds) {
-      const version = state.blockVersionById.get(versionId)!;
-      availableBlockIds.add(version.buildingBlockId); blockSources.set(version.buildingBlockId, version.sourceCode);
-    }
+    const availableBlockIds = new Set<string>();
+    for (const versionId of blockVersionIds) availableBlockIds.add(state.blockVersionById.get(versionId)!.buildingBlockId);
     for (const versionId of blockVersionIds) {
       const version = state.blockVersionById.get(versionId)!;
       const block = state.blockById.get(version.buildingBlockId);
+      if (isLegacyVersion(version)) {
+        failures.push({ code: "LEGACY_CONTENT", message: `“${block?.name ?? "A Building Block"}” was built with an earlier version of Canvas. Ask Canvas to rebuild it before exporting.`, entity: block?.name });
+        continue;
+      }
+      const document = versionDocument(version);
+      if (!document) { failures.push({ code: "DOCUMENT_UNREADABLE", message: `“${block?.name ?? "A Building Block"}” has content Canvas could not read.`, entity: block?.name }); continue; }
       try {
-        await validateGeneratedBlockSource({ sourceCode: version.sourceCode, approvedMediaIds, activeRoutes: routes, declaredMediaIds: manifestList(version.manifest, "referencedMediaIds") });
+        validateGeneratedBlockDocument({ document, approvedMediaIds, activeRoutes: routes, declaredMediaIds: manifestList(version.manifest, "referencedMediaIds") });
       } catch (error) {
-        failures.push({ code: "SOURCE_INVALID", message: `“${block?.name ?? "A Building Block"}” contains content that cannot be exported safely.`, entity: error instanceof AIError ? error.diagnostic : undefined });
+        failures.push({ code: "DOCUMENT_INVALID", message: `“${block?.name ?? "A Building Block"}” contains content that cannot be exported safely.`, entity: error instanceof AIError ? error.diagnostic : undefined });
       }
     }
     for (const page of state.pages) {
       if (!page.version) continue;
+      if (isLegacyVersion(page.version)) {
+        failures.push({ code: "LEGACY_CONTENT", message: `“${page.node.name}” was built with an earlier version of Canvas. Ask Canvas to rebuild it before exporting.`, entity: page.node.name });
+        continue;
+      }
+      const document = versionDocument(page.version);
+      if (!document) { failures.push({ code: "DOCUMENT_UNREADABLE", message: `“${page.node.name}” has content Canvas could not read.`, entity: page.node.name }); continue; }
       try {
-        await validateGeneratedPageSource({
-          sourceCode: page.version.sourceCode, approvedMediaIds, activeRoutes: routes,
+        validateGeneratedPageDocument({
+          document, approvedMediaIds, activeRoutes: routes,
           declaredMediaIds: manifestList(page.version.manifest, "referencedMediaIds"),
-          availableBlockIds, declaredBlockUsages: blockUsages(page.version.manifest), blockSources,
+          availableBlockIds, declaredBlockUsages: blockUsages(page.version.manifest),
         });
       } catch (error) {
-        failures.push({ code: "SOURCE_INVALID", message: `“${page.node.name}” contains content that cannot be exported safely.`, entity: error instanceof AIError ? error.diagnostic : undefined });
+        failures.push({ code: "DOCUMENT_INVALID", message: `“${page.node.name}” contains content that cannot be exported safely.`, entity: error instanceof AIError ? error.diagnostic : undefined });
       }
     }
     record("Website code", mark);

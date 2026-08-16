@@ -1,23 +1,17 @@
-import { compileGeneratedSource, type GeneratedBlockModule } from "@/domain/generated-source/compiler";
-import { validateGeneratedSource, type GeneratedBlockUsage, type GeneratedSourceManifest } from "@/domain/generated-source/validator";
+import { validateGeneratedDocument, type GeneratedBlockUsage, type GeneratedSourceManifest } from "@/domain/generated-source/validator";
+import type { GeneratedDocument } from "@/domain/generated-source/document";
 
 export type GeneratedPageManifest = GeneratedSourceManifest;
 export type { GeneratedBlockUsage };
 
-/** Page-specific wrapper over the shared generated-source security policy. */
-export function validateGeneratedPageSource(input: {
-  sourceCode: string;
+/** Page-specific wrapper over the shared generated-document security policy. */
+export function validateGeneratedPageDocument(input: {
+  document: GeneratedDocument;
   approvedMediaIds: Set<string>;
   activeRoutes: Set<string>;
   declaredMediaIds?: string[];
   availableBlockIds?: Set<string>;
   declaredBlockUsages?: GeneratedBlockUsage[];
-  blockSources?: Map<string, string>;
 }) {
-  return validateGeneratedSource({ kind: "page", ...input });
-}
-
-/** Compiles an active Page Version together with the Building Blocks it references. */
-export function compileGeneratedPage(sourceCode: string, blocks: GeneratedBlockModule[] = []) {
-  return compileGeneratedSource({ entrySource: sourceCode, blocks });
+  return validateGeneratedDocument({ kind: "page", ...input });
 }

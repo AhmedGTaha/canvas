@@ -7,10 +7,10 @@ import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DomainError } from "@/domain/shared/errors";
 import { recordChangeSet } from "@/domain/history/change-set-service";
 import { projectIdSchema } from "@/domain/projects/schemas";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
-import { compileGeneratedBlock } from "@/domain/blocks/validation";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
+import { composeFragment, type MediaResolver } from "@/domain/generated-source/composition";
 import { uniqueBlockName } from "@/domain/blocks/duplication";
-import { findStarterSection, type StarterContext } from "./catalog";
+import { findStarterSection, starterDocument, type StarterContext } from "./catalog";
 
 export const useStarterSectionSchema = z.object({
   projectId: projectIdSchema,
@@ -46,19 +46,20 @@ export class StarterSectionService {
    * installed Building Block uses. This lets someone inspect the real layout without
    * creating an unwanted block just to look at it.
    */
-  async preview(userId: string, input: unknown) {
+  async preview(userId: string, input: unknown, media: MediaResolver) {
     const parsed = useStarterSectionSchema.pick({ projectId: true, starterId: true }).parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     const starter = findStarterSection(parsed.starterId);
     if (!starter) throw new DomainError("NOT_FOUND", "That starter section is not in the Canvas library.");
 
     const [context, scope] = await Promise.all([this.context(parsed.projectId), this.validationScope(parsed.projectId)]);
-    const sourceCode = starter.build(context);
-    await validateGeneratedBlockSource({ sourceCode, approvedMediaIds: scope.approvedMediaIds, activeRoutes: scope.activeRoutes })
-      .catch((error: unknown) => {
-        throw new DomainError("VALIDATION", typeof error === "object" && error !== null && "diagnostic" in error && typeof error.diagnostic === "string" ? error.diagnostic : error instanceof Error && error.message ? error.message : "That starter section could not be prepared.");
-      });
-    return { starter, bundle: await compileGeneratedBlock(sourceCode) };
+    let document;
+    try {
+      document = validateGeneratedBlockDocument({ document: starterDocument(starter.build(context)), approvedMediaIds: scope.approvedMediaIds, activeRoutes: scope.activeRoutes }).document;
+    } catch (error: unknown) {
+      throw new DomainError("VALIDATION", typeof error === "object" && error !== null && "diagnostic" in error && typeof error.diagnostic === "string" ? error.diagnostic : error instanceof Error && error.message ? error.message : "That starter section could not be prepared.");
+    }
+    return { starter, composed: composeFragment({ document, media, mode: "preview" }) };
   }
 
   /**
@@ -78,14 +79,16 @@ export class StarterSectionService {
     if (!starter) throw new DomainError("NOT_FOUND", "That starter section is not in the Canvas library.");
 
     const context = await this.context(parsed.projectId);
-    const sourceCode = starter.build(context);
     const scope = await this.validationScope(parsed.projectId);
-    const manifest = await validateGeneratedBlockSource({ sourceCode, approvedMediaIds: scope.approvedMediaIds, activeRoutes: scope.activeRoutes })
-      .catch((error: unknown) => {
-        // A starter that cannot pass the shared policy is a defect in the catalog, not
-        // something to route around by relaxing the policy.
-        throw new DomainError("VALIDATION", error instanceof Error && error.message ? error.message : "That starter section could not be prepared.");
-      });
+    let validated;
+    try {
+      validated = validateGeneratedBlockDocument({ document: starterDocument(starter.build(context)), approvedMediaIds: scope.approvedMediaIds, activeRoutes: scope.activeRoutes });
+    } catch (error: unknown) {
+      // A starter that cannot pass the shared policy is a defect in the catalog, not
+      // something to route around by relaxing the policy.
+      throw new DomainError("VALIDATION", error instanceof Error && error.message ? error.message : "That starter section could not be prepared.");
+    }
+    const { manifest, document } = validated;
 
     {
       const existing = await transaction.select({ name: buildingBlocks.name }).from(buildingBlocks)
@@ -105,7 +108,7 @@ export class StarterSectionService {
       });
       const [version] = await transaction.insert(buildingBlockVersions).values({
         id: versionId, changeSetId: changeSet.id, projectId: parsed.projectId, buildingBlockId: block.id,
-        versionNumber: 1, sourceCode, manifest, changeSummary, sourceHash: manifest.sourceHash, createdByUserId: userId,
+        versionNumber: 1, document, sourceFormat: "static_html", manifest, changeSummary, sourceHash: manifest.sourceHash, createdByUserId: userId,
       }).returning();
       if (!version) throw new DomainError("VALIDATION", "That section's first version could not be created.");
       await transaction.update(buildingBlocks).set({ currentVersionId: version.id, updatedAt: new Date() }).where(eq(buildingBlocks.id, block.id));

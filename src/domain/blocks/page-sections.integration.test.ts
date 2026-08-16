@@ -8,30 +8,25 @@ import { ProjectService } from "@/domain/projects/service";
 import { PageTreeService } from "@/domain/pages/service";
 import { BuildingBlockService } from "@/domain/blocks/service";
 import { HistoryService } from "@/domain/history/undo-service";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
-import { validateGeneratedPageSource } from "@/domain/page-generation/validator";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
+import { validateGeneratedPageDocument } from "@/domain/page-generation/validator";
 import { StarterSectionService } from "@/domain/blocks/starter-library/service";
 import { listPageSectionUsages, PageSectionService } from "./page-sections";
 import { resolvePageBlockModules } from "./usages";
 
-const PAGE_SOURCE = `export default function Home() {
-  return (
-    <div className="c-page">
-      <section className="c-section c-hero" data-canvas-id="hero">
-        <div className="c-container c-stack"><h1>Fresh pasta, made every morning</h1></div>
-      </section>
-    </div>
-  );
-}
-`;
-const NAVBAR_SOURCE = `export default function Navbar() {
-  return (
-    <nav className="c-navbar" aria-label="Primary" data-canvas-id="navbar">
-      <div className="c-container c-actions"><a className="c-nav-brand" href="/"><strong>Osteria</strong></a></div>
-    </nav>
-  );
-}
-`;
+const PAGE_DOCUMENT = {
+  schemaVersion: 1 as const,
+  html: `<div class="c-page" data-canvas-id="page"><section class="c-section c-hero" data-canvas-id="hero"><div class="c-container c-stack"><h1>Fresh pasta, made every morning</h1></div></section></div>`,
+  css: "", js: "", metadata: { title: "Home", description: null },
+};
+const NAVBAR_DOCUMENT = {
+  schemaVersion: 1 as const,
+  html: `<nav class="c-navbar" aria-label="Primary" data-canvas-id="navbar"><div class="c-container c-actions"><a class="c-nav-brand" href="/"><strong>Osteria</strong></a></div></nav>`,
+  css: "", js: "", metadata: null,
+};
+
+/** Media as the sandboxed Preview resolves it: a session URL, never a storage key. */
+const previewMedia = (id: string) => ({ url: `/api/preview/media/${id}`, width: 40, height: 40, altText: null });
 
 async function account(label: string) {
   const id = randomUUID();
@@ -44,9 +39,9 @@ async function siteWithHomePage(userId: string) {
   const workspace = await new WorkspaceService().create(userId, { name: "Restaurant" });
   const project = await new ProjectService().create(userId, { workspaceId: workspace.id, name: "Osteria" });
   const page = await new PageTreeService().create(userId, { projectId: project.id, type: "page", name: "Home" });
-  const manifest = await validateGeneratedPageSource({ sourceCode: PAGE_SOURCE, approvedMediaIds: new Set(), activeRoutes: new Set(["/"]) });
+  const { manifest } = validateGeneratedPageDocument({ document: PAGE_DOCUMENT, approvedMediaIds: new Set(), activeRoutes: new Set(["/"]) });
   const [version] = await db.insert(pageVersions).values({
-    projectId: project.id, pageId: page.id, versionNumber: 1, sourceCode: PAGE_SOURCE, manifest,
+    projectId: project.id, pageId: page.id, versionNumber: 1, document: PAGE_DOCUMENT, manifest,
     seoMetadata: { title: null, description: null }, changeSummary: { headline: "First version", changes: [], limitations: [] },
     sourceHash: manifest.sourceHash, createdByUserId: userId,
   }).returning();
@@ -58,9 +53,9 @@ async function siteWithHomePage(userId: string) {
 async function globalNavbar(userId: string, projectId: string) {
   const blocks = new BuildingBlockService();
   const block = await blocks.create(userId, { projectId, name: "Site Navbar", kind: "navbar", isGlobal: true });
-  const manifest = await validateGeneratedBlockSource({ sourceCode: NAVBAR_SOURCE, approvedMediaIds: new Set(), activeRoutes: new Set(["/"]) });
+  const { manifest } = validateGeneratedBlockDocument({ document: NAVBAR_DOCUMENT, approvedMediaIds: new Set(), activeRoutes: new Set(["/"]) });
   const [version] = await db.insert(buildingBlockVersions).values({
-    projectId, buildingBlockId: block.id, versionNumber: 1, sourceCode: NAVBAR_SOURCE, manifest,
+    projectId, buildingBlockId: block.id, versionNumber: 1, document: NAVBAR_DOCUMENT, manifest,
     changeSummary: { headline: "First version", changes: [], limitations: [] },
     sourceHash: manifest.sourceHash, createdByUserId: userId,
   }).returning();
@@ -69,9 +64,9 @@ async function globalNavbar(userId: string, projectId: string) {
 }
 
 async function activeSource(pageId: string) {
-  const [row] = await db.select({ source: pageVersions.sourceCode, manifest: pageVersions.manifest })
+  const [row] = await db.select({ document: pageVersions.document, manifest: pageVersions.manifest })
     .from(pageNodes).innerJoin(pageVersions, eq(pageVersions.id, pageNodes.currentVersionId)).where(eq(pageNodes.id, pageId)).limit(1);
-  return row!;
+  return { ...row!, source: (row!.document as { html: string }).html };
 }
 
 describe.sequential("composing pages from reusable sections", () => {
@@ -92,7 +87,7 @@ describe.sequential("composing pages from reusable sections", () => {
     const sections = new PageSectionService();
 
     const added = await sections.addSection(user.id, { projectId: project.id, pageId: page.id, blockId: block.id, placement: { position: "top" } });
-    expect((await activeSource(page.id)).source).toContain(`<CanvasBlock blockId="${block.id}"`);
+    expect((await activeSource(page.id)).source).toContain(`<div data-canvas-block="${block.id}"`);
     expect(await db.select().from(buildingBlockUsages).where(eq(buildingBlockUsages.pageId, page.id))).toHaveLength(1);
     expect(await resolvePageBlockModules(db, project.id, page.id)).toHaveLength(1);
 
@@ -100,7 +95,7 @@ describe.sequential("composing pages from reusable sections", () => {
 
     const after = await activeSource(page.id);
     // 1. the page's own source no longer references the block
-    expect(after.source).not.toContain("CanvasBlock");
+    expect(after.source).not.toContain("data-canvas-block");
     // 2. the active Page Version's manifest agrees
     expect((after.manifest as { blockUsages: unknown[] }).blockUsages).toEqual([]);
     // 3. the usage rows the Preview manifest and export both read from are gone
@@ -132,8 +127,8 @@ describe.sequential("composing pages from reusable sections", () => {
     const { project, page } = await siteWithHomePage(user.id);
     const { block } = await globalNavbar(user.id, project.id);
     const about = await new PageTreeService().create(user.id, { projectId: project.id, type: "page", name: "About" });
-    const manifest = await validateGeneratedPageSource({ sourceCode: PAGE_SOURCE, approvedMediaIds: new Set(), activeRoutes: new Set(["/", "/about"]) });
-    const [aboutVersion] = await db.insert(pageVersions).values({ projectId: project.id, pageId: about.id, versionNumber: 1, sourceCode: PAGE_SOURCE, manifest, seoMetadata: { title: null, description: null }, changeSummary: { headline: "First version", changes: [], limitations: [] }, sourceHash: manifest.sourceHash, createdByUserId: user.id }).returning();
+    const { manifest } = validateGeneratedPageDocument({ document: PAGE_DOCUMENT, approvedMediaIds: new Set(), activeRoutes: new Set(["/", "/about"]) });
+    const [aboutVersion] = await db.insert(pageVersions).values({ projectId: project.id, pageId: about.id, versionNumber: 1, document: PAGE_DOCUMENT, manifest, seoMetadata: { title: null, description: null }, changeSummary: { headline: "First version", changes: [], limitations: [] }, sourceHash: manifest.sourceHash, createdByUserId: user.id }).returning();
     await db.update(pageNodes).set({ currentVersionId: aboutVersion!.id }).where(eq(pageNodes.id, about.id));
 
     const sections = new PageSectionService();
@@ -163,16 +158,16 @@ describe.sequential("composing pages from reusable sections", () => {
     // Historical versions are never rewritten: three immutable versions exist.
     const versions = await db.select().from(pageVersions).where(eq(pageVersions.pageId, page.id));
     expect(versions).toHaveLength(3);
-    expect(versions.find((row) => row.id === version.id)?.sourceCode).toBe(PAGE_SOURCE);
+    expect(versions.find((row) => row.id === version.id)?.document).toEqual(PAGE_DOCUMENT);
 
     // Undo puts the section back, reference, usage row and all.
     await history.undo(user.id, project.id);
-    expect((await activeSource(page.id)).source).toContain("CanvasBlock");
+    expect((await activeSource(page.id)).source).toContain("data-canvas-block");
     expect(await resolvePageBlockModules(db, project.id, page.id)).toHaveLength(1);
 
     // Redo takes it off again.
     await history.redo(user.id, project.id);
-    expect((await activeSource(page.id)).source).not.toContain("CanvasBlock");
+    expect((await activeSource(page.id)).source).not.toContain("data-canvas-block");
     expect(await resolvePageBlockModules(db, project.id, page.id)).toHaveLength(0);
     expect(removed.pageVersionId).toBeTruthy();
   });
@@ -190,8 +185,11 @@ describe.sequential("composing pages from reusable sections", () => {
     const source = (await activeSource(page.id)).source;
     expect(source.indexOf("site-navbar\"")).toBeLessThan(source.indexOf("hero"));
     expect(source.indexOf("hero")).toBeLessThan(source.indexOf("site-navbar-2"));
-    // Two usages of one block never collide, and both resolve to the same module.
-    expect(await resolvePageBlockModules(db, project.id, page.id)).toHaveLength(1);
+    // Two usages of one block never collide: each resolves separately, to the same
+    // Block Version, which is what lets the composer scope them apart on the page.
+    const resolved = await resolvePageBlockModules(db, project.id, page.id);
+    expect(resolved.map((usage) => usage.usageKey).sort()).toEqual(["site-navbar", "site-navbar-2"]);
+    expect(new Set(resolved.map((usage) => usage.versionId)).size).toBe(1);
   });
 
   it("refuses to remove a section a page does not have", async () => {
@@ -222,10 +220,10 @@ describe.sequential("composing pages from reusable sections", () => {
     const user = await account("owner");
     const { project } = await siteWithHomePage(user.id);
 
-    const preview = await new StarterSectionService().preview(user.id, { projectId: project.id, starterId: "hero-statement" });
+    const preview = await new StarterSectionService().preview(user.id, { projectId: project.id, starterId: "hero-statement" }, previewMedia);
 
     expect(preview.starter.name).toBe("Single claim");
-    expect(preview.bundle).toContain("generated-root");
+    expect(preview.composed.html).toContain("data-canvas-id=\"hero\"");
     expect(await new BuildingBlockService().list(user.id, { projectId: project.id })).toHaveLength(0);
   });
 
@@ -257,7 +255,7 @@ describe.sequential("composing pages from reusable sections", () => {
     const added = await new PageSectionService().addSection(user.id, { projectId: project.id, pageId: page.id, blockId: block.id, placement: { position: "top" } });
 
     const active = await activeSource(page.id);
-    expect(active.source).toContain(`<CanvasBlock blockId="${block.id}"`);
+    expect(active.source).toContain(`<div data-canvas-block="${block.id}"`);
     expect((await db.select().from(pageVersions).where(eq(pageVersions.pageId, page.id)))[0]?.versionNumber).toBe(1);
     expect(await resolvePageBlockModules(db, project.id, page.id)).toHaveLength(1);
 

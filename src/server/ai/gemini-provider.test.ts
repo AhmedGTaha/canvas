@@ -125,10 +125,10 @@ describe("Gemini request shaping", () => {
 
 describe("Gemini structured responses", () => {
   const provider = () => new GeminiProvider(API_KEY, "gemini-2.5-flash", 5_000);
-  const validator = z.object({ schemaVersion: z.literal(1), sourceCode: z.string() }).strict();
+  const validator = z.object({ schemaVersion: z.literal(1), html: z.string() }).strict();
 
   it("parses structured output and reports usage and request identity", async () => {
-    generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 1, sourceCode: "export default function P(){return <main/>}" })));
+    generateContent.mockResolvedValue(reply(JSON.stringify({ schemaVersion: 1, html: `<main data-canvas-id="page"><h1>Page</h1></main>` })));
     await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({
       structuredData: { schemaVersion: 1 }, provider: "gemini", model: "gemini-2.5-flash",
       providerRequestId: "response-1", usage: { totalTokens: 15 },
@@ -136,7 +136,7 @@ describe("Gemini structured responses", () => {
   });
 
   it("keeps Gemini's JSON schema aligned with the canonical page contract", async () => {
-    const valid = { schemaVersion: 1, sourceCode: "export default function P(){return <main/>}", referencedMediaIds: [], summary: { headline: "Built", changes: [], limitations: [] } };
+    const valid = { schemaVersion: 1, html: `<main data-canvas-id="page"><h1>Page</h1></main>`, referencedMediaIds: [], summary: { headline: "Built", changes: [], limitations: [] } };
     generateContent.mockResolvedValue(reply(JSON.stringify(valid)));
     await expect(provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), generatedPageResponseSchema)).resolves.toMatchObject({ structuredData: valid });
     const schema = generateContent.mock.calls[0]![0].config.responseJsonSchema;
@@ -145,8 +145,8 @@ describe("Gemini structured responses", () => {
   });
 
   it("recovers from a stray markdown fence around the JSON", async () => {
-    generateContent.mockResolvedValue(reply("```json\n{\"schemaVersion\":1,\"sourceCode\":\"x\"}\n```"));
-    await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({ structuredData: { sourceCode: "x" } });
+    generateContent.mockResolvedValue(reply("```json\n{\"schemaVersion\":1,\"html\":\"x\"}\n```"));
+    await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({ structuredData: { html: "x" } });
   });
 
   it("rejects unparseable and contract-violating responses without weakening the contract", async () => {

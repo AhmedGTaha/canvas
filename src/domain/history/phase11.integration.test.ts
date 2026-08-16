@@ -17,14 +17,18 @@ import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
 import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
+/** Media as the sandboxed Preview resolves it: a session URL, never a storage key. */
+const previewMedia = (mediaId: string) => ({ url: `/api/preview/media/${mediaId}`, width: 800, height: 600, altText: null });
+
+
 const HERO = `<section data-canvas-id="hero-main"><h1>Original hero</h1></section>`;
-const page = (body: string) => `export default function Page(){return <main className="c-page">${HERO}${body}</main>}`;
+const page = (body: string) => `<main data-canvas-id="page" class="c-page">${HERO}${body}</main>`;
 const pageV1 = page(`<article data-canvas-id="pricing-card"><p>Spacious card</p></article>`);
 const pageV2 = page(`<article data-canvas-id="pricing-card"><p>Compact card</p></article>`);
 const pageV3 = page(`<article data-canvas-id="pricing-card"><p>Tiny card</p></article>`);
-const navbarV1 = `export default function Block(){return <nav data-canvas-id="navbar-root"><span>Navbar version one</span></nav>}`;
-const navbarV2 = `export default function Block(){return <nav data-canvas-id="navbar-root"><span>Navbar version two</span></nav>}`;
-const usingNavbar = (blockId: string) => `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${blockId}" usageKey="site-navbar" />${HERO}</main>}`;
+const navbarV1 = `<nav data-canvas-id="navbar-root"><span>Navbar version one</span></nav>`;
+const navbarV2 = `<nav data-canvas-id="navbar-root"><span>Navbar version two</span></nav>`;
+const usingNavbar = (blockId: string) => `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${blockId}" data-canvas-usage="site-navbar"></div>${HERO}</main>`;
 
 type FixtureOptions = { blockUsages?: Array<{ blockId: string; usageKey: string }>; targetCanvasId?: string | null; referencedMediaIds?: string[] };
 class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
@@ -33,7 +37,7 @@ class FixtureProvider implements AIProvider { readonly capabilities = { structur
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const value = {
-      schemaVersion: 1, sourceCode: this.source, referencedMediaIds: this.options.referencedMediaIds ?? [],
+      schemaVersion: 1, html: this.source, referencedMediaIds: this.options.referencedMediaIds ?? [],
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       ...(this.options.targetCanvasId === undefined ? {} : { targetCanvasId: this.options.targetCanvasId }),
       summary: { headline: "Applied the change", changes: ["Updated content"], limitations: [] },
@@ -81,7 +85,7 @@ async function activeBlockVersion(blockId: string) {
 }
 async function renderedPage(projectId: string, pageId: string) {
   const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, pageId));
-  return node?.currentVersionId ? (await new GeneratedPageContentProvider().get(projectId, pageId, node.currentVersionId))?.bundle ?? "" : "";
+  return node?.currentVersionId ? (await new GeneratedPageContentProvider().get(projectId, pageId, node.currentVersionId, previewMedia))?.composed.html ?? "" : "";
 }
 
 describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
@@ -137,11 +141,11 @@ describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
     const { owner, project, home } = await setup();
     await runPageJob(owner.id, project.id, home.id, "Create", pageV1);
     await runPageJob(owner.id, project.id, home.id, "Make this card more compact", pageV2, { selection: { canvasId: "pricing-card" }, targetCanvasId: "pricing-card" });
-    expect((await activePageVersion(home.id))!.sourceCode).toBe(pageV2);
+    expect((await activePageVersion(home.id))!.document).toMatchObject({ html: pageV2 });
 
     await new HistoryService().undo(owner.id, project.id);
     const restored = (await activePageVersion(home.id))!;
-    expect(restored.sourceCode).toBe(pageV1);
+    expect(restored.document).toMatchObject({ html: pageV1 });
     expect(restored.versionNumber).toBe(1);
   });
 
@@ -178,7 +182,7 @@ describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
     await history.undo(owner.id, project.id);
     expect((await activeBlockVersion(card.id))!.id).toBe(v1.id);
     await history.redo(owner.id, project.id);
-    expect((await activeBlockVersion(card.id))!.sourceCode).toBe(navbarV2);
+    expect((await activeBlockVersion(card.id))!.document).toMatchObject({ html: navbarV2 });
 
     await blocks.setGlobal(owner.id, { projectId: project.id, blockId: card.id, isGlobal: true });
     expect((await history.state(owner.id, project.id)).undo).toMatchObject({ operation: "block_global_toggle" });
@@ -197,7 +201,7 @@ describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
     await runPageJob(owner.id, project.id, home.id, "Different direction", pageV3);
     expect((await history.state(owner.id, project.id)).redo).toBeNull();
     await expect(history.redo(owner.id, project.id)).rejects.toMatchObject({ historyCode: "NOTHING_TO_REDO" });
-    expect((await activePageVersion(home.id))!.sourceCode).toBe(pageV3);
+    expect((await activePageVersion(home.id))!.document).toMatchObject({ html: pageV3 });
   });
 
   it("refuses to undo over newer collaborator work", async () => {
@@ -288,7 +292,7 @@ describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
     const [asset] = await db.insert(mediaAssets).values({ projectId: project.id, originalFilename: "logo.png", displayName: "Logo", storageKey: `smoke/${randomUUID()}.png`, mimeType: "image/png", sizeBytes: 128, width: 64, height: 64, createdByUserId: owner.id }).returning();
     // The project logo is always part of the AI context, so the page may reference it.
     await db.update(projectBrandSettings).set({ primaryLogoMediaId: asset!.id }).where(eq(projectBrandSettings.projectId, project.id));
-    const withMedia = `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasImage mediaId="${asset!.id}" alt="Logo" />${HERO}</main>}`;
+    const withMedia = `<main data-canvas-id="page" class="c-page"><img data-canvas-media="${asset!.id}" alt="Logo">${HERO}</main>`;
     await runPageJob(owner.id, project.id, home.id, "Create", withMedia, { referencedMediaIds: [asset!.id] });
     const v1 = (await activePageVersion(home.id))!;
     await runPageJob(owner.id, project.id, home.id, "Drop the logo", pageV2);
@@ -346,7 +350,7 @@ describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
 
     await new HistoryService().undo(owner.id, project.id);
     expect(await renderedPage(project.id, home.id)).toContain("Navbar version two");
-    expect((await activePageVersion(about.id))!.sourceCode).toBe(pageV2);
+    expect((await activePageVersion(about.id))!.document).toMatchObject({ html: pageV2 });
   });
 
   it("reconciles Building Block usages after a restore and keeps historical pins", async () => {

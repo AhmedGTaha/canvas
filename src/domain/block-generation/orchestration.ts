@@ -13,13 +13,15 @@ import { DomainError } from "@/domain/shared/errors";
 import { AIError } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
-import { validateGeneratedBlockSource, type GeneratedBlockManifest } from "@/domain/blocks/validation";
+import { validateGeneratedBlockDocument, type GeneratedBlockManifest } from "@/domain/blocks/validation";
+import type { GeneratedDocument } from "@/domain/generated-source/document";
+import { isLegacyVersion, versionDocument } from "@/domain/generated-source/stored-version";
 import { recordChangeSet } from "@/domain/history/change-set-service";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
-import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
+import { blockDocumentFrom, generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
 import { assembleBlockGenerationRequest, blockPromptVersion } from "./prompt";
 import { observe } from "@/server/observability/events";
-import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
+import { documentValidationStage, persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 import { repairGeneratedCanvasIds } from "@/domain/generated-source/canvas-id-repair";
 
 function summaryMessage(summary: BlockChangeSummary) {
@@ -29,7 +31,7 @@ function failureStage(error: AIError, fallback: string) {
   if (error.code === "AI_RESPONSE_SCHEMA_INVALID") return "response_schema";
   if (error.code === "AI_RESPONSE_MALFORMED") return "response_parse";
   if (error.code === "AI_RESPONSE_EMPTY" || error.code === "AI_RESPONSE_TRUNCATED") return "provider_response";
-  if (error.code === "AI_GENERATED_SOURCE_INVALID") return "source_validation";
+  if (error.code === "AI_GENERATED_DOCUMENT_INVALID") return documentValidationStage(error.diagnostic ?? "");
   return fallback;
 }
 
@@ -89,7 +91,7 @@ export class BlockGenerationOrchestrationService {
       if (selected.length !== expectedMediaCount) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "One or more attached Media items are no longer available.");
       const selectedElement = readResolvedSelection(initial.contextMetadata);
       if (selectedElement) {
-        if (!base || !findEditableElement(base.manifest, selectedElement.canvasId)) elementStale();
+        if (!base || isLegacyVersion(base) || !findEditableElement(base.manifest, selectedElement.canvasId)) elementStale();
       }
       const existingIds = base && base.manifest && typeof base.manifest === "object" && "referencedMediaIds" in base.manifest && Array.isArray(base.manifest.referencedMediaIds)
         ? base.manifest.referencedMediaIds.filter((id): id is string => typeof id === "string") : [];
@@ -115,7 +117,7 @@ export class BlockGenerationOrchestrationService {
       const promptVersion = blockPromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
       await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
 
-      const providerRequest = assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal });
+      const providerRequest = assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentDocument: versionDocument(base ?? null), selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal });
       const approved = new Set(context.media.map(({ id }) => id));
       const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
       const pricing = pricingFrom(resolved.model);
@@ -135,19 +137,19 @@ export class BlockGenerationOrchestrationService {
         // candidate. Invalid source stays ephemeral and is never activated or persisted.
         onCandidate: async (candidate) => { await this.database.update(generationJobs).set({ provider: candidate.provider, providerModel: candidate.model, providerRequestId: candidate.providerRequestId, usageMetadata: candidate.usage }).where(eq(generationJobs.id, jobId)); },
         validate: async (data) => {
-          const repaired = repairGeneratedCanvasIds(data.sourceCode);
-          const manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds });
+          const repaired = repairGeneratedCanvasIds(data.html);
+          const { manifest, document } = validateGeneratedBlockDocument({ document: { ...blockDocumentFrom(data), html: repaired.html }, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds });
           if (selectedElement) {
             const { targetCanvasId, targetRemoved } = data;
             if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
             if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
           }
-          return { manifest, sourceCode: repaired.sourceCode };
+          return { manifest, document };
         },
       });
       const response = run.response;
       const manifest: GeneratedBlockManifest = run.validated.manifest;
-      const repaired = { sourceCode: run.validated.sourceCode };
+      const document = run.validated.document;
       if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
 
       if (await this.cancellation(jobId)) return this.current(jobId);
@@ -158,7 +160,7 @@ export class BlockGenerationOrchestrationService {
 
       await this.lifecycle.transition(jobId, "applying", "Applying block update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
-      const completed = await this.commit({ jobId, sourceCode: repaired.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
+      const completed = await this.commit({ jobId, document, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
       const jobDurationMs = performance.now() - startedAt;
       await attachJobDuration(jobId, jobDurationMs, this.database);
       observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: jobDurationMs, providerLatencyMs: run.providerLatencyMs, repairAttempts: run.repairAttempts, promptVersion });
@@ -176,7 +178,7 @@ export class BlockGenerationOrchestrationService {
         await attachJobDuration(jobId, performance.now() - startedAt, this.database);
         await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.block_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } });
         observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic });
-        if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_SOURCE_INVALID"].includes(error.code)) observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel });
+        if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_DOCUMENT_INVALID"].includes(error.code)) observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel });
       }
       return this.current(jobId);
     } finally {
@@ -186,7 +188,7 @@ export class BlockGenerationOrchestrationService {
     }
   }
 
-  private async commit(input: { jobId: string; sourceCode: string; manifest: GeneratedBlockManifest; summary: BlockChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
+  private async commit(input: { jobId: string; document: GeneratedDocument; manifest: GeneratedBlockManifest; summary: BlockChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
     return this.database.transaction(async (transaction) => {
       const [job] = await transaction.select().from(generationJobs).where(eq(generationJobs.id, input.jobId)).for("update");
       if (!job) throw new AIError("AI_INTERNAL_ERROR", "Generation job not found.");
@@ -213,7 +215,7 @@ export class BlockGenerationOrchestrationService {
       const [version] = await transaction.insert(buildingBlockVersions).values({
         id: versionId, changeSetId: changeSet.id,
         projectId: job.projectId, buildingBlockId: block.id, versionNumber: (latest?.versionNumber ?? 0) + 1,
-        sourceCode: input.sourceCode, manifest: input.manifest, changeSummary: input.summary,
+        document: input.document, sourceFormat: "static_html", manifest: input.manifest, changeSummary: input.summary,
         sourceHash: input.manifest.sourceHash, createdByUserId: job.actorUserId, generationJobId: job.id,
       }).returning();
       if (!version) throw new AIError("AI_INTERNAL_ERROR", "Building Block version could not be created.");

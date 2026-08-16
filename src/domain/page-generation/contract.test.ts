@@ -12,7 +12,10 @@ function summary(overrides: Partial<{ headline: string; changes: string[]; limit
 function pageResponse(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: 1,
-    sourceCode: `export default function Page(){return <main/>}`,
+    html: `<main class="c-page" data-canvas-id="page"><h1>Home</h1></main>`,
+    css: "",
+    js: "",
+    metadata: { title: "Home", description: "The home page." },
     referencedMediaIds: [],
     summary: summary(),
     ...overrides,
@@ -84,11 +87,29 @@ describe("generated page response strictness", () => {
   it("accepts a response whose only defect is an over-length summary", () => {
     const parsed = generatedPageResponseSchema.parse(pageResponse({ summary: summary({ limitations: ["L".repeat(260)] }) }));
     expect(parsed.summary.limitations[0]).toHaveLength(200);
-    expect(parsed.sourceCode).toBe(`export default function Page(){return <main/>}`);
+    expect(parsed.html).toBe(`<main class="c-page" data-canvas-id="page"><h1>Home</h1></main>`);
   });
 
-  it("keeps rejecting an over-size sourceCode", () => {
-    expect(() => generatedPageResponseSchema.parse(pageResponse({ sourceCode: "x".repeat(102_401) }))).toThrow();
+  it("keeps rejecting over-size markup, styles, and behaviour", () => {
+    expect(() => generatedPageResponseSchema.parse(pageResponse({ html: "x".repeat(100_001) }))).toThrow();
+    expect(() => generatedPageResponseSchema.parse(pageResponse({ css: "x".repeat(40_001) }))).toThrow();
+    expect(() => generatedPageResponseSchema.parse(pageResponse({ js: "x".repeat(20_001) }))).toThrow();
+  });
+
+  it("keeps rejecting a document that only exceeds the budget in total", () => {
+    expect(() => generatedPageResponseSchema.parse(pageResponse({ html: "x".repeat(100_000), css: "y".repeat(40_000), js: "z".repeat(20_001) }))).toThrow();
+  });
+
+  it("treats missing styles and behaviour as empty rather than absent", () => {
+    const parsed = generatedPageResponseSchema.parse({ ...pageResponse(), css: undefined, js: undefined });
+    expect(parsed.css).toBe("");
+    expect(parsed.js).toBe("");
+  });
+
+  it("normalizes page metadata and clamps it to the contract", () => {
+    const parsed = generatedPageResponseSchema.parse(pageResponse({ metadata: { title: `  Home   page  `, description: "D".repeat(400) } }));
+    expect(parsed.metadata.title).toBe("Home page");
+    expect(parsed.metadata.description).toHaveLength(300);
   });
 
   it("drops a non-UUID media reference instead of failing the whole response", () => {

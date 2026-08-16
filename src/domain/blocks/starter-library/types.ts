@@ -9,7 +9,7 @@
  *
  * A template is a function of a small, safe context rather than a fixed string, because
  * a navbar has to link to the pages a project actually has. Everything a template emits
- * still goes through the same generated-source validator as AI output; none of these
+ * still goes through the same generated-document validator as AI output; none of these
  * templates are trusted.
  */
 export type StarterCategory = "navbar" | "footer" | "hero" | "product_card" | "testimonial" | "pricing" | "contact" | "services";
@@ -28,6 +28,9 @@ export type StarterContext = {
   links: ReadonlyArray<{ name: string; href: string }>;
 };
 
+/** What a starter template produces: the same three artifacts a generation produces. */
+export type StarterFragment = { html: string; css?: string; js?: string };
+
 export type StarterSection = {
   id: string;
   category: StarterCategory;
@@ -36,10 +39,15 @@ export type StarterSection = {
   description: string;
   /** The `kind` given to the project-owned Building Block. */
   kind: string;
-  /** True when the template uses React state, so the copy is a client component. */
+  /** True when the template ships behaviour of its own. */
   interactive: boolean;
-  build: (context: StarterContext) => string;
+  build: (context: StarterContext) => StarterFragment;
 };
+
+/** A starter fragment as the document contract stores it. */
+export function starterDocument(fragment: StarterFragment) {
+  return { schemaVersion: 1 as const, html: fragment.html, css: fragment.css ?? "", js: fragment.js ?? "", metadata: null };
+}
 
 /** Navigation links, capped so a bar stays a bar, with a safe fallback for a new project. */
 export function navigationLinks(context: StarterContext, limit = 5) {
@@ -68,7 +76,15 @@ export function cta(context: StarterContext) {
   return match?.href ?? home(context);
 }
 
-/** A JSX-safe rendering of user-supplied text. */
+/**
+ * User-supplied text placed into a template's markup.
+ *
+ * Templates build markup by string concatenation, so this is the boundary where a company
+ * name or a page title stops being data and becomes part of a document. It is escaped
+ * here rather than trusted; the parser would reject a stray `<` anyway, but a value that
+ * merely *contains* an ampersand should render, not fail.
+ */
 export function text(value: string) {
-  return value.replace(/[{}<>]/g, "").trim() || "Your company";
+  const cleaned = value.replace(/[<>{}]/g, "").trim() || "Your company";
+  return cleaned.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }

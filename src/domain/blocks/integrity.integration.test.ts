@@ -8,7 +8,7 @@ import { ProjectService } from "@/domain/projects/service";
 import { PageTreeService } from "@/domain/pages/service";
 import { BuildingBlockService } from "@/domain/blocks/service";
 
-const source = `export default function Block(){return <nav/>}`;
+const fixtureDocument = { schemaVersion: 1, html: `<nav data-canvas-id="navbar" aria-label="Main"><a class="c-link" href="#">Home</a></nav>`, css: "", js: "", metadata: null };
 const hash = "a".repeat(64);
 async function owner(label: string) { const id = randomUUID(); const [record] = await db.insert(users).values({ id, email: `${label}-${id}@test.dev`, normalizedEmail: `${label}-${id}@test.dev`, displayName: label }).returning(); return record!; }
 async function project(userId: string, name: string) { const workspace = await new WorkspaceService().create(userId, { name }); return new ProjectService().create(userId, { workspaceId: workspace.id, name }); }
@@ -23,11 +23,11 @@ describe.sequential("Building Block database integrity", () => {
     const blocks = new BuildingBlockService();
     const navbar = await blocks.create(user.id, { projectId: site.id, name: "Navbar", kind: "navbar", isGlobal: true });
     const footer = await blocks.create(user.id, { projectId: site.id, name: "Footer", kind: "footer" });
-    const [version] = await db.insert(buildingBlockVersions).values({ projectId: site.id, buildingBlockId: navbar.id, versionNumber: 1, sourceCode: source, manifest: {}, sourceHash: hash, createdByUserId: user.id }).returning();
+    const [version] = await db.insert(buildingBlockVersions).values({ projectId: site.id, buildingBlockId: navbar.id, versionNumber: 1, document: fixtureDocument, manifest: {}, sourceHash: hash, createdByUserId: user.id }).returning();
 
-    await expect(db.update(buildingBlockVersions).set({ sourceCode: "changed" }).where(eq(buildingBlockVersions.id, version!.id))).rejects.toMatchObject({ cause: { code: "55000" } });
-    await expect(db.insert(buildingBlockVersions).values({ projectId: site.id, buildingBlockId: navbar.id, versionNumber: 1, sourceCode: source, manifest: {}, sourceHash: hash, createdByUserId: user.id })).rejects.toMatchObject({ cause: { code: "23505" } });
-    await expect(db.insert(buildingBlockVersions).values({ projectId: site.id, buildingBlockId: navbar.id, versionNumber: 0, sourceCode: source, manifest: {}, sourceHash: hash, createdByUserId: user.id })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(db.update(buildingBlockVersions).set({ document: { schemaVersion: 1, html: "<main data-canvas-id=\"x\"></main>", css: "", js: "", metadata: null } }).where(eq(buildingBlockVersions.id, version!.id))).rejects.toMatchObject({ cause: { code: "55000" } });
+    await expect(db.insert(buildingBlockVersions).values({ projectId: site.id, buildingBlockId: navbar.id, versionNumber: 1, document: fixtureDocument, manifest: {}, sourceHash: hash, createdByUserId: user.id })).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(db.insert(buildingBlockVersions).values({ projectId: site.id, buildingBlockId: navbar.id, versionNumber: 0, document: fixtureDocument, manifest: {}, sourceHash: hash, createdByUserId: user.id })).rejects.toMatchObject({ cause: { code: "23514" } });
     // A block can never activate another block's version.
     await expect(db.update(buildingBlocks).set({ currentVersionId: version!.id }).where(eq(buildingBlocks.id, footer.id))).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(db.update(buildingBlocks).set({ currentVersionId: version!.id }).where(eq(buildingBlocks.id, navbar.id))).resolves.toBeDefined();

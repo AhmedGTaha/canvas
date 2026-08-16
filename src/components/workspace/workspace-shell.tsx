@@ -290,7 +290,7 @@ export function WorkspaceShell({
   /*
    * A selected element that belongs to a shared Building Block is a *usage* of that
    * block on this page. "Remove from page" therefore removes the reference — the
-   * `<CanvasBlock />` in this page's source and the usage row that mirrors it — and
+   * the Building Block host in this page and the usage row that mirrors it — and
    * leaves the section itself in the library for every other page that uses it.
    */
   const selectedSectionUsage = useMemo(() => (selection?.blockId && selection.usageKey && currentPageId

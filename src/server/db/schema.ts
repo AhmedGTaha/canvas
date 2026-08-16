@@ -294,7 +294,11 @@ export const pageVersions = pgTable("page_versions", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   pageId: uuid("page_id").notNull(),
   versionNumber: integer("version_number").notNull(),
-  sourceCode: text("source_code").notNull(),
+  /** Legacy React source. Present only on `react_tsx` Versions, which are read-only. */
+  sourceCode: text("source_code"),
+  /** The validated static document: html, css, js, and page metadata. */
+  document: jsonb("document"),
+  sourceFormat: varchar("source_format", { length: 20 }).notNull().default("static_html"),
   manifest: jsonb("manifest").notNull(),
   seoMetadata: jsonb("seo_metadata").notNull(),
   changeSummary: jsonb("change_summary").notNull(),
@@ -342,7 +346,11 @@ export const buildingBlockVersions = pgTable("building_block_versions", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   buildingBlockId: uuid("building_block_id").notNull(),
   versionNumber: integer("version_number").notNull(),
-  sourceCode: text("source_code").notNull(),
+  /** Legacy React source. Present only on `react_tsx` Versions, which are read-only. */
+  sourceCode: text("source_code"),
+  /** The validated static fragment: html, css, and js. */
+  document: jsonb("document"),
+  sourceFormat: varchar("source_format", { length: 20 }).notNull().default("static_html"),
   manifest: jsonb("manifest").notNull(),
   changeSummary: jsonb("change_summary").notNull().default({}),
   sourceHash: char("source_hash", { length: 64 }).notNull(),

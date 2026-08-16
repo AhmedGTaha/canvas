@@ -5,7 +5,7 @@ import { apiErrorResponse, apiJsonHeaders } from "@/server/http/errors";
 /**
  * Removes a reusable section from this page.
  *
- * This removes the page's *usage* of the section — the `<CanvasBlock />` reference in
+ * This removes the page's *usage* of the section — the Building Block host in
  * the page's source and the usage row that mirrors it. The Building Block itself stays
  * in the project library, and every other page that uses it is untouched.
  */

@@ -21,19 +21,26 @@ import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 // A 1x1 PNG: enough for storage round-tripping and format checks.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-const navbar = `export default function Block(){return <nav data-canvas-id="navbar-root" aria-label="Main"><a href="/">Home</a><span>Contact</span></nav>}`;
-const navbarV2 = `export default function Block(){return <nav data-canvas-id="navbar-root" aria-label="Main"><a href="/">Home</a><span>Contact us</span></nav>}`;
-const footer = `export default function Block(){return <footer data-canvas-id="footer-root"><p className="c-muted">© Acme</p></footer>}`;
-const interactiveCard = `"use client";\nimport { useState } from "react";\nexport default function Block(){const [open,setOpen]=useState(false);return <article data-canvas-id="faq-card"><button onClick={()=>setOpen(!open)}>Toggle</button>{open&&<p>Answer</p>}</article>}`;
+const navbar = `<nav data-canvas-id="navbar-root" aria-label="Main"><a href="/">Home</a><span>Contact</span></nav>`;
+const navbarV2 = `<nav data-canvas-id="navbar-root" aria-label="Main"><a href="/">Home</a><span>Contact us</span></nav>`;
+const footer = `<footer data-canvas-id="footer-root"><p class="c-muted">© Acme</p></footer>`;
+const interactiveCard = `<article data-canvas-id="faq-card"><button type="button" class="faq-toggle" aria-expanded="false" aria-controls="faq-answer">Toggle</button><p id="faq-answer" hidden>Answer</p></article>`;
+const interactiveCardScript = `var toggle = document.querySelector(".faq-toggle");
+var answer = document.getElementById("faq-answer");
+if (toggle && answer) toggle.addEventListener("click", function () {
+  var open = toggle.getAttribute("aria-expanded") === "true";
+  toggle.setAttribute("aria-expanded", open ? "false" : "true");
+  if (open) answer.setAttribute("hidden", ""); else answer.removeAttribute("hidden");
+});`;
 
-type FixtureOptions = { blockUsages?: Array<{ blockId: string; usageKey: string }>; referencedMediaIds?: string[] };
+type FixtureOptions = { blockUsages?: Array<{ blockId: string; usageKey: string }>; referencedMediaIds?: string[]; css?: string; js?: string };
 class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly options: FixtureOptions = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const value = {
-      schemaVersion: 1, sourceCode: this.source, referencedMediaIds: this.options.referencedMediaIds ?? [],
+      schemaVersion: 1, html: this.source, css: this.options.css ?? "", js: this.options.js ?? "", referencedMediaIds: this.options.referencedMediaIds ?? [],
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       summary: { headline: "Built", changes: ["Created content"], limitations: [] },
     };
@@ -116,28 +123,33 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     await sql.end();
   });
 
-  it("exports a simple project as a runnable standalone Next.js app", async () => {
+  it("exports a simple project as a static site that needs no build step", async () => {
     const { owner, project, home } = await setup();
-    await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page" data-canvas-id="home-root"><h1>Welcome to Acme</h1></main>}`);
+    await runPageJob(owner.id, project.id, home.id, `<main class="c-page" data-canvas-id="home-root"><h1>Welcome to Acme</h1></main>`);
     const { files, fileName, state } = await exportedFiles(owner.id, project.id);
 
-    for (const required of ["package.json", "tsconfig.json", "next.config.mjs", "next-env.d.ts", "README.md", "styles/globals.css", "app/layout.tsx", "app/page.tsx", "app/not-found.tsx"]) {
+    for (const required of ["index.html", "README.md", "styles/site.css", ".gitignore"]) {
       expect(files.has(required), `${required} missing`).toBe(true);
+    }
+    // Nothing in the output implies Node.js, npm, or a framework.
+    for (const absent of ["package.json", "tsconfig.json", "next.config.mjs", "next-env.d.ts"]) {
+      expect(files.has(absent), `${absent} should not be exported`).toBe(false);
     }
     expect(fileName).toMatch(/^acme-site-[0-9a-f]{8}\.zip$/);
     expect(state.validation).toMatchObject({ ok: true, pageCount: 1 });
     expect(state.artifact).toMatchObject({ fileCount: files.size, bytes: expect.any(Number) });
 
-    const packageJson = JSON.parse(asText(files, "package.json")) as { scripts: Record<string, string>; dependencies: Record<string, string> };
-    expect(packageJson.scripts).toMatchObject({ dev: "next dev", build: "next build" });
-    expect(packageJson.dependencies).toHaveProperty("next");
-    expect(asText(files, "README.md")).toContain("npm install");
-    expect(asText(files, "README.md")).toContain("frontend-only");
-    expect(asText(files, "app/page.tsx")).toContain("export const metadata");
-    // The generated page became a plain component with no Canvas runtime left in it.
-    const [componentPath] = [...files.keys()].filter((name) => name.startsWith("components/pages/"));
-    expect(asText(files, componentPath!)).toContain("Welcome to Acme");
-    expect(asText(files, componentPath!)).not.toContain("data-canvas-id");
+    const readme = asText(files, "README.md");
+    expect(readme).toContain("no framework and no build step");
+    expect(readme).toContain("frontend-only");
+    expect(readme).not.toContain("npm install");
+
+    const index = asText(files, "index.html");
+    expect(index).toMatch(/^<!doctype html>/);
+    expect(index).toContain(`<link rel="stylesheet" href="styles/site.css">`);
+    expect(index).toContain("Welcome to Acme");
+    // The editor-only identifiers never reach a published page.
+    expect(index).not.toContain("data-canvas-id");
   });
 
   it("exports generated Pages and Blocks with the same token-backed theme and logo behavior as Preview", async () => {
@@ -156,9 +168,9 @@ describe.sequential("Phase 12 validated ZIP export", () => {
       },
     });
     const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global Navbar", kind: "navbar", isGlobal: true });
-    const blockSource = `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Navbar(){return <nav className="c-navbar"><div className="c-container c-cluster"><a href="/" className="c-nav-brand"><CanvasImage mediaId="${asset.id}" alt="Acme" className="c-logo" /></a><div className="c-nav-links"><a href="/" className="c-link">Home</a></div></div></nav>}`;
+    const blockSource = `<nav data-canvas-id="page" class="c-navbar"><div class="c-container c-cluster"><a href="/" class="c-nav-brand"><img data-canvas-media="${asset.id}" alt="Acme" class="c-logo"></a><div class="c-nav-links"><a href="/" class="c-link">Home</a></div></div></nav>`;
     await runBlockJob(owner.id, project.id, block.id, blockSource, { referencedMediaIds: [asset.id] });
-    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${block.id}" usageKey="site-navbar" /><section className="c-section c-surface"><h1>Home</h1></section></main>}`, { blockUsages: [{ blockId: block.id, usageKey: "site-navbar" }] });
+    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${block.id}" data-canvas-usage="site-navbar"></div><section class="c-section c-surface"><h1>Home</h1></section></main>`, { blockUsages: [{ blockId: block.id, usageKey: "site-navbar" }] });
 
     const { files } = await exportedFiles(owner.id, project.id);
     const css = asText(files, "styles/globals.css");
@@ -170,9 +182,9 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     expect(css).toContain(".c-navbar,nav.c-section");
     expect(css).toContain("a{color:var(--color-accent)");
     expect(css).toContain("img.c-logo{display:block;width:auto;height:calc(var(--body-size)*2.5)");
-    const exportedBlock = asText(files, [...files.keys()].find((name) => name.startsWith("components/blocks/"))!);
-    expect(exportedBlock).toContain(`className="canvas-image c-logo"`);
-    expect(exportedBlock).toContain(`src="/assets/company-logo-`);
+    const index = asText(files, "index.html");
+    expect(index).toContain(`class="canvas-image c-logo"`);
+    expect(index).toContain(`src="assets/company-logo-`);
   });
 
   it("exports nested routes, SEO metadata, and a 404 page", async () => {
@@ -182,21 +194,24 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     const about = await pages.create(owner.id, { projectId: project.id, type: "page", name: "About", parentId: company.id });
     const team = await pages.create(owner.id, { projectId: project.id, type: "page", name: "Team", parentId: about.id });
     await pages.updateSeo(owner.id, { projectId: project.id, nodeId: about.id, pageTitle: "About Acme", metaDescription: "Who we are." });
-    const body = (heading: string) => `export default function Page(){return <main className="c-page"><h1>${heading}</h1><a href="/">Home</a></main>}`;
+    const body = (heading: string) => `<main data-canvas-id="page" class="c-page"><h1>${heading}</h1><a href="/">Home</a></main>`;
     await runPageJob(owner.id, project.id, home.id, body("Home"));
     await runPageJob(owner.id, project.id, about.id, body("About"));
     await runPageJob(owner.id, project.id, team.id, body("Team"));
 
     const { files } = await exportedFiles(owner.id, project.id);
-    expect(files.has("app/page.tsx")).toBe(true);
-    // The folder is organisational: only routable pages become directories.
-    expect(files.has("app/about/page.tsx")).toBe(true);
-    expect(files.has("app/about/team/page.tsx")).toBe(true);
-    expect([...files.keys()].some((name) => name.startsWith("app/company/"))).toBe(false);
-    const aboutRoute = asText(files, "app/about/page.tsx");
-    expect(aboutRoute).toContain(`title: "About Acme"`);
-    expect(aboutRoute).toContain(`description: "Who we are."`);
-    expect(asText(files, "app/page.tsx")).toContain(`title: "Home"`);
+    expect(files.has("index.html")).toBe(true);
+    // The folder is organisational: only routable pages become files.
+    expect(files.has("about.html")).toBe(true);
+    expect(files.has("about/team.html")).toBe(true);
+    expect([...files.keys()].some((name) => name.startsWith("company/"))).toBe(false);
+    const aboutPage = asText(files, "about.html");
+    expect(aboutPage).toContain(`<title>About Acme`);
+    expect(aboutPage).toContain(`<meta name="description" content="Who we are.">`);
+    expect(asText(files, "index.html")).toContain(`<title>Home`);
+    // A nested page reaches the shared stylesheet and its siblings relatively.
+    expect(asText(files, "about/team.html")).toContain(`href="../styles/site.css"`);
+    expect(asText(files, "about/team.html")).toContain(`href="../index.html"`);
   });
 
   it("exports a global navbar and footer once and imports them from every page", async () => {
@@ -208,23 +223,20 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     await runBlockJob(owner.id, project.id, navbarBlock.id, navbar);
     await runBlockJob(owner.id, project.id, footerBlock.id, footer);
     const usages = [{ blockId: navbarBlock.id, usageKey: "site-navbar" }, { blockId: footerBlock.id, usageKey: "site-footer" }];
-    const source = `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${navbarBlock.id}" usageKey="site-navbar" /><h1>Page</h1><CanvasBlock blockId="${footerBlock.id}" usageKey="site-footer" /></main>}`;
+    const source = `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${navbarBlock.id}" data-canvas-usage="site-navbar"></div><h1>Page</h1><div data-canvas-block="${footerBlock.id}" data-canvas-usage="site-footer"></div></main>`;
     for (const target of [home, contact]) await runPageJob(owner.id, project.id, target.id, source, { blockUsages: usages });
 
     const { files } = await exportedFiles(owner.id, project.id);
-    const blockFiles = [...files.keys()].filter((name) => name.startsWith("components/blocks/"));
-    expect(blockFiles).toHaveLength(2);
-    const pageFiles = [...files.keys()].filter((name) => name.startsWith("components/pages/"));
-    expect(pageFiles).toHaveLength(2);
-    for (const pageFile of pageFiles) {
-      const contents = asText(files, pageFile);
-      expect(contents).toMatch(/import \w+ from "@\/components\/blocks\/\w+";/);
-      // Block markup is imported, never copied into the page.
-      expect(contents).not.toContain("<nav");
-      expect(contents).not.toContain("© Acme");
-      expect(contents).not.toContain("CanvasBlock");
+    const pages = [...files.keys()].filter((name) => name.endsWith(".html"));
+    expect(pages.sort()).toEqual(["contact.html", "index.html"]);
+    // A static site has no imports: every page carries the composed section itself, and
+    // both pages carry the same one because both use the same global block.
+    for (const page of pages) {
+      const contents = asText(files, page);
+      expect(contents).toContain("<nav");
+      expect(contents).toContain("© Acme");
+      expect(contents).not.toContain("data-canvas-block");
     }
-    expect(blockFiles.map((name) => asText(files, name)).join("\n")).toContain("<nav");
   });
 
   it("exports the pinned historical version for a non-global block usage", async () => {
@@ -232,55 +244,51 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     const other = await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "Contact" });
     const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Menu", kind: "navbar" });
     await runBlockJob(owner.id, project.id, block.id, navbar);
-    const source = `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${block.id}" usageKey="menu" /></main>}`;
+    const source = `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${block.id}" data-canvas-usage="menu"></div></main>`;
     await runPageJob(owner.id, project.id, home.id, source, { blockUsages: [{ blockId: block.id, usageKey: "menu" }] });
     // Home stays pinned to v1 while a later page picks up v2.
     await runBlockJob(owner.id, project.id, block.id, navbarV2);
     await runPageJob(owner.id, project.id, other.id, source, { blockUsages: [{ blockId: block.id, usageKey: "menu" }] });
 
     const { files } = await exportedFiles(owner.id, project.id);
-    const blockFiles = [...files.keys()].filter((name) => name.startsWith("components/blocks/"));
-    expect(blockFiles).toHaveLength(2);
-    const contents = blockFiles.map((name) => asText(files, name));
-    expect(contents.some((body) => body.includes(">Contact<"))).toBe(true);
-    expect(contents.some((body) => body.includes(">Contact us<"))).toBe(true);
-    // Each page imports the component matching the version it was built against.
-    const pageImports = [...files.keys()].filter((name) => name.startsWith("components/pages/")).map((name) => /@\/components\/blocks\/(\w+)/.exec(asText(files, name))?.[1]);
-    expect(new Set(pageImports).size).toBe(2);
+    // Each page ships the Block Version it was actually built against.
+    expect(asText(files, "index.html")).toContain(">Contact<");
+    expect(asText(files, "contact.html")).toContain(">Contact us<");
   });
 
   it("copies referenced media into public assets and rewrites references to local paths", async () => {
     const { owner, project, home } = await setup();
     const asset = await addMedia(project.id, owner.id, "Company Logo");
-    const source = `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasImage mediaId="${asset.id}" alt="Acme" className="c-media" /></main>}`;
+    const source = `<main data-canvas-id="page" class="c-page"><img data-canvas-media="${asset.id}" alt="Acme" class="c-media"></main>`;
     await runPageJob(owner.id, project.id, home.id, source, { referencedMediaIds: [asset.id] });
 
     const { files } = await exportedFiles(owner.id, project.id);
-    const assets = [...files.keys()].filter((name) => name.startsWith("public/assets/"));
+    const assets = [...files.keys()].filter((name) => name.startsWith("assets/"));
     expect(assets).toHaveLength(1);
-    expect(assets[0]).toMatch(/^public\/assets\/company-logo-[0-9a-f]{8}\.png$/);
+    expect(assets[0]).toMatch(/^assets\/company-logo-[0-9a-f]{8}\.png$/);
     expect(files.get(assets[0]!)!.equals(PNG)).toBe(true);
-    const component = asText(files, [...files.keys()].find((name) => name.startsWith("components/pages/"))!);
-    expect(component).toContain(`src="/assets/company-logo-`);
-    expect(component).toContain(`alt="Acme"`);
-    expect(component).toContain("<img");
+    const index = asText(files, "index.html");
+    expect(index).toContain(`src="assets/company-logo-`);
+    expect(index).toContain(`alt="Acme"`);
+    expect(index).toContain("<img");
     // No Canvas identifiers, storage keys, or preview URLs survive.
-    expect(component).not.toContain(asset.id);
-    expect(component).not.toContain(asset.storageKey);
-    expect(component).not.toContain("/api/preview/media");
-    expect(component).not.toContain("CanvasImage");
+    expect(index).not.toContain(asset.id);
+    expect(index).not.toContain(asset.storageKey);
+    expect(index).not.toContain("/api/preview/media");
   });
 
-  it("keeps interactive blocks working as client components", async () => {
+  it("ships an interactive block's behaviour as an ordinary script", async () => {
     const { owner, project, home } = await setup();
     const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "FAQ", kind: "card", isGlobal: true });
-    await runBlockJob(owner.id, project.id, block.id, interactiveCard);
-    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${block.id}" usageKey="faq" /></main>}`, { blockUsages: [{ blockId: block.id, usageKey: "faq" }] });
+    await runBlockJob(owner.id, project.id, block.id, interactiveCard, { js: interactiveCardScript });
+    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${block.id}" data-canvas-usage="faq"></div></main>`, { blockUsages: [{ blockId: block.id, usageKey: "faq" }] });
 
     const { files } = await exportedFiles(owner.id, project.id);
-    const blockFile = [...files.keys()].find((name) => name.startsWith("components/blocks/"))!;
-    expect(asText(files, blockFile)).toMatch(/^"use client";/);
-    expect(asText(files, blockFile)).toContain("useState");
+    const script = [...files.keys()].find((name) => name.startsWith("scripts/"))!;
+    expect(script).toBeDefined();
+    expect(asText(files, script)).toContain("addEventListener");
+    // The page links its own script; nothing is bundled or imported.
+    expect(asText(files, "index.html")).toContain(`<script src="${script}"></script>`);
   });
 
   it("produces no Canvas identifiers, secrets, or backend code anywhere in the archive", async () => {
@@ -288,10 +296,10 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     const asset = await addMedia(project.id, owner.id, "Logo");
     const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar", isGlobal: true });
     await runBlockJob(owner.id, project.id, block.id, navbar);
-    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock, CanvasImage } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page" data-canvas-id="root"><CanvasBlock blockId="${block.id}" usageKey="nav" /><CanvasImage mediaId="${asset.id}" alt="Logo" /></main>}`, { blockUsages: [{ blockId: block.id, usageKey: "nav" }], referencedMediaIds: [asset.id] });
+    await runPageJob(owner.id, project.id, home.id, `<main class="c-page" data-canvas-id="root"><div data-canvas-block="${block.id}" data-canvas-usage="nav"></div><img data-canvas-media="${asset.id}" alt="Logo"></main>`, { blockUsages: [{ blockId: block.id, usageKey: "nav" }], referencedMediaIds: [asset.id] });
 
     const { files } = await exportedFiles(owner.id, project.id);
-    const textual = [...files.entries()].filter(([name]) => !name.startsWith("public/assets/"));
+    const textual = [...files.entries()].filter(([name]) => !name.startsWith("assets/"));
     const combined = textual.map(([, contents]) => contents.toString("utf8")).join("\n");
     for (const forbidden of ["data-canvas-id", "data-canvas-block", "data-canvas-usage", "data-canvas-label", "@canvas/site-runtime", "__CANVAS_PREVIEW__", "PREVIEW_TOKEN_SECRET", "DATABASE_URL", "process.env", "server-only", "drizzle-orm", project.id, block.id, asset.id, asset.storageKey]) {
       expect(combined, `archive leaked ${forbidden}`).not.toContain(forbidden);
@@ -308,36 +316,36 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     ["a page that was never built", async (owner: { id: string }, project: { id: string }) => { await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "Empty" }); }, "PAGE_UNBUILT"],
     ["media deleted after the page was built", async (owner: { id: string }, project: { id: string }, home: { id: string }) => {
       const asset = await addMedia(project.id, owner.id, "Logo");
-      await runPageJob(owner.id, project.id, home.id, `import { CanvasImage } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasImage mediaId="${asset.id}" alt="L" /></main>}`, { referencedMediaIds: [asset.id] });
+      await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><img data-canvas-media="${asset.id}" alt="L"></main>`, { referencedMediaIds: [asset.id] });
       await db.update(mediaAssets).set({ deletedAt: new Date() }).where(eq(mediaAssets.id, asset.id));
     }, "MEDIA_MISSING"],
     ["a Building Block archived after the page was built", async (owner: { id: string }, project: { id: string }, home: { id: string }) => {
       const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Navbar", kind: "navbar", isGlobal: true });
       await runBlockJob(owner.id, project.id, block.id, navbar);
-      await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${block.id}" usageKey="nav" /></main>}`, { blockUsages: [{ blockId: block.id, usageKey: "nav" }] });
+      await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><div data-canvas-block="${block.id}" data-canvas-usage="nav"></div></main>`, { blockUsages: [{ blockId: block.id, usageKey: "nav" }] });
       await db.update(buildingBlocks).set({ deletedAt: new Date() }).where(eq(buildingBlocks.id, block.id));
     }, "BLOCK_MISSING"],
     ["a broken internal link", async (owner: { id: string }, project: { id: string }, home: { id: string }) => {
       const extra = await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "Pricing" });
-      await runPageJob(owner.id, project.id, extra.id, `export default function Page(){return <main className="c-page"><h1>Pricing</h1></main>}`);
-      await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><a href="/pricing">Pricing</a></main>}`);
+      await runPageJob(owner.id, project.id, extra.id, `<main data-canvas-id="page" class="c-page"><h1>Pricing</h1></main>`);
+      await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><a href="/pricing">Pricing</a></main>`);
       await new PageTreeService().deleteSubtree(owner.id, { projectId: project.id, nodeId: extra.id });
     }, "LINK_BROKEN"],
     ["unsafe source stored outside the normal pipeline", async (owner: { id: string }, project: { id: string }, home: { id: string }) => {
-      await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><h1>Hi</h1></main>}`);
+      await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Hi</h1></main>`);
       const [version] = await db.select().from(pageVersions).limit(1);
-      const [unsafe] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 90, sourceCode: `export default function Page(){fetch("https://tracker.example/collect");return <main/>}`, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "d".repeat(64), createdByUserId: owner.id }).returning();
+      const [unsafe] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 90, document: { schemaVersion: 1, html: `<main data-canvas-id="page"><h1>Hi</h1></main>`, css: "", js: `fetch("https://tracker.example/collect");`, metadata: null }, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "d".repeat(64), createdByUserId: owner.id }).returning();
       await db.update(pageNodes).set({ currentVersionId: unsafe!.id }).where(eq(pageNodes.id, home.id));
-    }, "SOURCE_INVALID"],
+    }, "DOCUMENT_INVALID"],
     ["backend code stored outside the normal pipeline", async (owner: { id: string }, project: { id: string }, home: { id: string }) => {
-      await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><h1>Hi</h1></main>}`);
+      await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Hi</h1></main>`);
       const [version] = await db.select().from(pageVersions).limit(1);
-      const [unsafe] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 91, sourceCode: `import { cookies } from "next/headers";\nexport default function Page(){return <main>{cookies().toString()}</main>}`, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "e".repeat(64), createdByUserId: owner.id }).returning();
+      const [unsafe] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 91, document: { schemaVersion: 1, html: `<main data-canvas-id="page"><iframe src="https://evil.example"></iframe></main>`, css: "", js: "", metadata: null }, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "e".repeat(64), createdByUserId: owner.id }).returning();
       await db.update(pageNodes).set({ currentVersionId: unsafe!.id }).where(eq(pageNodes.id, home.id));
-    }, "SOURCE_INVALID"],
+    }, "DOCUMENT_INVALID"],
   ])("fails validation for %s and produces no downloadable artifact", async (_name, prepare, code) => {
     const { owner, project, home } = await setup();
-    await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><h1>Home</h1></main>}`).catch(() => undefined);
+    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Home</h1></main>`).catch(() => undefined);
     await prepare(owner, project, home);
 
     const { service, jobId, state } = await exportProject(owner.id, project.id);
@@ -353,7 +361,7 @@ describe.sequential("Phase 12 validated ZIP export", () => {
   it("rejects a page whose route drifted out of sync", async () => {
     const { owner, project, home } = await setup();
     const about = await new PageTreeService().create(owner.id, { projectId: project.id, type: "page", name: "About" });
-    const body = `export default function Page(){return <main className="c-page"><h1>Page</h1></main>}`;
+    const body = `<main data-canvas-id="page" class="c-page"><h1>Page</h1></main>`;
     await runPageJob(owner.id, project.id, home.id, body);
     await runPageJob(owner.id, project.id, about.id, body);
     await db.update(pageNodes).set({ slug: "renamed" }).where(eq(pageNodes.id, about.id));
@@ -362,12 +370,13 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     expect(state.validation?.failures.map((failure) => failure.code)).toContain("ROUTE_INVALID");
   });
 
-  it("fails the build stage when the assembled project would not type-check", async () => {
+  it("fails the build stage when the assembled site would ship something unverifiable", async () => {
     const { owner, project, home } = await setup();
-    await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><h1>Home</h1></main>}`);
+    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Home</h1></main>`);
     const [version] = await db.select().from(pageVersions).limit(1);
-    // Valid, safe TSX that is nonetheless not type-correct once exported.
-    const [broken] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 92, sourceCode: `export default function Page(){const count: number = "not a number";return <main className="c-page">{count}</main>}`, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "f".repeat(64), createdByUserId: owner.id }).returning();
+    // A stored document that the composer can read but the export gate rejects: it links
+    // at a file the archive will not contain.
+    const [broken] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 92, document: { schemaVersion: 1, html: `<main data-canvas-id="page" class="c-page"><a href="/missing">Gone</a></main>`, css: "", js: "", metadata: null }, manifest: version!.manifest, seoMetadata: {}, changeSummary: {}, sourceHash: "f".repeat(64), createdByUserId: owner.id }).returning();
     await db.update(pageNodes).set({ currentVersionId: broken!.id }).where(eq(pageNodes.id, home.id));
 
     const { service, jobId, state } = await exportProject(owner.id, project.id);
@@ -379,7 +388,7 @@ describe.sequential("Phase 12 validated ZIP export", () => {
 
   it("isolates export jobs and downloads to their own project and members", async () => {
     const { owner, project, home } = await setup();
-    await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><h1>Home</h1></main>}`);
+    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Home</h1></main>`);
     const { jobId } = await exportProject(owner.id, project.id);
 
     const stranger = await makeUser("stranger");
@@ -400,7 +409,7 @@ describe.sequential("Phase 12 validated ZIP export", () => {
 
   it("allows one export at a time per project and keeps history", async () => {
     const { owner, project, home } = await setup();
-    await runPageJob(owner.id, project.id, home.id, `export default function Page(){return <main className="c-page"><h1>Home</h1></main>}`);
+    await runPageJob(owner.id, project.id, home.id, `<main data-canvas-id="page" class="c-page"><h1>Home</h1></main>`);
     const service = new ExportService();
     const first = await service.create(owner.id, project.id);
     await expect(service.create(owner.id, project.id)).rejects.toMatchObject({ exportCode: "EXPORT_ACTIVE" });

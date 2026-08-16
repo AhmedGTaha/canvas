@@ -13,9 +13,11 @@ import { createProvider, providerTimeoutMs, PROVIDER_DESCRIPTORS } from "./provi
 import type { AIProviderKind } from "@/domain/ai/provider";
 import { generatedPageResponseJsonSchema, generatedPageResponseSchema } from "@/domain/page-generation/contract";
 import { generatedBlockResponseJsonSchema, generatedBlockResponseSchema } from "@/domain/block-generation/contract";
-import { validateGeneratedPageSource } from "@/domain/page-generation/validator";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
-import { compileGeneratedPage } from "@/domain/page-generation/validator";
+import { validateGeneratedPageDocument } from "@/domain/page-generation/validator";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
+import { pageDocumentFrom } from "@/domain/page-generation/contract";
+import { blockDocumentFrom } from "@/domain/block-generation/contract";
+import { composeDocument } from "@/domain/generated-source/composition";
 import { PLATFORM_AI_INSTRUCTIONS } from "@/domain/ai/prompt-assembler";
 import type { AIRequest } from "@/domain/ai/provider";
 
@@ -40,15 +42,16 @@ const APPROVED_MEDIA = new Set([MEDIA_ID]);
 // A 2x2 solid red PNG, standing in for a Canvas Media attachment.
 const RED_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEUlEQVR4nGP8z4AATAxIHAAeQwEBpwGqzAAAAABJRU5ErkJggg==", "base64");
 
-const PAGE_RULES = `Return one complete TypeScript React page component as structured JSON. The source must default-export exactly one page component.
-Allowed imports: react and @canvas/site-runtime only. Use CanvasImage with approved Media UUIDs; never use remote images or raw img elements.
-Use only static className strings from: c-page, c-container, c-section, c-hero, c-stack, c-grid, c-card, c-actions, c-button, c-muted, c-kicker, c-media. Inline style attributes are forbidden.
-Anchors may only reference routes listed in the project structure. Never use fetch, network APIs, eval, Function, require, dynamic imports, server APIs, browser storage, cookies, parent-window access, HTML injection, iframe, script, object, or embed.
+const PAGE_RULES = `Return one complete static page as structured JSON: html (a body fragment), css, js, and metadata.
+The html may not contain html, head, body, style, script, link, iframe, svg, or template elements, style attributes, or on* handlers.
+Images are <img data-canvas-media="<approved Media UUID>" alt="..."> with no src attribute. Reusable sections are empty <div data-canvas-block="<uuid>" data-canvas-usage="<key>"></div> hosts.
+Build on these Canvas classes: c-page, c-container, c-section, c-hero, c-stack, c-grid, c-card, c-actions, c-button, c-muted, c-kicker, c-media. Anything else you use must be styled in css.
+Anchors may only reference routes listed in the project structure. The js may not use fetch, eval, Function, storage, cookies, window, parent, location, innerHTML, document.write, or any data-canvas attribute.
 Give meaningful regions a stable data-canvas-id such as "hero-main" or "pricing-card".
-referencedMediaIds must exactly match the CanvasImage mediaId values in the source.`;
+referencedMediaIds must exactly match the data-canvas-media values in the html.`;
 
 const BLOCK_RULES = `${PAGE_RULES}
-This is a reusable Building Block, not a page: it may not contain CanvasBlock.`;
+This is a reusable Building Block, not a page: it has no metadata and may not contain a data-canvas-block host.`;
 
 type Check = { name: string; run: () => Promise<string> };
 const provider = createProvider({
@@ -66,34 +69,33 @@ function ask(systemInstructions: string, text: string, responseSchema: unknown, 
 async function page(prompt: string, extra: Partial<AIRequest> = {}) {
   const response = await provider.generateStructured(ask(PAGE_RULES, prompt, generatedPageResponseJsonSchema, extra), generatedPageResponseSchema);
   if (!response.structuredData) throw new Error("structured page response was missing");
-  const manifest = await validateGeneratedPageSource({
-    sourceCode: response.structuredData.sourceCode, approvedMediaIds: APPROVED_MEDIA, activeRoutes: ROUTES,
+  const { manifest, document } = validateGeneratedPageDocument({
+    document: pageDocumentFrom(response.structuredData), approvedMediaIds: APPROVED_MEDIA, activeRoutes: ROUTES,
     declaredMediaIds: response.structuredData.referencedMediaIds,
     availableBlockIds: new Set([BLOCK_ID]), declaredBlockUsages: response.structuredData.blockUsages,
-    blockSources: new Map([[BLOCK_ID, `export default function Block(){return <nav data-canvas-id="navbar-root"><a href="/">Home</a></nav>}`]]),
   });
-  return { response, manifest, source: response.structuredData.sourceCode };
+  return { response, manifest, document, source: document.html };
 }
 async function block(prompt: string, extra: Partial<AIRequest> = {}) {
   const response = await provider.generateStructured(ask(BLOCK_RULES, prompt, generatedBlockResponseJsonSchema, extra), generatedBlockResponseSchema);
   if (!response.structuredData) throw new Error("structured block response was missing");
-  const manifest = await validateGeneratedBlockSource({
-    sourceCode: response.structuredData.sourceCode, approvedMediaIds: APPROVED_MEDIA, activeRoutes: ROUTES,
+  const { manifest, document } = validateGeneratedBlockDocument({
+    document: blockDocumentFrom(response.structuredData), approvedMediaIds: APPROVED_MEDIA, activeRoutes: ROUTES,
     declaredMediaIds: response.structuredData.referencedMediaIds,
   });
-  return { response, manifest, source: response.structuredData.sourceCode };
+  return { response, manifest, document, source: document.html };
 }
 const tokens = (usage?: { totalTokens?: number }) => usage?.totalTokens ? `${usage.totalTokens} tokens` : "usage unreported";
 
-let generatedPageSource = "";
-let generatedBlockSource = "";
+let generatedPageDocument = { schemaVersion: 1 as const, html: "", css: "", js: "", metadata: null };
+let generatedBlockHtml = "";
 
 const checks: Check[] = [
   {
     name: "page generation",
     run: async () => {
       const result = await page("Create the Home page for Acme Tools: a hero with a heading and short paragraph, and a three-item services grid. Include a link to /contact.");
-      generatedPageSource = result.source;
+      generatedPageDocument = { ...result.document, metadata: null };
       if (!result.manifest.editableElements.length) throw new Error("no selectable regions were generated");
       return `${result.manifest.editableElements.length} selectable regions, ${tokens(result.response.usage)}`;
     },
@@ -101,7 +103,7 @@ const checks: Check[] = [
   {
     name: "page modification",
     run: async () => {
-      const result = await page(`Modify this page so the hero heading reads "Tools that last". Preserve everything else.\n\n<existing_page_source>\n${generatedPageSource}\n</existing_page_source>`);
+      const result = await page(`Modify this page so the hero heading reads "Tools that last". Preserve everything else.\n\n<existing_html>\n${generatedPageDocument.html}\n</existing_html>`);
       if (!/Tools that last/i.test(result.source)) throw new Error("the requested modification was not applied");
       return `applied, ${tokens(result.response.usage)}`;
     },
@@ -110,7 +112,7 @@ const checks: Check[] = [
     name: "Building Block generation",
     run: async () => {
       const result = await block("Create a global navbar Building Block for Acme Tools with links to / and /contact.");
-      generatedBlockSource = result.source;
+      generatedBlockHtml = result.source;
       if (!/<nav/i.test(result.source)) throw new Error("navbar block did not render a nav landmark");
       return `${result.manifest.editableElements.length} selectable regions, ${tokens(result.response.usage)}`;
     },
@@ -118,7 +120,7 @@ const checks: Check[] = [
   {
     name: "Building Block modification",
     run: async () => {
-      const result = await block(`Modify this Building Block so the Contact link text reads "Talk to us". Preserve everything else.\n\n<existing_block_source>\n${generatedBlockSource}\n</existing_block_source>`);
+      const result = await block(`Modify this Building Block so the Contact link text reads "Talk to us". Preserve everything else.\n\n<existing_html>\n${generatedBlockHtml}\n</existing_html>`);
       if (!/Talk to us/i.test(result.source)) throw new Error("the requested block modification was not applied");
       return `applied, ${tokens(result.response.usage)}`;
     },
@@ -126,8 +128,8 @@ const checks: Check[] = [
   {
     name: "targeted element modification",
     run: async () => {
-      const targeted = `export default function Page(){return <main className="c-page"><section data-canvas-id="hero-main" className="c-section c-container"><h1>Original hero</h1></section><article data-canvas-id="pricing-card" className="c-card"><p>Spacious pricing details</p></article></main>}`;
-      const result = await page(`The user selected the element with data-canvas-id="pricing-card" and asked: "Make this card more compact". Change only that element, keep every other region byte-for-byte identical, keep its data-canvas-id, and set targetCanvasId to "pricing-card".\n\n<existing_page_source>\n${targeted}\n</existing_page_source>`);
+      const targeted = `<main class="c-page"><section data-canvas-id="hero-main" class="c-section c-container"><h1>Original hero</h1></section><article data-canvas-id="pricing-card" class="c-card"><p>Spacious pricing details</p></article></main>`;
+      const result = await page(`The user selected the element with data-canvas-id="pricing-card" and asked: "Make this card more compact". Change only that element, keep every other region byte-for-byte identical, keep its data-canvas-id, and set targetCanvasId to "pricing-card".\n\n<existing_html>\n${targeted}\n</existing_html>`);
       if (result.response.structuredData?.targetCanvasId !== "pricing-card") throw new Error(`targetCanvasId was ${String(result.response.structuredData?.targetCanvasId)}`);
       if (!result.manifest.editableElements.some((element) => element.canvasId === "pricing-card")) throw new Error("the targeted element did not survive");
       if (!result.source.includes("Original hero")) throw new Error("an unrelated region was modified");
@@ -161,9 +163,13 @@ const checks: Check[] = [
   {
     name: "Preview rendering",
     run: async () => {
-      const bundle = await compileGeneratedPage(generatedPageSource, []);
-      if (!bundle.includes("createRoot")) throw new Error("the compiled Preview bundle is missing its runtime entry");
-      return `${(bundle.length / 1024).toFixed(0)} KB Preview bundle compiled`;
+      const composed = composeDocument({
+        document: generatedPageDocument,
+        media: () => ({ url: `/api/preview/media/${MEDIA_ID}`, width: 2, height: 2, altText: null }),
+        mode: "preview",
+      });
+      if (!composed.html.includes("data-canvas-id")) throw new Error("the composed Preview document has no selectable regions");
+      return `${(composed.html.length / 1024).toFixed(1)} KB of Preview markup composed`;
     },
   },
 ];

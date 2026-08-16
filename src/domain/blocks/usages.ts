@@ -3,6 +3,8 @@ import type { Database } from "@/server/db/client";
 import { buildingBlockUsages, buildingBlockVersions, buildingBlocks } from "@/server/db/schema";
 import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
 import { blockNotGenerated, blockReferenceInvalid } from "./errors";
+import { versionDocument } from "@/domain/generated-source/stored-version";
+import type { GeneratedDocument } from "@/domain/generated-source/document";
 
 export type ReconciledBlockUsage = GeneratedBlockUsage & {
   /** Null for global usages: they resolve the block's current active version. */
@@ -57,9 +59,12 @@ export async function reconcilePageBlockUsages(transaction: TransactionLike, inp
 }
 
 /**
- * Resolves the Block Versions a page renders right now. Global usages follow the
- * block's current active version, so a global change propagates without touching
- * page source or creating a Page Version.
+ * Resolves the Building Block content a page renders right now, one entry per usage.
+ *
+ * Global usages follow the block's current active version, so a global change propagates
+ * without touching page content or creating a Page Version. A usage whose Version predates
+ * the static-document format resolves to no document and simply renders as nothing, which
+ * is the same outcome as a deleted block: the page still works.
  */
 export async function resolvePageBlockModules(database: Database, projectId: string, pageId: string) {
   const rows = await database.select({ usage: buildingBlockUsages, block: buildingBlocks, pinned: buildingBlockVersions })
@@ -74,27 +79,11 @@ export async function resolvePageBlockModules(database: Database, projectId: str
     : [];
   const currentById = new Map(currentVersions.map((version) => [version.id, version]));
 
-  const modules = new Map<string, { blockId: string; versionId: string; sourceCode: string; isGlobal: boolean }>();
+  const modules: Array<{ blockId: string; usageKey: string; versionId: string; isGlobal: boolean; document: GeneratedDocument | null }> = [];
   for (const row of rows) {
     const version = row.usage.buildingBlockVersionId ? row.pinned : (row.block.currentVersionId ? currentById.get(row.block.currentVersionId) ?? null : null);
     if (!version || row.block.deletedAt) continue;
-    modules.set(row.block.id, { blockId: row.block.id, versionId: version.id, sourceCode: version.sourceCode, isGlobal: row.block.isGlobal });
+    modules.push({ blockId: row.block.id, usageKey: row.usage.usageKey, versionId: version.id, isGlobal: row.block.isGlobal, document: versionDocument(version) });
   }
-  return [...modules.values()];
-}
-
-/**
- * Active source of the given project's blocks, used to compile a page that reuses them.
- *
- * Takes a transaction as readily as the pool, because a page edit that creates a block
- * and references it in the same transaction has to be able to see the block it just
- * made — reading through the pool there returns the state from before it existed.
- */
-export async function loadActiveBlockSources(database: Pick<Database, "select">, projectId: string, blockIds: string[]) {
-  if (!blockIds.length) return new Map<string, string>();
-  const rows = await database.select({ blockId: buildingBlocks.id, sourceCode: buildingBlockVersions.sourceCode })
-    .from(buildingBlocks)
-    .innerJoin(buildingBlockVersions, and(eq(buildingBlockVersions.id, buildingBlocks.currentVersionId), eq(buildingBlockVersions.buildingBlockId, buildingBlocks.id), eq(buildingBlockVersions.projectId, buildingBlocks.projectId)))
-    .where(and(eq(buildingBlocks.projectId, projectId), inArray(buildingBlocks.id, blockIds), isNull(buildingBlocks.deletedAt)));
-  return new Map(rows.map((row) => [row.blockId, row.sourceCode]));
+  return modules;
 }

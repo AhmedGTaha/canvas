@@ -99,7 +99,7 @@ describe.sequential("maintenance and retention", () => {
     const [asset] = await db.insert(mediaAssets).values({ projectId: project.id, originalFilename: "a.png", displayName: "A", storageKey, mimeType: "image/png", sizeBytes: PNG.length, width: 1, height: 1, createdByUserId: owner.id }).returning();
     // A soft-deleted asset that a historical version still depends on.
     await db.update(mediaAssets).set({ deletedAt: ago(60 * 24 * 90) }).where(eq(mediaAssets.id, asset!.id));
-    const [version] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 1, sourceCode: "export default function P(){return <main/>}", manifest: { referencedMediaIds: [asset!.id] }, seoMetadata: {}, changeSummary: {}, sourceHash: "a".repeat(64), createdByUserId: owner.id }).returning();
+    const [version] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 1, document: { schemaVersion: 1, html: `<main data-canvas-id="page"><h1>Page</h1></main>`, css: "", js: "", metadata: null }, manifest: { referencedMediaIds: [asset!.id] }, seoMetadata: {}, changeSummary: {}, sourceHash: "a".repeat(64), createdByUserId: owner.id }).returning();
 
     await new MaintenanceService().run();
 
@@ -111,7 +111,7 @@ describe.sequential("maintenance and retention", () => {
 
   it("keeps archived and soft-deleted projects and their data recoverable", async () => {
     const { owner, project, home } = await setup();
-    const [version] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 1, sourceCode: "export default function P(){return <main/>}", manifest: {}, seoMetadata: {}, changeSummary: {}, sourceHash: "b".repeat(64), createdByUserId: owner.id }).returning();
+    const [version] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 1, document: { schemaVersion: 1, html: `<main data-canvas-id="page"><h1>Page</h1></main>`, css: "", js: "", metadata: null }, manifest: {}, seoMetadata: {}, changeSummary: {}, sourceHash: "b".repeat(64), createdByUserId: owner.id }).returning();
     await db.update(projects).set({ status: "archived" }).where(eq(projects.id, project.id));
 
     await new MaintenanceService().run();

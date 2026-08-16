@@ -8,6 +8,7 @@ import { GeneratedPageContentProvider } from "@/generated-runtime/preview/genera
 import { BuildingBlockContentProvider } from "@/domain/blocks/preview";
 import { StarterSectionService } from "@/domain/blocks/starter-library/service";
 import { PreviewError, previewNotFound } from "@/generated-runtime/preview/errors";
+import { previewMediaResolver } from "@/generated-runtime/preview/media";
 import { observe } from "@/server/observability/events";
 import { errorCode } from "@/server/observability/telemetry";
 
@@ -24,11 +25,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
     const url = new URL(request.url);
     const query = querySchema.parse({ route: url.searchParams.get("route") || undefined, mode: url.searchParams.get("mode") || undefined, instance: url.searchParams.get("instance"), block: url.searchParams.get("block") || undefined, starter: url.searchParams.get("starter") || undefined });
     const { payload, manifest } = await new PreviewManifestService().fromToken(token);
+    const media = previewMediaResolver(manifest);
 
     if (query.starter) {
       errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route: "/", pageId: null };
-      const preview = await new StarterSectionService().preview(payload.userId, { projectId: payload.projectId, starterId: query.starter });
-      const document = renderBlockPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialMode: query.mode ?? "light", block: { id: `starter:${preview.starter.id}`, name: preview.starter.name, contentStatus: "generated" }, blockBundle: preview.bundle });
+      const preview = await new StarterSectionService().preview(payload.userId, { projectId: payload.projectId, starterId: query.starter }, media);
+      const document = renderBlockPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialMode: query.mode ?? "light", block: { id: `starter:${preview.starter.id}`, name: preview.starter.name, contentStatus: "generated" }, generated: preview.composed });
       return new Response(document, { headers });
     }
 
@@ -36,23 +38,23 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
       errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route: "/", pageId: null };
       const entry = manifest.blocks[query.block];
       if (!entry) throw previewNotFound("block is not part of this project preview");
-      const compiled = entry.activeVersionId ? await new BuildingBlockContentProvider().getActive(payload.projectId, entry.id) : null;
-      const document = renderBlockPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialMode: query.mode ?? "light", block: { id: entry.id, name: entry.name, contentStatus: entry.contentStatus }, blockBundle: compiled?.bundle });
+      const composed = entry.activeVersionId ? await new BuildingBlockContentProvider().getActive(payload.projectId, entry.id, media) : null;
+      const document = renderBlockPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialMode: query.mode ?? "light", block: { id: entry.id, name: entry.name, contentStatus: entry.contentStatus }, generated: composed?.composed });
       return new Response(document, { headers });
     }
 
     const route = query.route ? normalizePreviewRoute(query.route) : initialPreviewRoute(manifest);
     const page = manifest.pages.find((item) => item.pageId === manifest.routes[route]?.pageId);
     errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route, pageId: page?.pageId ?? null };
-    const generated = page?.currentVersionId ? await new GeneratedPageContentProvider().get(payload.projectId, page.pageId, page.currentVersionId) : null;
-    const html = renderPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialRoute: route, initialMode: query.mode ?? "light", generatedBundle: generated?.bundle });
+    const generated = page?.currentVersionId ? await new GeneratedPageContentProvider().get(payload.projectId, page.pageId, page.currentVersionId, media) : null;
+    const html = renderPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialRoute: route, initialMode: query.mode ?? "light", generated: generated?.composed });
     return new Response(html, { headers });
   } catch (error) {
     // The reason is recorded operationally and shown as a plain sentence in the frame,
     // instead of a blanket "Preview could not be loaded." with nothing behind it.
     const preview = error instanceof PreviewError ? error : null;
     observe.previewSessionFailed({ code: errorCode(error), reason: preview?.detail ?? (error instanceof Error ? error.message : undefined) });
-    const status = preview?.previewCode === "PREVIEW_NOT_CONFIGURED" ? 500 : preview?.previewCode === "PREVIEW_COMPILE_FAILED" ? 422 : 403;
+    const status = preview?.previewCode === "PREVIEW_NOT_CONFIGURED" ? 500 : (preview?.previewCode === "PREVIEW_DOCUMENT_UNREADABLE" || preview?.previewCode === "PREVIEW_LEGACY_DOCUMENT") ? 422 : 403;
     const code = preview?.previewCode ?? "PREVIEW_UNAVAILABLE";
     return new Response(renderPreviewErrorDocument({
       nonce,

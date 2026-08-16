@@ -21,7 +21,7 @@ import { PreviewTokenService } from "@/generated-runtime/security/preview-token"
 import { BuildingBlockContentProvider } from "@/domain/blocks/preview";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
 import { renderBlockPreviewDocument, renderPreviewDocument, renderPreviewErrorDocument } from "@/generated-runtime/preview/render-document";
-import { validateGeneratedBlockSource } from "@/domain/blocks/validation";
+import { validateGeneratedBlockDocument } from "@/domain/blocks/validation";
 import { PreviewError } from "@/generated-runtime/preview/errors";
 import { setTelemetrySink } from "@/server/observability/telemetry";
 import { ThemeService } from "@/domain/theme/services";
@@ -32,6 +32,11 @@ import { generatedThemeCss } from "./runtime-css";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const PREVIEW_SECRET = "preview-failure-suite-secret-value-long-enough";
 const MEDIA_PLACEHOLDER = "__MEDIA_ID__";
+
+/** Media as the sandboxed Preview resolves it: a session URL, never a storage key. */
+const previewMedia = (id: string) => ({ url: `/api/preview/media/${id}`, width: 40, height: 40, altText: "Logo" });
+/** A generated fragment as the provider fixtures return it. */
+type Fragment = { html: string; css?: string; js?: string };
 
 function expectPreviewScriptsToParse(document: string) {
   const scripts = [...document.matchAll(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g)].map((match) => match[1]!);
@@ -49,61 +54,47 @@ async function expectPreviewScriptsToRender(document: string, text: string) {
 }
 
 /**
- * Verbatim shape of a real Gemini-generated Building Block: namespace React import,
- * single-quoted imports, multi-line JSX attributes, `//` comments between attributes and
- * after an attribute value, self-closing CanvasImage with numeric props, and
- * data-canvas-* metadata.
+ * The shape a real provider returns for a Building Block: markup that leans on the shared
+ * Canvas classes, a small stylesheet of its own, and a little behaviour — the three
+ * artifacts of the document contract, kept apart.
  */
-const GEMINI_NAVBAR = `import * as React from 'react';
-import { CanvasImage } from '@canvas/site-runtime';
-
-export default function GlobalNavbar() {
-  return (
-    <nav
-      className="c-section"
-      data-canvas-id="navbar-root"
-      data-canvas-label="Navbar"
-    >
-      <div className="c-container">
-        <div
-          className="c-stack"
-          // The 'c-stack' class typically creates a vertical stack.
-          // Explicit horizontal layout cannot be applied without inline styles.
-        >
-          <a href="#" data-canvas-id="navbar-logo" data-canvas-label="Logo">
-            <CanvasImage
-              mediaId="${MEDIA_PLACEHOLDER}"
-              alt="Company logo"
-              width={40}
-              height={40}
-            />
-          </a>
-
-          <ul
-            className="c-stack" // This will stack the navigation links vertically.
-            data-canvas-id="navbar-links"
-            data-canvas-label="Navigation Links"
-          >
-            <li><a href="#" className="c-button c-button-secondary">Home</a></li>
-            <li><a href="#" className="c-button c-button-secondary">About</a></li>
-          </ul>
-
-          <div data-canvas-id="navbar-cta" data-canvas-label="Call to Action">
-            <a href="#" className="c-button">Get Started</a>
-          </div>
+const GEMINI_NAVBAR: Fragment = {
+  html: `<nav class="c-navbar" data-canvas-id="navbar-root" data-canvas-label="Navbar">
+      <div class="c-container c-cluster">
+        <a href="#" data-canvas-id="navbar-logo" data-canvas-label="Logo" class="c-nav-brand">
+          <img data-canvas-media="${MEDIA_PLACEHOLDER}" alt="Company logo" class="c-logo" width="40" height="40">
+        </a>
+        <button type="button" class="c-button-secondary nav-toggle" aria-expanded="false" aria-controls="nav-menu">Menu</button>
+        <ul class="c-nav-links nav-menu" id="nav-menu" data-canvas-id="navbar-links" data-canvas-label="Navigation Links" hidden>
+          <li><a href="#" class="c-link">Home</a></li>
+          <li><a href="#" class="c-link">About</a></li>
+        </ul>
+        <div data-canvas-id="navbar-cta" data-canvas-label="Call to Action">
+          <a href="#" class="c-button">Get Started</a>
         </div>
       </div>
-    </nav>
-  );
-}`;
+    </nav>`,
+  css: `.nav-menu{list-style:none;margin:0;padding:0}`,
+  js: `var toggle = document.querySelector(".nav-toggle");
+var menu = document.getElementById("nav-menu");
+if (toggle && menu) toggle.addEventListener("click", function () {
+  var open = toggle.getAttribute("aria-expanded") === "true";
+  toggle.setAttribute("aria-expanded", open ? "false" : "true");
+  if (open) menu.setAttribute("hidden", ""); else menu.removeAttribute("hidden");
+});`,
+};
+
+const withMedia = (fragment: Fragment, mediaId: string): Fragment => ({ ...fragment, html: fragment.html.replace(MEDIA_PLACEHOLDER, mediaId) });
 
 class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
-  constructor(private readonly source: string, private readonly options: { referencedMediaIds?: string[]; blockUsages?: Array<{ blockId: string; usageKey: string }> } = {}) {}
+  constructor(private readonly fragment: Fragment, private readonly options: { referencedMediaIds?: string[]; blockUsages?: Array<{ blockId: string; usageKey: string }> } = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
   async generateStructured<T>(_request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
     const value = {
-      schemaVersion: 1, sourceCode: this.source, referencedMediaIds: this.options.referencedMediaIds ?? [],
+      schemaVersion: 1, html: this.fragment.html, css: this.fragment.css ?? "", js: this.fragment.js ?? "",
+      metadata: { title: "Home", description: "The home page." },
+      referencedMediaIds: this.options.referencedMediaIds ?? [],
       ...(this.options.blockUsages?.length ? { blockUsages: this.options.blockUsages } : {}),
       summary: { headline: "Created the navbar", changes: ["Added navigation"], limitations: [] },
     };
@@ -122,19 +113,19 @@ async function setup() {
   await db.update(projectBrandSettings).set({ primaryLogoMediaId: asset!.id }).where(eq(projectBrandSettings.projectId, project.id));
   return { owner, project, home, mediaId: asset!.id };
 }
-async function runBlockJob(userId: string, projectId: string, blockId: string, source: string, mediaIds: string[]) {
-  const job = await processBlockJob(userId, projectId, blockId, source, mediaIds);
+async function runBlockJob(userId: string, projectId: string, blockId: string, fragment: Fragment, mediaIds: string[]) {
+  const job = await processBlockJob(userId, projectId, blockId, fragment, mediaIds);
   expect(job).toMatchObject({ status: "completed" });
 }
-async function processBlockJob(userId: string, projectId: string, blockId: string, source: string, mediaIds: string[]) {
+async function processBlockJob(userId: string, projectId: string, blockId: string, fragment: Fragment, mediaIds: string[]) {
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: "Create a navbar", selectedMediaIds: mediaIds });
   await claimGenerationJob("worker");
-  return new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, { referencedMediaIds: mediaIds }))).process(request.job.id);
+  return new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(fragment, { referencedMediaIds: mediaIds }))).process(request.job.id);
 }
-async function runPageJob(userId: string, projectId: string, pageId: string, source: string, blockUsages: Array<{ blockId: string; usageKey: string }>) {
+async function runPageJob(userId: string, projectId: string, pageId: string, fragment: Fragment, blockUsages: Array<{ blockId: string; usageKey: string }>) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "Use the navbar", selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, { blockUsages }))).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(fragment, { blockUsages }))).process(request.job.id);
   expect(job).toMatchObject({ status: "completed" });
 }
 const environment = { ...process.env };
@@ -152,41 +143,46 @@ describe.sequential("Preview failure handling", () => {
 
   it("previews a real Gemini-generated global navbar as a Building Block", async () => {
     const { owner, project, mediaId } = await setup();
-    const source = GEMINI_NAVBAR.replace(MEDIA_PLACEHOLDER, mediaId);
+    const fragment = withMedia(GEMINI_NAVBAR, mediaId);
     const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
-    await runBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
+    await runBlockJob(owner.id, project.id, navbar.id, fragment, [mediaId]);
 
     // The version that activation produced is the version Preview compiles.
     const [version] = await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.buildingBlockId, navbar.id));
-    expect(version?.sourceCode).toBe(source);
-    const compiled = await new BuildingBlockContentProvider().getActive(project.id, navbar.id);
-    expect(compiled?.bundle).toContain("navbar-root");
-    expect(compiled?.version.id).toBe(version!.id);
+    expect((version?.document as { html: string }).html).toContain("navbar-root");
+    expect(version?.sourceFormat).toBe("static_html");
+    const composed = await new BuildingBlockContentProvider().getActive(project.id, navbar.id, previewMedia);
+    expect(composed?.composed.html).toContain("navbar-root");
+    expect(composed?.composed.js).toContain("aria-expanded");
+    expect(composed?.version.id).toBe(version!.id);
 
     const session = await new PreviewManifestService().createSession(owner.id, project.id);
-    const document = renderBlockPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, blockBundle: compiled!.bundle });
+    const document = renderBlockPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, generated: composed!.composed });
     expect(document).toContain("generated-root");
     expect(document).toContain("Get Started");
     expectPreviewScriptsToParse(document);
     await expectPreviewScriptsToRender(document, "Get Started");
     // The referenced Media resolves through the manifest, not a storage key.
     expect(session.manifest.media[mediaId]?.previewUrl).toMatch(/^\/api\/preview\/media\//);
-    expect(document).not.toContain(version!.sourceCode);
+    // Media resolves to the session URL, and the raw storage key never appears.
+    expect(document).toContain(`/api/preview/media/${mediaId}`);
   });
 
   it("renders the same block inside a Page Preview that uses it globally", async () => {
     const { owner, project, home, mediaId } = await setup();
     const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
-    await runBlockJob(owner.id, project.id, navbar.id, GEMINI_NAVBAR.replace(MEDIA_PLACEHOLDER, mediaId), [mediaId]);
-    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${navbar.id}" usageKey="site-navbar" /><h1>Home</h1></main>}`, [{ blockId: navbar.id, usageKey: "site-navbar" }]);
+    await runBlockJob(owner.id, project.id, navbar.id, withMedia(GEMINI_NAVBAR, mediaId), [mediaId]);
+    await runPageJob(owner.id, project.id, home.id, { html: `<main class="c-page" data-canvas-id="page"><div data-canvas-block="${navbar.id}" data-canvas-usage="site-navbar"></div><h1>Home</h1></main>` }, [{ blockId: navbar.id, usageKey: "site-navbar" }]);
 
     const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
-    const generated = await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!);
-    expect(generated?.bundle).toContain("Get Started");
-    expect(generated?.bundle).toContain("navbar-root");
+    const generated = await new GeneratedPageContentProvider().get(project.id, home.id, node!.currentVersionId!, previewMedia);
+    expect(generated?.composed.html).toContain("Get Started");
+    expect(generated?.composed.html).toContain("navbar-root");
+    // The block's own stylesheet arrives scoped to its host rather than global.
+    expect(generated?.composed.css).toMatch(/\.cb-[0-9a-f]{8} \.nav-menu/);
 
     const session = await new PreviewManifestService().createSession(owner.id, project.id);
-    const document = renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generatedBundle: generated!.bundle });
+    const document = renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generated: generated!.composed });
     expect(document).toContain("generated-root");
     expect(document).toContain("Get Started");
     expectPreviewScriptsToParse(document);
@@ -219,21 +215,20 @@ describe.sequential("Preview failure handling", () => {
     expect(pageContext.theme).toMatchObject(blockContext.theme);
     expect(blockContext.theme.resolved.colors.light.primary).toBe("#123456");
 
-    const source = `import { CanvasImage } from "@canvas/site-runtime";
-export default function GlobalNavbar(){return <nav className="c-navbar" data-canvas-id="navbar-root"><div className="c-container c-cluster"><a href="/" className="c-nav-brand"><CanvasImage mediaId="${mediaId}" alt="Logo" className="c-logo" /></a><div className="c-nav-links"><a href="/" className="c-link">Home</a><a href="/about" className="c-link">About</a><a href="/contact" className="c-button c-button-secondary">Contact Us</a></div></div></nav>}`;
-    await runBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
-    await runPageJob(owner.id, project.id, home.id, `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${navbar.id}" usageKey="site-navbar" /><section className="c-section c-surface"><h1>Home</h1></section></main>}`, [{ blockId: navbar.id, usageKey: "site-navbar" }]);
+    const fragment: Fragment = { html: `<nav class="c-navbar" data-canvas-id="navbar-root"><div class="c-container c-cluster"><a href="/" class="c-nav-brand"><img data-canvas-media="${mediaId}" alt="Logo" class="c-logo"></a><div class="c-nav-links"><a href="/" class="c-link">Home</a><a href="/about" class="c-link">About</a><a href="/contact" class="c-button-secondary">Contact Us</a></div></div></nav>` };
+    await runBlockJob(owner.id, project.id, navbar.id, fragment, [mediaId]);
+    await runPageJob(owner.id, project.id, home.id, { html: `<main class="c-page" data-canvas-id="page"><div data-canvas-block="${navbar.id}" data-canvas-usage="site-navbar"></div><section class="c-section c-surface" data-canvas-id="intro"><h1>Home</h1></section></main>` }, [{ blockId: navbar.id, usageKey: "site-navbar" }]);
     const [storedBlock] = await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id));
     const [storedPage] = await db.select().from(pageNodes).where(eq(pageNodes.id, home.id));
     const blockVersionId = storedBlock!.currentVersionId;
     const pageVersionId = storedPage!.currentVersionId;
-    const compiledBlock = await new BuildingBlockContentProvider().getActive(project.id, navbar.id);
-    const compiledPage = await new GeneratedPageContentProvider().get(project.id, home.id, pageVersionId!);
+    const composedBlock = await new BuildingBlockContentProvider().getActive(project.id, navbar.id, previewMedia);
+    const composedPage = await new GeneratedPageContentProvider().get(project.id, home.id, pageVersionId!, previewMedia);
 
     const firstSession = await new PreviewManifestService().createSession(owner.id, project.id);
     const firstCss = generatedThemeCss(firstSession.manifest.theme);
-    const firstBlockDocument = renderBlockPreviewDocument({ manifest: firstSession.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, blockBundle: compiledBlock!.bundle });
-    const firstPageDocument = renderPreviewDocument({ manifest: firstSession.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "dark", generatedBundle: compiledPage!.bundle });
+    const firstBlockDocument = renderBlockPreviewDocument({ manifest: firstSession.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, generated: composedBlock!.composed });
+    const firstPageDocument = renderPreviewDocument({ manifest: firstSession.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "dark", generated: composedPage!.composed });
     expect(firstBlockDocument).toContain(firstCss);
     expect(firstPageDocument).toContain(firstCss);
     expect(firstBlockDocument).toContain("data-theme=light");
@@ -258,8 +253,8 @@ export default function GlobalNavbar(){return <nav className="c-navbar" data-can
     expect(refreshedCss).toContain(":root[data-theme=light]{--color-primary:#654321");
     expect(refreshedCss).toContain(":root[data-theme=dark]{--color-primary:#FEDCBA");
     expect(refreshedCss).not.toContain("#123456");
-    const refreshedBlockDocument = renderBlockPreviewDocument({ manifest: refreshed.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, blockBundle: compiledBlock!.bundle });
-    const refreshedPageDocument = renderPreviewDocument({ manifest: refreshed.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generatedBundle: compiledPage!.bundle });
+    const refreshedBlockDocument = renderBlockPreviewDocument({ manifest: refreshed.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: navbar.id, name: "Global navbar", contentStatus: "generated" }, generated: composedBlock!.composed });
+    const refreshedPageDocument = renderPreviewDocument({ manifest: refreshed.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generated: composedPage!.composed });
     expect(refreshedBlockDocument).toContain(refreshedCss);
     expect(refreshedPageDocument).toContain(refreshedCss);
     expect((await db.select().from(buildingBlockVersions).where(eq(buildingBlockVersions.buildingBlockId, navbar.id))).map((version) => version.id)).toEqual([blockVersionId]);
@@ -268,29 +263,31 @@ export default function GlobalNavbar(){return <nav className="c-navbar" data-can
     await expectPreviewScriptsToRender(refreshedPageDocument, "Contact Us");
   });
 
-  it("compiles Preview through the same authority that validates a generated version", async () => {
+  it("composes Preview through the same authority that validates a generated version", async () => {
     const { owner, project, mediaId } = await setup();
-    const source = GEMINI_NAVBAR.replace(MEDIA_PLACEHOLDER, mediaId);
-    // Whatever the generation validator accepts, the Preview compiler must also accept.
-    const manifest = await validateGeneratedBlockSource({ sourceCode: source, approvedMediaIds: new Set([mediaId]), activeRoutes: new Set(["/"]), declaredMediaIds: [mediaId] });
+    const fragment = withMedia(GEMINI_NAVBAR, mediaId);
+    // Whatever the generation validator accepts, the Preview must also be able to show.
+    const { manifest } = validateGeneratedBlockDocument({
+      document: { schemaVersion: 1, html: fragment.html, css: fragment.css ?? "", js: fragment.js ?? "", metadata: null },
+      approvedMediaIds: new Set([mediaId]), activeRoutes: new Set(["/"]), declaredMediaIds: [mediaId],
+    });
     expect(manifest.editableElements.map((element) => element.canvasId)).toEqual(["navbar-root", "navbar-logo", "navbar-links", "navbar-cta"]);
 
     const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
-    await runBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
-    await expect(new BuildingBlockContentProvider().getActive(project.id, navbar.id)).resolves.toMatchObject({ bundle: expect.stringContaining("navbar-root") });
+    await runBlockJob(owner.id, project.id, navbar.id, fragment, [mediaId]);
+    const composed = await new BuildingBlockContentProvider().getActive(project.id, navbar.id, previewMedia);
+    expect(composed?.composed.html).toContain("navbar-root");
   });
 
   it("explains Gemini-style links to nonexistent pages while preserving the valid logo reference", async () => {
     const { owner, project, mediaId } = await setup();
     const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global navbar", kind: "navbar", isGlobal: true });
-    const source = `import * as React from "react";
-import { CanvasImage } from "@canvas/site-runtime";
-export default function GlobalNavbar(){return <nav data-canvas-id="navbar-root" className="c-container"><a href="/" data-canvas-id="navbar-logo"><CanvasImage mediaId="${mediaId}" alt="Logo" className="c-media" /></a><div data-canvas-id="navbar-links" className="c-actions"><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact Us</a></div></nav>}`;
+    const fragment: Fragment = { html: `<nav data-canvas-id="navbar-root" class="c-container"><a href="/" data-canvas-id="navbar-logo"><img data-canvas-media="${mediaId}" alt="Logo" class="c-media"></a><div data-canvas-id="navbar-links" class="c-actions"><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact Us</a></div></nav>` };
 
-    const job = await processBlockJob(owner.id, project.id, navbar.id, source, [mediaId]);
+    const job = await processBlockJob(owner.id, project.id, navbar.id, fragment, [mediaId]);
     expect(job).toMatchObject({
       status: "failed",
-      errorCode: "AI_GENERATED_SOURCE_INVALID",
+      errorCode: "AI_GENERATED_DOCUMENT_INVALID",
       errorMessage: "/about and /contact do not exist in this project yet. Create those pages first or ask Canvas to use your existing pages.",
       errorDiagnostic: "invalid internal routes: /about, /contact",
       provider: "fixture",
@@ -329,31 +326,48 @@ export default function GlobalNavbar(){return <nav data-canvas-id="navbar-root" 
     void lines;
   });
 
-  it("surfaces a compile failure instead of an empty preview", async () => {
+  it("surfaces unreadable stored content instead of an empty preview", async () => {
     const { owner, project } = await setup();
     const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Broken", kind: "navbar", isGlobal: true });
-    await runBlockJob(owner.id, project.id, navbar.id, `export default function B(){return <nav data-canvas-id="root"><span>ok</span></nav>}`, []);
-    // Source that only became uncompilable after activation (a stored-state corruption).
-    const [version] = await db.insert(buildingBlockVersions).values({ projectId: project.id, buildingBlockId: navbar.id, versionNumber: 2, sourceCode: `export default function B(){return <nav>}`, manifest: {}, sourceHash: "a".repeat(64), createdByUserId: owner.id }).returning();
+    await runBlockJob(owner.id, project.id, navbar.id, { html: `<nav data-canvas-id="root"><span>ok</span></nav>` }, []);
+    // A stored document that stopped being readable after activation (state corruption).
+    const [version] = await db.insert(buildingBlockVersions).values({ projectId: project.id, buildingBlockId: navbar.id, versionNumber: 2, document: { schemaVersion: 2 }, manifest: {}, sourceHash: "a".repeat(64), createdByUserId: owner.id }).returning();
     await db.update(buildingBlocks).set({ currentVersionId: version!.id }).where(eq(buildingBlocks.id, navbar.id));
 
     const lines: string[] = [];
     setTelemetrySink((line) => lines.push(line));
-    const failure = await new BuildingBlockContentProvider().getActive(project.id, navbar.id).catch((error: unknown) => error);
+    const failure = await new BuildingBlockContentProvider().getActive(project.id, navbar.id, previewMedia).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(PreviewError);
-    expect(failure).toMatchObject({ previewCode: "PREVIEW_COMPILE_FAILED" });
+    expect(failure).toMatchObject({ previewCode: "PREVIEW_DOCUMENT_UNREADABLE" });
     expect((failure as PreviewError).message).toMatch(/could not display this content/i);
     // The failure is recorded operationally with a diagnostic.
-    expect(lines.join("\n")).toContain("preview.compile_failed");
+    expect(lines.join("\n")).toContain("preview.document_failed");
     expect(lines.join("\n")).not.toContain(PREVIEW_SECRET);
+  });
+
+  // A Version written before generated websites became static documents is history, not
+  // content: it is refused with an explanation rather than rendered as an empty page.
+  it("explains a Version that predates the static document format", async () => {
+    const { owner, project } = await setup();
+    const navbar = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Legacy", kind: "navbar", isGlobal: true });
+    const [legacy] = await db.insert(buildingBlockVersions).values({
+      projectId: project.id, buildingBlockId: navbar.id, versionNumber: 1,
+      sourceCode: `export default function B(){return <nav data-canvas-id="root"/>}`, sourceFormat: "react_tsx",
+      manifest: {}, sourceHash: "b".repeat(64), createdByUserId: owner.id,
+    }).returning();
+    await db.update(buildingBlocks).set({ currentVersionId: legacy!.id }).where(eq(buildingBlocks.id, navbar.id));
+
+    const failure = await new BuildingBlockContentProvider().getActive(project.id, navbar.id, previewMedia).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ previewCode: "PREVIEW_LEGACY_DOCUMENT" });
+    expect((failure as PreviewError).message).toMatch(/earlier version of Canvas/i);
   });
 
   it("reports the real runtime reason from inside the sandbox", async () => {
     const { owner, project } = await setup();
     const session = await new PreviewManifestService().createSession(owner.id, project.id);
     for (const document of [
-      renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generatedBundle: "/* bundle */" }),
-      renderBlockPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: randomUUID(), name: "Block", contentStatus: "generated" }, blockBundle: "/* bundle */" }),
+      renderPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialRoute: "/", initialMode: "light", generated: { html: `<main data-canvas-id="p"><h1>Home</h1></main>`, css: "", js: "" } }),
+      renderBlockPreviewDocument({ manifest: session.manifest, nonce: "nonce", parentOrigin: "http://localhost:3000", instanceId: randomUUID(), initialMode: "light", block: { id: randomUUID(), name: "Block", contentStatus: "generated" }, generated: { html: `<nav data-canvas-id="b"><span>Block</span></nav>`, css: "", js: "" } }),
     ]) {
       // The frame reports what actually failed, and also catches promise rejections.
       expect(document).toContain("reportPreviewFailure");
@@ -377,9 +391,9 @@ export default function GlobalNavbar(){return <nav data-canvas-id="navbar-root" 
     const reported = renderPreviewErrorDocument({
       nonce: "nonce",
       message: "Canvas could not display this content.",
-      diagnostic: { code: "PREVIEW_COMPILE_FAILED", sessionId, instanceId, parentOrigin: "http://localhost:3000", route: "/", pageId: null },
+      diagnostic: { code: "PREVIEW_DOCUMENT_UNREADABLE", sessionId, instanceId, parentOrigin: "http://localhost:3000", route: "/", pageId: null },
     });
-    expect(reported).toContain("PREVIEW_COMPILE_FAILED");
+    expect(reported).toContain("PREVIEW_DOCUMENT_UNREADABLE");
     expect(reported).toContain("parent.postMessage");
     expect(reported).toContain(sessionId);
     expect(reported).toContain(instanceId);

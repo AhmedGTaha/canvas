@@ -1,21 +1,17 @@
-import { compileGeneratedSource } from "@/domain/generated-source/compiler";
-import { validateGeneratedSource, type GeneratedSourceManifest } from "@/domain/generated-source/validator";
+import { validateGeneratedDocument, type GeneratedSourceManifest } from "@/domain/generated-source/validator";
+import type { GeneratedDocument } from "@/domain/generated-source/document";
 
 export type GeneratedBlockManifest = GeneratedSourceManifest;
 
 /**
- * Building Block wrapper over the shared generated-source security policy. Blocks may
- * not nest other blocks, so `CanvasBlock` is rejected inside block source.
+ * Building Block wrapper over the shared generated-document security policy. Blocks may
+ * not nest other blocks, so a `data-canvas-block` reference is rejected inside a block.
  */
-export function validateGeneratedBlockSource(input: {
-  sourceCode: string;
+export function validateGeneratedBlockDocument(input: {
+  document: GeneratedDocument;
   approvedMediaIds: Set<string>;
   activeRoutes: Set<string>;
   declaredMediaIds?: string[];
 }) {
-  return validateGeneratedSource({ kind: "block", ...input });
-}
-
-export function compileGeneratedBlock(sourceCode: string) {
-  return compileGeneratedSource({ entrySource: sourceCode });
+  return validateGeneratedDocument({ kind: "block", ...input });
 }
