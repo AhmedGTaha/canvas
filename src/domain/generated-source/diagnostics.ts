@@ -29,12 +29,19 @@ export function generatedSourceValidationMessage(detail: string) {
   return "Canvas generated website code that did not meet Canvas validation rules. Try a simpler request.";
 }
 
-/** Bounded persistence form: no URLs, control characters, or provider secrets. */
+/**
+ * Bounded persistence form: no URIs, control characters, or secrets.
+ *
+ * This is the only form of a diagnostic that is persisted, logged, or sent back to a
+ * provider during a validation repair, so it strips any `scheme://` URI rather than only
+ * http(s) — a database connection string carries credentials in its authority component.
+ */
 export function persistedGenerationDiagnostic(detail?: string) {
   if (!detail) return null;
   return detail
-    .replace(/https?:\/\/\S+/gi, "[url]")
-    .replace(/(key|token|secret|authorization)\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[url]")
+    .replace(/\b[\w.+-]+:[^\s@/]+@[\w.-]+/g, "[redacted]")
+    .replace(/(key|token|secret|password|credential|authorization)\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .trim()
     .slice(0, 500) || null;

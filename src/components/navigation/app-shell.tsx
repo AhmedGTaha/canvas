@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useTransition, type ReactNode } from "react";
 import { signOutAction } from "@/app/actions/auth";
+import { CanvasLogo } from "@/components/brand/canvas-logo";
 import { AccountMenu } from "./account-menu";
 import { NavLink } from "./nav-link";
 
@@ -18,7 +19,7 @@ export function AppShell({ user, children }: { user: { displayName: string; emai
   return <div className="app">
     <a className="skip-link" href="#main-content">Skip to main content</a>
     <header className="app-bar">
-      <Link href="/dashboard" className="app-brand"><span className="brand-mark" aria-hidden="true">C</span>Canvas</Link>
+      <Link href="/dashboard" className="app-brand" aria-label="Canvas home"><CanvasLogo /></Link>
       <nav className="app-nav" aria-label="Main">
         <NavLink href="/dashboard" label="Websites" />
         <NavLink href="/workspaces" label="Workspaces" />

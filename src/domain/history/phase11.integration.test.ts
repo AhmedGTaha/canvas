@@ -15,6 +15,7 @@ import { VersionRestoreService } from "@/domain/history/restore-service";
 import { CheckpointService } from "@/domain/history/checkpoint-service";
 import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 const HERO = `<section data-canvas-id="hero-main"><h1>Original hero</h1></section>`;
 const page = (body: string) => `export default function Page(){return <main className="c-page">${HERO}${body}</main>}`;
@@ -26,7 +27,7 @@ const navbarV2 = `export default function Block(){return <nav data-canvas-id="na
 const usingNavbar = (blockId: string) => `import { CanvasBlock } from "@canvas/site-runtime";\nexport default function Page(){return <main className="c-page"><CanvasBlock blockId="${blockId}" usageKey="site-navbar" />${HERO}</main>}`;
 
 type FixtureOptions = { blockUsages?: Array<{ blockId: string; usageKey: string }>; targetCanvasId?: string | null; referencedMediaIds?: string[] };
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly options: FixtureOptions = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
@@ -54,7 +55,7 @@ async function runPageJob(userId: string, projectId: string, pageId: string, con
   const { selection, ...fixture } = options;
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content, selectedMediaIds: [], selection: selection ?? null });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, fixture)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, fixture))).process(request.job.id);
   if (job?.status !== "completed") throw new Error(`page job failed: ${job?.status} ${job?.errorCode}`);
   return job;
 }
@@ -62,7 +63,7 @@ async function runBlockJob(userId: string, projectId: string, blockId: string, c
   const { selection, ...fixture } = options;
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content, selectedMediaIds: [], selection: selection ?? null });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, fixture)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, fixture))).process(request.job.id);
   if (job?.status !== "completed") throw new Error(`block job failed: ${job?.status} ${job?.errorCode}`);
   return job;
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Command, PanelRight, Search, UsersRound } from "lucide-react";
+import { PanelRight, Search, UsersRound } from "lucide-react";
+import { CanvasLogo } from "@/components/brand/canvas-logo";
 import { AccountMenu } from "@/components/navigation/account-menu";
 import { TaskIndicator } from "@/components/tasks/task-center";
 
@@ -33,9 +34,10 @@ export function TitleBar({
   onSignOut: () => void;
 }) {
   return <header className="ws-title">
+    {/* The Canvas mark, not a borrowed icon: this is the product's own home
+        link, and on a phone the wordmark drops away leaving the same mark. */}
     <Link href="/dashboard" className="ws-brand-home" aria-label="All websites" title="All websites">
-      <span aria-hidden="true"><Command size={15} /></span>
-      <strong>Canvas</strong>
+      <CanvasLogo size="lg" />
     </Link>
 
     <nav className="ws-breadcrumb" aria-label="Where you are">

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    The same mark as <CanvasLogo>, at favicon size. Kept as geometry so the tab
+    icon and the in-app logo cannot drift apart, and inverted for a dark browser
+    chrome the same way the component inverts for a dark app.
+  -->
+  <style>
+    .tile { fill: #1a1917; }
+    .aperture { stroke: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #edeae6; }
+      .aperture { stroke: #141312; }
+    }
+  </style>
+  <rect class="tile" width="32" height="32" rx="9" />
+  <path class="aperture" d="M20.38 11.62A6.2 6.2 0 1 0 20.38 20.38" fill="none" stroke-width="3.4" stroke-linecap="round" />
+</svg>

@@ -17,6 +17,24 @@
      2. semantics  — what components use: surface-panel, text-muted, border-focus
      3. legacy     — the old variable names, mapped onto the semantics above so
                      unmigrated CSS keeps rendering while it is replaced
+
+   Light and dark
+   --------------
+   Every semantic token is written once, as `light-dark(light, dark)`. The value
+   that wins is decided by the `color-scheme` on :root, which base.css sets from
+   one attribute — so the appearance switch is a single attribute flip, there is
+   no second stylesheet to keep in step, and a token that exists in one
+   appearance cannot go missing in the other.
+
+   Two rules hold the dark ramp together. It is warm graphite, not black and not
+   slate: the same ~40° hue as the paper ramp, so Canvas reads as the same
+   product with the lights off. And it is layered by elevation — backdrop,
+   chrome, raised surface — rather than by decoration, so depth comes from a
+   material stepping forward, never from a glow or a border that lights up.
+
+   Deliberately *not* flipped: --preview-paper. That is the sheet the user's own
+   website is rendered on, and its appearance belongs to that website's theme and
+   the preview's own appearance control, not to the appearance of Canvas.
    ========================================================================== */
 
 :root {
@@ -59,56 +77,116 @@
   --amber-200: #f0d9a8;
   --amber-700: #8a5a10;
 
+  /* Graphite ramp — the same warm hue with the lights off. Numbered by depth:
+     1000 is the deepest surface a user sees, 100 the brightest ink, and every
+     step in between gets lighter as the number falls. */
+  --g-1000: #0d0c0c;
+  --g-950: #141312;
+  --g-900: #1a1918;
+  --g-850: #211f1d;
+  --g-800: #282623;
+  --g-750: #2e2b28;
+  --g-700: #34312d;
+  --g-650: #3a3733;
+  --g-600: #443f3a;
+  --g-500: #6b665e;
+  --g-450: #736d64;
+  --g-400: #948d84;
+  --g-300: #b0a9a0;
+  --g-200: #d4cfc8;
+  --g-100: #edeae6;
+
+  /* Blueprint again, lifted for a dark backdrop: the same hue, enough lightness
+     to clear AA as text and 3:1 as a ring. */
+  --blueprint-d-500: #7ea6e8;
+  --blueprint-d-300: #b3cbf3;
+  --blueprint-d-800: #31496f;
+  --blueprint-d-900: #1b2739;
+
+  /* Status hues, dark. Lifted the same way, with soft fills that stay near the
+     backdrop rather than becoming coloured cards. */
+  --green-d-400: #4ec98a;
+  --green-d-800: #1e4d36;
+  --green-d-900: #0f2119;
+  --red-d-400: #ff8a7d;
+  --red-d-800: #6b2a23;
+  --red-d-900: #2a1512;
+  --amber-d-400: #e9b765;
+  --amber-d-800: #5b431f;
+  --amber-d-900: #291f11;
+
   /* ----------------------------------------------------------- 2. semantics */
 
   /* surfaces */
-  --surface-app: var(--n-50);          /* dashboard and auth backdrop */
-  --surface-chrome: var(--n-25);       /* workspace bars, sidebars, panels */
-  --surface: var(--n-0);               /* raised content: cards, inputs, menus */
-  --surface-muted: var(--n-100);       /* quiet fills: chips, metadata blocks */
-  --surface-sunken: var(--n-150);      /* the mat the preview sits on */
-  --surface-hover: var(--n-100);
-  --surface-press: var(--n-200);
-  --surface-selected: var(--blueprint-50);
-  --surface-overlay: rgba(26, 25, 23, 0.28);
+  --surface-app: light-dark(var(--n-50), var(--g-950));       /* dashboard and auth backdrop */
+  --surface-chrome: light-dark(var(--n-25), var(--g-900));    /* workspace bars, sidebars, panels */
+  --surface: light-dark(var(--n-0), var(--g-850));            /* raised content: cards, inputs, menus */
+  --surface-muted: light-dark(var(--n-100), var(--g-800));    /* quiet fills: chips, metadata blocks */
+  --surface-sunken: light-dark(var(--n-150), var(--g-1000));  /* the mat the preview sits on */
+  --surface-hover: light-dark(var(--n-100), var(--g-650));
+  --surface-press: light-dark(var(--n-200), var(--g-600));
+  --surface-selected: light-dark(var(--blueprint-50), var(--blueprint-d-900));
+  --surface-overlay: light-dark(rgba(26, 25, 23, 0.28), rgba(6, 6, 6, 0.58));
+  /* Chrome that content scrolls under. Translucent, never stacked on itself. */
+  --surface-glass: light-dark(rgba(255, 255, 255, 0.86), rgba(26, 25, 24, 0.82));
+  /* A scrim laid over a surface Canvas does not own — the preview. */
+  --surface-scrim: light-dark(rgba(255, 255, 255, 0.94), rgba(13, 12, 12, 0.94));
+
+  /* An input is a hole in the surface, not another card on top of it. On paper
+     that reads as white against the page; in dark it has to actually recede,
+     because a field the same colour as the card it sits in is only a border. */
+  --surface-field: light-dark(var(--n-0), var(--g-950));
+
+  /* The sheet the user's website is rendered on. Not an appearance token: the
+     website decides whether it is light or dark, Canvas only frames it. */
+  --preview-paper: #ffffff;
 
   /* ink */
-  --text: var(--n-900);
-  --text-secondary: var(--n-700);
-  --text-muted: var(--n-600);          /* AA on every surface above */
-  --text-subtle: var(--n-500);         /* micro-labels and placeholders */
-  --text-disabled: var(--n-400);
-  --text-on-accent: var(--n-0);
-  --icon: var(--n-500);
-  --icon-subtle: var(--n-400);         /* decorative only, always beside a label */
+  --text: light-dark(var(--n-900), var(--g-100));
+  --text-secondary: light-dark(var(--n-700), var(--g-200));
+  --text-muted: light-dark(var(--n-600), var(--g-300));       /* AA on every surface above */
+  --text-subtle: light-dark(var(--n-500), var(--g-400));      /* micro-labels and placeholders */
+  --text-disabled: light-dark(var(--n-400), var(--g-500));
+  --text-on-accent: light-dark(var(--n-0), var(--g-950));
+  --icon: light-dark(var(--n-500), var(--g-300));
+  --icon-subtle: light-dark(var(--n-400), var(--g-400));      /* decorative only, always beside a label */
 
   /* lines */
-  --border: var(--n-200);
-  --border-subtle: var(--n-150);
-  --border-strong: var(--n-300);
-  --border-focus: var(--blueprint-500);
+  --border: light-dark(var(--n-200), var(--g-700));
+  --border-subtle: light-dark(var(--n-150), var(--g-750));
+  --border-strong: light-dark(var(--n-300), var(--g-450));
+  --border-focus: light-dark(var(--blueprint-500), var(--blueprint-d-500));
+
+  /* The one control surface that is neither text nor border: an unchecked
+     switch track, which has to read as a control against the surface. */
+  --control-track: light-dark(var(--n-300), var(--g-450));
+
+  /* Popovers that invert against the page: tooltips. In dark there is nothing
+     left to invert to, so they step forward as the highest material instead. */
+  --tooltip-surface: light-dark(var(--n-900), var(--g-600));
+  --tooltip-text: light-dark(var(--n-0), var(--g-100));
 
   /* accents and status */
-  --accent: var(--n-900);              /* primary actions stay graphite */
-  --accent-hover: var(--n-800);
-  --accent-contrast: var(--n-0);
-  --focus: var(--blueprint-500);
-  --focus-strong: var(--blueprint-700);
-  --focus-soft: var(--blueprint-50);
-  --focus-line: var(--blueprint-200);
-  --success: var(--green-600);
-  --success-soft: var(--green-50);
-  --success-line: var(--green-200);
-  --danger: var(--red-600);
-  --danger-hover: var(--red-700);
-  --danger-soft: var(--red-50);
-  --danger-line: var(--red-200);
-  --warning: var(--amber-700);
-  --warning-soft: var(--amber-50);
-  --warning-line: var(--amber-200);
-  --info: var(--blueprint-500);
-  --info-soft: var(--blueprint-50);
-  --info-line: var(--blueprint-200);
+  --accent: light-dark(var(--n-900), var(--g-100));           /* primary actions stay ink */
+  --accent-hover: light-dark(var(--n-800), var(--n-0));
+  --accent-contrast: light-dark(var(--n-0), var(--g-950));
+  --focus: light-dark(var(--blueprint-500), var(--blueprint-d-500));
+  --focus-strong: light-dark(var(--blueprint-700), var(--blueprint-d-300));
+  --focus-soft: light-dark(var(--blueprint-50), var(--blueprint-d-900));
+  --focus-line: light-dark(var(--blueprint-200), var(--blueprint-d-800));
+  --success: light-dark(var(--green-600), var(--green-d-400));
+  --success-soft: light-dark(var(--green-50), var(--green-d-900));
+  --success-line: light-dark(var(--green-200), var(--green-d-800));
+  --danger: light-dark(var(--red-600), var(--red-d-400));
+  --danger-hover: light-dark(var(--red-700), #ffa79c);
+  --danger-soft: light-dark(var(--red-50), var(--red-d-900));
+  --danger-line: light-dark(var(--red-200), var(--red-d-800));
+  --warning: light-dark(var(--amber-700), var(--amber-d-400));
+  --warning-soft: light-dark(var(--amber-50), var(--amber-d-900));
+  --warning-line: light-dark(var(--amber-200), var(--amber-d-800));
+  --info: light-dark(var(--blueprint-500), var(--blueprint-d-500));
+  --info-soft: light-dark(var(--blueprint-50), var(--blueprint-d-900));
+  --info-line: light-dark(var(--blueprint-200), var(--blueprint-d-800));
 
   /* spacing — 2px base, 4px grid above 8px. Every gap and pad picks from here */
   --sp-1: 2px;
@@ -160,11 +238,22 @@
   --r-full: 999px;
 
   /* elevation — one light source, low and warm, so raised things read as paper
-     lifted off a desk instead of glowing */
-  --e-1: 0 1px 2px rgba(26, 25, 23, 0.06);
-  --e-2: 0 1px 2px rgba(26, 25, 23, 0.07), 0 6px 16px rgba(26, 25, 23, 0.06);
-  --e-3: 0 2px 4px rgba(26, 25, 23, 0.08), 0 14px 34px rgba(26, 25, 23, 0.12);
-  --e-4: 0 4px 8px rgba(26, 25, 23, 0.09), 0 28px 64px rgba(26, 25, 23, 0.18);
+     lifted off a desk instead of glowing.
+
+     `light-dark()` takes two arguments, and a shadow list is itself comma
+     separated, so the appearance switch happens on the shadow *ink* and the
+     geometry stays one value. In dark the ink goes near-black and much deeper:
+     a warm grey shadow has nothing left to darken on a graphite backdrop, and
+     a raised surface that casts no shadow reads as a flat colour change. */
+  --e-ink-1: light-dark(rgba(26, 25, 23, 0.07), rgba(0, 0, 0, 0.44));
+  --e-ink-2: light-dark(rgba(26, 25, 23, 0.06), rgba(0, 0, 0, 0.34));
+  --e-ink-3: light-dark(rgba(26, 25, 23, 0.12), rgba(0, 0, 0, 0.46));
+  --e-ink-4: light-dark(rgba(26, 25, 23, 0.18), rgba(0, 0, 0, 0.58));
+
+  --e-1: 0 1px 2px var(--e-ink-1);
+  --e-2: 0 1px 2px var(--e-ink-1), 0 6px 16px var(--e-ink-2);
+  --e-3: 0 2px 4px var(--e-ink-1), 0 14px 34px var(--e-ink-3);
+  --e-4: 0 4px 8px var(--e-ink-1), 0 28px 64px var(--e-ink-4);
 
   /* motion — short and eased out; anything longer than --dur-3 in chrome is a
      decision that has to be argued for */
@@ -172,6 +261,10 @@
   --dur-2: 140ms;
   --dur-3: 220ms;
   --dur-4: 320ms;
+  /* Only the appearance switch. A whole screen changing brightness in one frame
+     is the one jump-cut worth easing; everything else here is a response to a
+     click and is better instant. */
+  --dur-appearance: 220ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-emphasis: cubic-bezier(0.2, 1.1, 0.35, 1);
@@ -203,8 +296,9 @@
   --chrome: var(--surface-chrome);
   --hover: var(--surface-hover);
   --press: var(--surface-press);
-  --warning-soft: var(--amber-50);
-  --warning-ink: var(--amber-700);
+  /* Was a second, light-only declaration of --warning-soft that shadowed the
+     semantic one above; in dark that pinned the fill to a paper amber. */
+  --warning-ink: var(--warning);
   --r-sm: var(--r-1);
   --r: var(--r-2);
   --r-lg: var(--r-3);

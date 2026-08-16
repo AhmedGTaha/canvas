@@ -9,6 +9,39 @@
 *::before,
 *::after { box-sizing: border-box; }
 
+/* ------------------------------------------------------------- appearance */
+
+/*
+ * The whole light/dark switch, in three rules.
+ *
+ * `color-scheme` is what decides every `light-dark()` token in tokens.css, and
+ * it is also what tells the browser which native scrollbars, form controls and
+ * spell-check underlines to draw — so the parts of the page Canvas does not
+ * paint stay in step with the parts it does.
+ *
+ * Following the system is the default and needs no JavaScript at all: with both
+ * keywords listed, the browser resolves it from the OS. An explicit choice is a
+ * single attribute on <html>, written by the server from a cookie before the
+ * first byte of markup, which is why there is no flash to prevent.
+ */
+:root { color-scheme: light dark; }
+:root[data-appearance="light"] { color-scheme: light; }
+:root[data-appearance="dark"] { color-scheme: dark; }
+
+/*
+ * The one asset that cannot be a token: a select's chevron is an inline SVG in
+ * a url(), and `light-dark()` resolves colours, not images. It is switched here,
+ * beside the rule that switches everything else, rather than left as a light-only
+ * colour buried in a control — the two values are --icon in each appearance.
+ */
+:root, :root[data-appearance="light"] {
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23767063' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+:root[data-appearance="dark"] { --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23b0a9a0' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-appearance="light"]) { --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23b0a9a0' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+}
+
 html {
   background: var(--surface-app);
   color: var(--text);
@@ -16,6 +49,24 @@ html {
   font-size: 100%;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/*
+ * Changing appearance is the one moment a whole screen changes brightness at
+ * once, and a hard cut of that size reads as a flash. The transition is armed
+ * only while the switch is being applied — never during normal work, where a
+ * colour that lags a click is exactly the latency this product avoids.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-appearance-changing] *,
+  :root[data-appearance-changing] *::before,
+  :root[data-appearance-changing] *::after {
+    transition:
+      background-color var(--dur-appearance) var(--ease-out),
+      border-color var(--dur-appearance) var(--ease-out),
+      color var(--dur-appearance) var(--ease-out),
+      fill var(--dur-appearance) var(--ease-out) !important;
+  }
 }
 
 body {
@@ -89,4 +140,22 @@ svg { flex: none; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Someone who has asked for less transparency gets the material as a solid
+   surface: the blur is decoration, the separation it provides is not. */
+@media (prefers-reduced-transparency: reduce) {
+  .app-bar { background: var(--surface-chrome); backdrop-filter: none; }
+}
+
+/* And someone who has asked for more contrast gets defined edges rather than
+   the hairlines the calm default is built from. */
+@media (prefers-contrast: more) {
+  :root {
+    --border: var(--border-strong);
+    --border-subtle: var(--border-strong);
+    --text-muted: var(--text-secondary);
+    --text-subtle: var(--text-secondary);
+  }
+  .app-bar { background: var(--surface-chrome); backdrop-filter: none; }
 }

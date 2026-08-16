@@ -36,31 +36,12 @@
   height: 52px;
   padding: 0 var(--sp-12);
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(12px);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px) saturate(150%);
 }
-.app-brand {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--sp-4);
-  color: var(--text);
-  font-size: var(--fs-md);
-  font-weight: var(--fw-bold);
-  letter-spacing: var(--tracking-tight);
-  text-decoration: none;
-}
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--r-2);
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-bold);
-}
+/* The brand is <CanvasLogo>; this only says where it sits. The mark, its
+   colours and its sizes live with the component, in ui.css. */
+.app-brand { display: flex; flex: none; text-decoration: none; }
 .app-nav { display: flex; align-items: center; gap: var(--sp-2); }
 .nav-link {
   display: inline-flex;
@@ -102,7 +83,14 @@
   font-size: var(--fs-micro);
   font-weight: var(--fw-bold);
 }
-.account-menu { top: calc(100% + var(--sp-3)); width: 236px; }
+.account-menu { top: calc(100% + var(--sp-3)); width: 252px; }
+/* The appearance switch is a control, not a destination, so it sits below the
+   menu's list rather than pretending to be a row in it. Full width: three
+   segments reading System / Light / Dark need the whole popover. */
+.account-appearance { display: grid; gap: var(--sp-1); padding: 0 var(--sp-2) var(--sp-2); }
+.account-appearance .menu-label { padding: var(--sp-2) var(--sp-3) var(--sp-1); }
+.account-appearance .segmented { display: flex; width: 100%; }
+.account-appearance .segmented button { flex: 1; min-width: 0; justify-content: center; padding: 0 var(--sp-2); }
 .account-identity {
   display: grid;
   gap: var(--sp-1);
@@ -229,8 +217,8 @@
   padding: var(--sp-16) var(--sp-10);
   background: var(--surface-app);
 }
-.auth-brand { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-md); font-weight: var(--fw-bold); }
-.auth-brand a { display: flex; align-items: center; gap: var(--sp-4); text-decoration: none; }
+.auth-brand { display: flex; align-items: center; }
+.auth-brand a { display: flex; align-items: center; text-decoration: none; }
 .auth-card {
   align-self: center;
   width: min(400px, 100%);
@@ -250,7 +238,13 @@
 
 /* ------------------------------------------------------------------ invites */
 
-.invite-layout { min-height: 100vh; display: grid; place-items: center; padding: var(--sp-16); background: var(--surface-app); }
+.invite-layout { min-height: 100vh; display: grid; align-content: center; justify-items: center; gap: var(--sp-16); padding: var(--sp-16); background: var(--surface-app); }
+
+/* Branding on the screens that render outside every shell: the invitation and
+   the 404. Both are somebody's first or last sight of the product. */
+.standalone-brand { display: flex; justify-content: center; margin: 0 0 var(--sp-16); }
+.standalone-brand a { display: inline-flex; text-decoration: none; }
+.invite-layout .standalone-brand { margin: 0; }
 .invite-card {
   width: min(480px, 100%);
   padding: var(--sp-24);

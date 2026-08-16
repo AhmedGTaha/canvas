@@ -245,7 +245,7 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
         {previewStatus === "error" ? <div className="preview-error" role="alert"><h2>This section could not be shown</h2><p>{previewError ?? "Your section is safe. Reload it to try again."}</p><Button type="button" size="sm" onClick={() => void refreshPreview()}>Reload</Button></div> : null}
         {/* One invitation to create a section per screen: the list already
             carries the button, so this only says what this space is for. */}
-        <div className="preview-device">{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Section"} preview`} /> : <div className="preview-loading"><Blocks size={20} />{blocks.length ? "Pick a section on the left to see it here." : "Your sections appear here once you create one."}</div>}</div>
+        <div className={frameSrc ? "preview-device" : "preview-device preview-device-empty"}>{frameSrc ? <iframe key={frameSrc} ref={frame} src={frameSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selected?.name ?? "Section"} preview`} /> : <div className="preview-loading"><Blocks size={20} />{blocks.length ? "Pick a section on the left to see it here." : "Your sections appear here once you create one."}</div>}</div>
       </div>
       {selected ? <BlockDetails key={selected.id} block={selected} usages={usages} busy={busy} history={history}
         onUsageResolution={(usage, resolution) => void action(async () => {

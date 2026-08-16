@@ -21,6 +21,7 @@ const { ContextSidebar } = await import("./context-sidebar");
 const { FeaturePanel } = await import("./feature-panel");
 const { MediaManager } = await import("@/components/media/media-manager");
 const { closedPanelHref, notePanelPushed, panelHref, resetPanelHistory, takePanelPushed } = await import("./panel-url");
+const { isPanelName } = await import("./panel-names");
 
 afterEach(() => { cleanup(); pageTreeAction.mockClear(); });
 
@@ -201,6 +202,16 @@ describe("project tool panels", () => {
     // Switching away from a node-scoped tool must not carry the node with it.
     expect(panelHref(new URL("https://canvas.test/projects/p?tool=pages&node=svc"), "media")).toBe("/projects/p?tool=media");
     expect(closedPanelHref(new URL("https://canvas.test/projects/p?page=home&tool=pages&node=svc"))).toBe("/projects/p?page=home");
+  });
+
+  it("opens AI settings as a tool over the mounted workspace, not as a route of its own", () => {
+    // The workspace, the Preview session and the agent survive opening a tool because a
+    // tool is a parameter on this same URL. AI settings is no exception.
+    expect(isPanelName("ai")).toBe(true);
+    const url = new URL("https://canvas.test/projects/p?page=home");
+    expect(panelHref(url, "ai")).toBe("/projects/p?page=home&tool=ai");
+    // Closing returns to exactly the page that was being edited.
+    expect(closedPanelHref(new URL("https://canvas.test/projects/p?page=home&tool=ai"))).toBe("/projects/p?page=home");
   });
 
   it("only steps back for tools the workspace itself pushed", () => {

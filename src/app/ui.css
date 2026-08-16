@@ -49,7 +49,45 @@
 .text-sm { font-size: var(--fs-sm); }
 .text-body { font-size: var(--fs-body); }
 
-/* =============================================================== 2. buttons */
+/* ================================================================= 2. brand */
+
+/* The Canvas logo, wherever it appears. There is one component behind this and
+   one rule set: a size changes the tile and the wordmark together, and nothing
+   at a call site restyles either. */
+.canvas-logo {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-tight);
+  text-decoration: none;
+}
+.canvas-logo-mark {
+  display: block;
+  flex: none;
+  width: var(--canvas-logo-tile);
+  height: var(--canvas-logo-tile);
+}
+/* The tile is ink and the aperture is the surface behind it, which is what
+   makes the dark treatment fall out of the appearance rather than out of a
+   second asset. */
+.canvas-logo-tile { fill: var(--accent); }
+.canvas-logo-c { stroke: var(--accent-contrast); }
+.canvas-logo-word { white-space: nowrap; }
+
+.canvas-logo-sm { gap: var(--sp-3); font-size: var(--fs-body); }
+.canvas-logo-lg { font-size: var(--fs-lg); letter-spacing: var(--tracking-heading); }
+.canvas-logo-xl { gap: var(--sp-5); font-size: var(--fs-2xl); letter-spacing: var(--tracking-heading); }
+
+/* A link wrapping the logo is the logo: no underline, no colour change, and a
+   press that reads on the mark rather than on the text. */
+a .canvas-logo, .canvas-logo-link { text-decoration: none; }
+a:hover .canvas-logo-word { text-decoration: none; }
+
+/* =============================================================== 3. buttons */
 
 .button {
   display: inline-flex;
@@ -70,7 +108,10 @@
   white-space: nowrap;
   transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
-.button:active:not(:disabled) { transform: translateY(0.5px); }
+/* Feedback on the press, not on the release: the control acknowledges the
+   pointer the instant it lands. Scale rather than a 0.5px nudge, because a
+   sub-pixel move is invisible on a low-DPI screen and reads as nothing. */
+.button:active:not(:disabled) { transform: scale(0.98); }
 /* Disabled means "not available here". A submit in flight is a wait, not a
    refusal, so it keeps its colour and says so with the cursor. */
 .button:disabled { cursor: not-allowed; opacity: 0.5; }
@@ -106,7 +147,7 @@
 .icon-button:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .icon-button-sm { width: 22px; height: 22px; }
 
-/* =============================================================== 3. toolbar */
+/* =============================================================== 4. toolbar */
 
 .toolbar {
   display: flex;
@@ -120,7 +161,7 @@
 .toolbar-divider { flex: none; width: 1px; height: 18px; margin: 0 var(--sp-2); background: var(--border); }
 .toolbar-spacer { flex: 1; min-width: var(--sp-2); }
 
-/* ============================================================ 4. form input */
+/* ============================================================ 5. form input */
 
 .field { display: grid; gap: var(--sp-3); min-width: 0; }
 .field-label {
@@ -136,7 +177,7 @@
   min-width: 0;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-2);
-  background: var(--surface);
+  background: var(--surface-field);
   color: var(--text);
   padding: var(--sp-4) var(--sp-5);
   font-size: var(--fs-md);
@@ -158,7 +199,7 @@
 select.input {
   padding-right: var(--sp-16);
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23837d74' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: var(--select-chevron);
   background-repeat: no-repeat;
   background-position: right var(--sp-5) center;
   cursor: pointer;
@@ -177,7 +218,7 @@ select.input:disabled { cursor: not-allowed; }
   padding: 0 var(--sp-4);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-2);
-  background: var(--surface);
+  background: var(--surface-field);
   color: var(--icon);
   transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
@@ -223,7 +264,7 @@ select.input:disabled { cursor: not-allowed; }
   width: 34px;
   height: 20px;
   border-radius: var(--r-full);
-  background: var(--n-300);
+  background: var(--control-track);
   transition: background var(--dur-2) var(--ease-out);
 }
 .switch-control::after {
@@ -262,11 +303,15 @@ select.input:disabled { cursor: not-allowed; }
 }
 .form-actions-split { justify-content: space-between; }
 
-/* =========================================================== 5. segmented */
+/* =========================================================== 6. segmented */
 
+/* Inside a grid — a form section, a panel body — an inline-flex box still
+   stretches to fill its column, leaving a track of empty pill behind the
+   options. The control is exactly as wide as the choices it offers. */
 .segmented {
   display: inline-flex;
   flex: none;
+  justify-self: start;
   gap: var(--sp-1);
   padding: var(--sp-1);
   border-radius: var(--r-2);
@@ -316,7 +361,7 @@ select.input:disabled { cursor: not-allowed; }
   background: var(--focus);
 }
 
-/* ========================================================== 6. status, chip */
+/* ========================================================== 7. status, chip */
 
 .badge {
   display: inline-flex;
@@ -380,9 +425,9 @@ select.input:disabled { cursor: not-allowed; }
   color: inherit;
   opacity: 0.6;
 }
-.chip-remove:hover { background: rgba(47, 90, 168, 0.14); opacity: 1; }
+.chip-remove:hover { background: var(--focus-line); opacity: 1; }
 
-/* ============================================================= 7. feedback */
+/* ============================================================= 8. feedback */
 
 .alert {
   display: flex;
@@ -467,8 +512,8 @@ select.input:disabled { cursor: not-allowed; }
   z-index: var(--z-tooltip);
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-2);
-  background: var(--n-900);
-  color: var(--n-0);
+  background: var(--tooltip-surface);
+  color: var(--tooltip-text);
   box-shadow: var(--e-2);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
@@ -481,7 +526,7 @@ select.input:disabled { cursor: not-allowed; }
 .tooltip-right { left: calc(100% + var(--sp-3)); top: 50%; transform: translateY(-50%); }
 @keyframes tooltip-in { from { opacity: 0; } }
 
-/* =========================================================== 8. rows, list */
+/* =========================================================== 9. rows, list */
 
 /* One row anatomy for every list in the product: a leading glyph, a label
    stack that truncates, trailing metadata, and actions that appear on hover
@@ -522,7 +567,7 @@ select.input:disabled { cursor: not-allowed; }
 
 .list { display: grid; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
 
-/* ============================================================== 9. surfaces */
+/* ============================================================== 10. surfaces */
 
 .card {
   border: 1px solid var(--border);
@@ -584,7 +629,7 @@ select.input:disabled { cursor: not-allowed; }
 .section-head p { margin: 0; max-width: 68ch; font-size: var(--fs-body); }
 .section-head-actions { display: flex; flex: none; align-items: center; gap: var(--sp-3); }
 
-/* ============================================================= 10. overlays */
+/* ============================================================= 11. overlays */
 
 .menu { position: relative; display: inline-flex; }
 .menu-trigger {

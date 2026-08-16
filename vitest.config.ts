@@ -16,6 +16,9 @@ export default defineConfig(({ mode }) => {
     assertSeparateTestDatabase(configured, resolved);
     process.env.DATABASE_URL = resolved;
   }
+  // Workspace AI credentials are always stored encrypted, including in tests. A fixed
+  // test key keeps suites hermetic without anyone having to configure one.
+  process.env.CANVAS_CREDENTIAL_KEY ??= env.CANVAS_CREDENTIAL_KEY ?? Buffer.alloc(32, 7).toString("base64url");
   return {
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
     test: {

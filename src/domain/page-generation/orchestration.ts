@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, generationJobMedia, generationJobs, mediaAssets, pageNodes, pageVersions } from "@/server/db/schema";
-import { getAIProvider } from "@/server/ai/provider-registry";
+import { resolveProjectProvider, type ResolvedProjectModel } from "@/domain/ai/connections/model-resolution";
+import { attachJobDuration, pricingFrom, recordAIUsage } from "@/domain/ai/analytics/usage-service";
+import { generateWithRepair, type ProviderCallRecorder } from "@/domain/ai/generation-runner";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { MediaService } from "@/domain/media/service";
 import { EditingLeaseService } from "@/domain/collaboration/lease-service";
@@ -15,12 +17,11 @@ import { recordChangeSet } from "@/domain/history/change-set-service";
 import type { GeneratedBlockUsage } from "@/domain/generated-source/validator";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedPageResponseSchema, type PageChangeSummary } from "./contract";
-import { assemblePageGenerationRequest } from "./prompt";
+import { assemblePageGenerationRequest, pagePromptVersion } from "./prompt";
 import { validateGeneratedPageSource, type GeneratedPageManifest } from "./validator";
 import { observe } from "@/server/observability/events";
 import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 import { repairGeneratedCanvasIds } from "@/domain/generated-source/canvas-id-repair";
-import { generatedSourceCorrectionRequest } from "@/domain/generated-source/correction";
 
 function summaryMessage(summary: PageChangeSummary) { return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n"); }
 function failureStage(error: AIError, fallback: string) {
@@ -31,8 +32,11 @@ function failureStage(error: AIError, fallback: string) {
   return fallback;
 }
 
+/** Resolves the project's own connection, model, and adapter at execution time. */
+export type ProjectProviderResolver = (projectId: string) => Promise<{ resolved: ResolvedProjectModel; provider: AIProvider }>;
+
 export class PageGenerationOrchestrationService {
-  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: () => AIProvider = getAIProvider, private readonly leases = new EditingLeaseService(), private readonly access = new ProjectAccessService()) {}
+  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ProjectProviderResolver = (projectId) => resolveProjectProvider(projectId, database), private readonly leases = new EditingLeaseService(), private readonly access = new ProjectAccessService()) {}
   private async current(jobId: string) { const [job] = await this.database.select().from(generationJobs).where(eq(generationJobs.id, jobId)).limit(1); return job; }
   private async cancellation(jobId: string) { const job = await this.current(jobId); if (!job) return true; if (!job.cancelRequestedAt && job.status !== "cancelled") return false; if (!(["completed", "failed", "cancelled"] as string[]).includes(job.status)) await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." }); return true; }
 
@@ -72,46 +76,59 @@ export class PageGenerationOrchestrationService {
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "generating", "Generating page");
       const imageParts = await Promise.all(selected.map(async (asset) => { const binary = await new MediaService().readBinary(initial.actorUserId, asset.id); if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable."); return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName }; }));
-      const provider = this.providerResolver();
-      
+      // project → selected connection → selected enabled model → adapter. The credential
+      // is decrypted inside this call and never travels through the job payload.
+      const { provider, resolved } = await this.providerResolver(initial.projectId);
+      const promptVersion = pagePromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
+      await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
+
       const providerRequest = assemblePageGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, imageParts, signal: providerAbort.signal });
-      let response = await provider.generateStructured(providerRequest, generatedPageResponseSchema);
-      if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
-      await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
-      
-      if (await this.cancellation(jobId)) return this.current(jobId);
-      await this.lifecycle.transition(jobId, "validating", "Validating page");
-      
       const approved = new Set(context.media.map(({ id }) => id)); const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
       // Only Building Blocks declared in the assembled context, active in this project,
       // and already generated may be referenced. Anything else is a rejected reference.
       const availableBlockIds = new Set(context.blocks.filter((block) => block.currentVersionId).map((block) => block.id));
-      const declaredBlockUsages = response.structuredData.blockUsages;
-      const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(declaredBlockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
-      let repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
-      let manifest: GeneratedPageManifest;
-      try {
-        manifest = await validateGeneratedPageSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages, blockSources });
-      } catch (error) {
-        if (!(error instanceof AIError) || error.code !== "AI_GENERATED_SOURCE_INVALID") throw error;
-        response = await provider.generateStructured(generatedSourceCorrectionRequest(providerRequest, response.text, error.diagnostic), generatedPageResponseSchema);
-        if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
-        await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
-        repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
-        manifest = await validateGeneratedPageSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds, availableBlockIds, declaredBlockUsages: response.structuredData.blockUsages, blockSources });
-      }
-      
-      if (selectedElement) {
-        const { targetCanvasId, targetRemoved } = response.structuredData;
-        if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
-        if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
-      }
+      const pricing = pricingFrom(resolved.model);
+      const record: ProviderCallRecorder = async (entry) => {
+        const row = await recordAIUsage({
+          workspaceId: resolved.workspaceId, projectId: initial.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: initial.actorUserId,
+          provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: entry.requestKind, operation: initial.operation,
+          promptVersion: entry.promptVersion, succeeded: entry.succeeded, errorCode: entry.errorCode, usage: entry.usage, pricing,
+          providerLatencyMs: entry.providerLatencyMs, validationDurationMs: entry.validationDurationMs,
+        }, this.database);
+        return row?.id ?? null;
+      };
+
+      const run = await generateWithRepair({
+        provider, request: providerRequest, schema: generatedPageResponseSchema, promptVersion, record,
+        onCandidate: async (candidate) => { await this.database.update(generationJobs).set({ provider: candidate.provider, providerModel: candidate.model, providerRequestId: candidate.providerRequestId, usageMetadata: candidate.usage }).where(eq(generationJobs.id, jobId)); },
+        validate: async (data) => {
+          const blockSources = await loadActiveBlockSources(this.database, initial.projectId, [...new Set(data.blockUsages.filter((usage) => availableBlockIds.has(usage.blockId)).map((usage) => usage.blockId))]);
+          const repaired = repairGeneratedCanvasIds(data.sourceCode);
+          const manifest = await validateGeneratedPageSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds, availableBlockIds, declaredBlockUsages: data.blockUsages, blockSources });
+          if (selectedElement) {
+            const { targetCanvasId, targetRemoved } = data;
+            if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
+            if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
+          }
+          return { manifest, sourceCode: repaired.sourceCode };
+        },
+      });
+      const response = run.response;
+      const manifest: GeneratedPageManifest = run.validated.manifest;
+      const repaired = { sourceCode: run.validated.sourceCode };
+      if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid page from this request. Try again.");
+
+      if (await this.cancellation(jobId)) return this.current(jobId);
+      await this.lifecycle.transition(jobId, "validating", "Validating page", { providerLatencyMs: run.providerLatencyMs, validationDurationMs: run.validationDurationMs, repairAttemptCount: run.repairAttempts });
+
       if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "applying", "Applying page update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
       const completed = await this.commit({ jobId, sourceCode: repaired.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
-      observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: performance.now() - startedAt });
+      const jobDurationMs = performance.now() - startedAt;
+      await attachJobDuration(jobId, jobDurationMs, this.database);
+      observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: jobDurationMs, providerLatencyMs: run.providerLatencyMs, repairAttempts: run.repairAttempts, promptVersion });
       return completed;
     } catch (cause) {
       const error = cause instanceof DomainError && cause.code === "ACCESS_DENIED" ? new AIError("AI_PAGE_CONFLICT", "You no longer have access to update this page.") : safeAIError(cause);
@@ -119,7 +136,7 @@ export class PageGenerationOrchestrationService {
       if (!current || ["completed", "failed", "cancelled"].includes(current.status)) return current ?? null;
       if (current.cancelRequestedAt || error.code === "AI_JOB_CANCELLED") await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." });
       else if (error.retryable && current.attemptCount < 3) await this.lifecycle.transition(jobId, "queued", "Queued for retry", { availableAt: new Date(Date.now() + 1_000 * 2 ** Math.max(0, current.attemptCount - 1)), claimedAt: null, workerId: null, errorCode: error.code, errorMessage: error.message });
-      else { const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic); const pipelineStage = failureStage(error, current.progressStage); await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic }); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic }); if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_SOURCE_INVALID"].includes(error.code)) observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel }); }
+      else { const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic); const pipelineStage = failureStage(error, current.progressStage); await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic }); await attachJobDuration(jobId, performance.now() - startedAt, this.database); await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.page_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } }); observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic }); if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_SOURCE_INVALID"].includes(error.code)) observe.validationFailed("page", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel }); }
       return this.current(jobId);
     } finally {
       if (heartbeat) clearInterval(heartbeat);

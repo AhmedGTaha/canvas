@@ -13,6 +13,7 @@ import { PageTreeService } from "@/domain/pages/service";
 import { BuildingBlockService } from "@/domain/blocks/service";
 import { GenerationJobService, claimGenerationJob } from "@/domain/ai/job-service";
 import { AIOrchestrationService } from "@/domain/ai/orchestration-service";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 import type { AIProvider, AIRequest, AIResponse, StructuredValidator } from "@/domain/ai/provider";
 import { getObjectStorage } from "@/server/storage";
 import { PreviewManifestService } from "@/generated-runtime/manifest/service";
@@ -96,7 +97,7 @@ export default function GlobalNavbar() {
   );
 }`;
 
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly options: { referencedMediaIds?: string[]; blockUsages?: Array<{ blockId: string; usageKey: string }> } = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
@@ -128,12 +129,12 @@ async function runBlockJob(userId: string, projectId: string, blockId: string, s
 async function processBlockJob(userId: string, projectId: string, blockId: string, source: string, mediaIds: string[]) {
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: "Create a navbar", selectedMediaIds: mediaIds });
   await claimGenerationJob("worker");
-  return new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, { referencedMediaIds: mediaIds })).process(request.job.id);
+  return new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, { referencedMediaIds: mediaIds }))).process(request.job.id);
 }
 async function runPageJob(userId: string, projectId: string, pageId: string, source: string, blockUsages: Array<{ blockId: string; usageKey: string }>) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "Use the navbar", selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, { blockUsages })).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, { blockUsages }))).process(request.job.id);
   expect(job).toMatchObject({ status: "completed" });
 }
 const environment = { ...process.env };

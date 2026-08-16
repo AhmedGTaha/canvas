@@ -290,10 +290,16 @@
 
 /* Preview surfaces shared by the sections tool and the theme preview. */
 .preview-canvas { position: relative; display: flex; flex: 1; justify-content: center; min-height: 0; padding: var(--sp-8); overflow: auto; background: var(--surface-sunken); }
-.preview-device { flex: 0 0 auto; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--r-2); background: var(--surface); box-shadow: var(--e-2); transition: width var(--dur-3) var(--ease-out); }
-.preview-device iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--surface); }
+/* Same rule as the workspace stage: the section being previewed is the user's
+   website, so it keeps its own paper whatever appearance Canvas is in. */
+.preview-device { flex: 0 0 auto; width: 100%; height: 100%; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--r-2); background: var(--preview-paper); box-shadow: var(--e-2); transition: width var(--dur-3) var(--ease-out); }
+.preview-device iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--preview-paper); }
+/* With no section chosen there is no website in the frame, so the box stops
+   being the user's paper and becomes Canvas's own empty state — otherwise the
+   placeholder is chrome-grey text printed on a blank white sheet. */
+.preview-device-empty { background: var(--surface); }
 .preview-loading, .preview-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-5); height: 100%; color: var(--text-muted); font-size: var(--fs-body); }
-.preview-error { position: absolute; inset: var(--sp-8); z-index: var(--z-raised); border-radius: var(--r-3); background: rgba(255, 255, 255, 0.94); text-align: center; }
+.preview-error { position: absolute; inset: var(--sp-8); z-index: var(--z-raised); border-radius: var(--r-3); background: var(--surface-scrim); text-align: center; }
 .preview-error h2 { margin: 0; font-size: var(--fs-md); }
 .preview-status { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); min-height: 26px; padding: 0 var(--sp-8); border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: var(--fs-sm); }
 .status-error-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
@@ -324,7 +330,7 @@
 .color-field { display: grid; gap: var(--sp-3); }
 .color-field > span { color: var(--text-secondary); font-size: var(--fs-body); font-weight: var(--fw-semibold); }
 .color-field > div { display: flex; align-items: center; gap: var(--sp-3); }
-.color-field input[type="color"] { flex: 0 0 34px; width: 34px; height: 34px; padding: 2px; border: 1px solid var(--border-strong); border-radius: var(--r-2); background: var(--surface); cursor: pointer; }
+.color-field input[type="color"] { flex: 0 0 34px; width: 34px; height: 34px; padding: 2px; border: 1px solid var(--border-strong); border-radius: var(--r-2); background: var(--surface-field); cursor: pointer; }
 .color-field .input { height: 34px; font-family: var(--font-mono); font-size: var(--fs-body); }
 .scale-list { display: grid; gap: var(--sp-12); }
 .scale-field { display: grid; gap: var(--sp-3); }
@@ -472,6 +478,86 @@
 
 /* ------------------------------------------------------------- responsive */
 
+
+/* ---------------------------------------------------------------- AI settings */
+/*
+ * AI settings reuses the panel, section, field, badge and detail-list vocabulary the
+ * rest of Canvas is built from. The only new shapes here are the ones this tool
+ * genuinely needs: a metric row, a scrollable data table, and a response block.
+ */
+.ai-settings { display: grid; gap: var(--sp-10); }
+
+.ai-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-8); }
+
+.ai-card {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-10);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--surface);
+}
+.ai-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-8); }
+.ai-card-head > div { display: grid; gap: var(--sp-1); min-width: 0; }
+.ai-card-head strong { font-size: var(--fs-md); font-weight: var(--fw-semibold); }
+.ai-card-head small { color: var(--text-muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+
+.ai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+/* Field and its one action on the same row: the action sits on the input's baseline,
+   not under it, and the hint below the input does not push it out of alignment. */
+.ai-inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--sp-4); }
+.ai-inline-form > .button { margin-top: 22px; }
+
+.ai-models { display: grid; gap: var(--sp-6); padding-top: var(--sp-6); border-top: 1px solid var(--border-subtle); }
+.ai-models-head h4 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+.ai-model-row { display: grid; gap: var(--sp-4); padding: var(--sp-4) 0; border-bottom: 1px solid var(--border-subtle); }
+.ai-model-row:last-child { border-bottom: 0; }
+.ai-model-main { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6); }
+.ai-model-main .choice { flex: 1; min-width: 0; }
+.ai-model-detail { display: grid; gap: var(--sp-6); padding: var(--sp-6); border-radius: var(--r-2); background: var(--surface-muted); }
+
+/* A metric states one number and, underneath it, what that number does not include. */
+.ai-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--sp-6); }
+.ai-metric {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--surface);
+}
+.ai-metric-label { color: var(--text-muted); font-size: var(--fs-sm); }
+.ai-metric-value { font-size: var(--fs-xl); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; line-height: var(--lh-snug); }
+.ai-metric small { color: var(--text-muted); font-size: var(--fs-sm); line-height: var(--lh-snug); }
+
+.ai-details { border-top: 1px solid var(--border-subtle); padding-top: var(--sp-6); }
+.ai-details > summary { cursor: pointer; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+.ai-details > summary::marker { color: var(--icon); }
+.ai-details > *:not(summary) { margin-top: var(--sp-6); }
+
+/* Wide tables scroll inside their own box: the panel body never scrolls sideways. */
+.ai-table-scroll { overflow-x: auto; }
+.ai-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.ai-table th, .ai-table td { padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--border-subtle); text-align: left; white-space: nowrap; }
+.ai-table th { color: var(--text-muted); font-weight: var(--fw-semibold); }
+.ai-table tbody tr:last-child td { border-bottom: 0; }
+
+.ai-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-sm); }
+
+.ai-response {
+  margin: 0;
+  padding: var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--surface-muted);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1100px) {
   .media-layout { grid-template-columns: 180px minmax(0, 1fr); }
   .media-details { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
@@ -510,4 +596,7 @@
   .member-row { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .member-role { display: none; }
   .invite-link-row { flex-direction: column; }
+  .ai-field-row { grid-template-columns: 1fr; }
+  .ai-card-head { flex-direction: column; gap: var(--sp-4); }
+  .ai-model-main { align-items: flex-start; flex-direction: column; }
 }

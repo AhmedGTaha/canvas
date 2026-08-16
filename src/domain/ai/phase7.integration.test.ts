@@ -12,6 +12,7 @@ import { ProjectContextBuilder } from "./context";
 import { GenerationJobLifecycle, GenerationJobService, claimGenerationJob } from "./job-service";
 import { AIOrchestrationService } from "./orchestration-service";
 import type { AIProvider } from "./provider";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 async function user(label: string) { const id = randomUUID(); const [record] = await db.insert(users).values({ id, email: `${label}-${id}@test.dev`, normalizedEmail: `${label}-${id}@test.dev`, displayName: label }).returning(); return record!; }
 async function project(ownerId: string, name: string) { const workspace = await new WorkspaceService().create(ownerId, { name: `${name} workspace` }); return new ProjectService().create(ownerId, { workspaceId: workspace.id, name, description: `${name} description` }); }
@@ -78,8 +79,8 @@ describe.sequential("Phase 7 AI context infrastructure", () => {
     const owner = await user("owner"); const site = await project(owner.id, "Site"); const conversation = await new AIConversationService().create(owner.id, { projectId: site.id });
     const created = await new GenerationJobService().createAssistantJob(owner.id, { projectId: site.id, conversationId: conversation.id, content: "Summarize." });
     await claimGenerationJob("worker");
-    const fake: AIProvider = { name: "fake", model: "fake-1", generateText: async () => ({ text: "A concise project summary.", provider: "fake", model: "fake-1", providerRequestId: "safe-id", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }), generateStructured: async () => { throw new Error("unused"); } };
-    const orchestration = new AIOrchestrationService(db, new ProjectContextBuilder(), new GenerationJobLifecycle(db), () => fake);
+    const fake: AIProvider = { name: "fake", model: "fake-1", capabilities: { structuredOutput: true, vision: true }, generateText: async () => ({ text: "A concise project summary.", provider: "fake", model: "fake-1", providerRequestId: "safe-id", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }), generateStructured: async () => { throw new Error("unused"); } };
+    const orchestration = new AIOrchestrationService(db, new ProjectContextBuilder(), new GenerationJobLifecycle(db), fixtureProviderResolver(() => fake));
     const completed = await orchestration.process(created.job.id);
     expect(completed).toMatchObject({ status: "completed", provider: "fake", providerModel: "fake-1", usageMetadata: { totalTokens: 15 } });
     await orchestration.process(created.job.id);

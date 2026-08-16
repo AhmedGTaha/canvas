@@ -89,27 +89,9 @@
   border-bottom: 1px solid var(--border);
   background: var(--surface-chrome);
 }
-.ws-brand-home {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--sp-4);
-  color: var(--text);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-bold);
-  text-decoration: none;
-}
-.ws-brand-home > span, .ws-mark {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--r-2);
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-bold);
-}
+/* Same logo as every other Canvas surface, at the density the title bar runs
+   at. The title bar used to draw a Command glyph here instead of the mark. */
+.ws-brand-home { display: flex; flex: none; align-items: center; text-decoration: none; }
 
 /* Where you are: workspace, website, page. The page is the loud one, because
    it is the thing every edit applies to. */
@@ -137,7 +119,7 @@
   padding: 0 var(--sp-4);
   border: 1px solid var(--border);
   border-radius: var(--r-2);
-  background: var(--surface);
+  background: var(--surface-field);
   color: var(--text-subtle);
   font-size: var(--fs-body);
   text-align: left;
@@ -223,8 +205,8 @@
   display: none;
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-2);
-  background: var(--n-900);
-  color: var(--n-0);
+  background: var(--tooltip-surface);
+  color: var(--tooltip-text);
   box-shadow: var(--e-2);
   font-size: var(--fs-sm);
   white-space: nowrap;
@@ -369,7 +351,7 @@
 }
 .ws-resize-r { right: -4px; }
 .ws-resize-l { left: -4px; }
-.ws-resize:hover { background: rgba(47, 90, 168, 0.22); }
+.ws-resize:hover { background: var(--focus-line); }
 /* A 7px strip cannot show a ring around itself, so focus fills it: the whole
    handle becomes the indicator, which is also what the arrow keys then move. */
 .ws-resize:focus-visible { background: var(--focus); outline: 2px solid var(--focus); outline-offset: 1px; }
@@ -389,7 +371,7 @@
   padding: 0 var(--sp-4);
   border: 1px solid var(--border);
   border-radius: var(--r-2);
-  background: var(--surface);
+  background: var(--surface-field);
   color: var(--icon);
   transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
@@ -502,7 +484,7 @@
   border: 1px solid var(--focus);
   border-radius: var(--r-1);
   outline: 0;
-  background: var(--surface);
+  background: var(--surface-field);
   color: var(--text);
   font: inherit;
   font-weight: var(--fw-regular);
@@ -558,7 +540,7 @@
   padding: 0 var(--sp-4);
   border: 1px solid var(--border);
   border-radius: var(--r-full);
-  background: var(--surface);
+  background: var(--surface-field);
   color: var(--text-muted);
 }
 .ws-page-picker > svg { flex: none; }
@@ -640,7 +622,10 @@
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-2);
-  background: var(--surface);
+  /* The sheet the website is printed on. It does not follow the appearance of
+     Canvas: whether this is light or dark is the website's own decision, made
+     by its theme and the preview's appearance control. */
+  background: var(--preview-paper);
   box-shadow: var(--e-2);
 }
 /* Deliberately not animated. The scale changes both when the device preset
@@ -652,7 +637,7 @@
   height: 100%;
   transform-origin: top left;
 }
-.ws-device iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--surface); }
+.ws-device iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--preview-paper); }
 
 .ws-stage-overlay {
   position: absolute;
@@ -808,7 +793,7 @@
   padding: var(--sp-4);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-3);
-  background: var(--surface);
+  background: var(--surface-field);
   box-shadow: var(--e-1);
   transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
@@ -1205,7 +1190,7 @@
   .ws-shell { grid-template-rows: var(--ws-title-h) minmax(0, 1fr) 52px; }
   .ws-statusbar { display: none; }
   .ws-title { gap: var(--sp-3); padding: 0 var(--sp-3); }
-  .ws-brand-home strong, .ws-search-trigger span, .ws-search-trigger kbd, .ws-title-button, .ws-title-icon { display: none; }
+  .ws-brand-home .canvas-logo-word, .ws-search-trigger span, .ws-search-trigger kbd, .ws-title-button, .ws-title-icon { display: none; }
   /* The page you are editing is the one thing worth its width on a phone. */
   .ws-breadcrumb > span:first-child, .ws-breadcrumb > i { display: none; }
   .ws-breadcrumb { min-width: 0; flex: 1; }

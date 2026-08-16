@@ -22,9 +22,11 @@ export const observe = {
     metrics.count("invite.lifecycle", { action });
     emit(`invite.${action}`, fields, action === "rejected" ? "warn" : "info");
   },
-  generationJob(action: "created" | "started" | "completed" | "failed" | "cancelled" | "retried", fields: { jobId: string; projectId: string; operation?: string; targetId?: string | null; reason?: string; durationMs?: number; pipelineStage?: string; provider?: string | null; model?: string | null; diagnostic?: string | null }) {
+  generationJob(action: "created" | "started" | "completed" | "failed" | "cancelled" | "retried", fields: { jobId: string; projectId: string; operation?: string; targetId?: string | null; reason?: string; durationMs?: number; providerLatencyMs?: number; repairAttempts?: number; promptVersion?: string; pipelineStage?: string; provider?: string | null; model?: string | null; diagnostic?: string | null }) {
     metrics.count("generation.job", { action, operation: fields.operation });
     if (typeof fields.durationMs === "number") metrics.observe("generation.duration_ms", fields.durationMs, { operation: fields.operation });
+    // Provider latency is kept apart from job duration: they answer different questions.
+    if (typeof fields.providerLatencyMs === "number") metrics.observe("generation.provider_latency_ms", fields.providerLatencyMs, { operation: fields.operation });
     emit(`generation.${action}`, fields, action === "failed" ? "error" : "info");
   },
   validationFailed(kind: "page" | "block" | "export" | "restore", fields: { projectId?: string; jobId?: string; entityId?: string; reason?: string; diagnostic?: string | null; pipelineStage?: string; provider?: string | null; model?: string | null }) {

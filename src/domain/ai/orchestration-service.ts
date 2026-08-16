@@ -1,8 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, generationJobs } from "@/server/db/schema";
-import { getAIProvider } from "@/server/ai/provider-registry";
-import { AIError, type AIProvider } from "./provider";
+import { resolveProjectProvider } from "./connections/model-resolution";
+import { attachJobDuration, pricingFrom, recordAIUsage } from "./analytics/usage-service";
+import { CANVAS_PROMPT_VERSIONS } from "./prompts/versions";
+import { AIError } from "./provider";
+import type { ProjectProviderResolver } from "@/domain/page-generation/orchestration";
 import { ProjectContextBuilder, type ProjectContextTarget } from "./context";
 import { assembleProviderRequest } from "./prompt-assembler";
 import { GenerationJobLifecycle, safeAIError } from "./job-service";
@@ -14,7 +17,7 @@ import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnos
 const MAX_ATTEMPTS = 3;
 
 export class AIOrchestrationService {
-  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: () => AIProvider = getAIProvider) {}
+  constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ProjectProviderResolver = (projectId) => resolveProjectProvider(projectId, database)) {}
 
   private async current(jobId: string) { const [job] = await this.database.select().from(generationJobs).where(eq(generationJobs.id, jobId)).limit(1); return job; }
   private async cancelIfRequested(jobId: string) {
@@ -41,10 +44,29 @@ export class AIOrchestrationService {
       observe.generationJob("started", { jobId, projectId: job.projectId, operation: "assistant" });
       if (await this.cancelIfRequested(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "generating", "Contacting AI");
-      const provider = this.providerResolver();
-      
-      const response = await provider.generateText(assembleProviderRequest(context, prompt.content));
-      
+      const { provider, resolved } = await this.providerResolver(job.projectId);
+      await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion: CANVAS_PROMPT_VERSIONS.assistant }).where(eq(generationJobs.id, jobId));
+
+      const providerStartedAt = performance.now();
+      let response;
+      try {
+        response = await provider.generateText(assembleProviderRequest(context, prompt.content));
+      } catch (error) {
+        await recordAIUsage({
+          workspaceId: resolved.workspaceId, projectId: job.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: job.actorUserId,
+          provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: "generation", operation: "assistant",
+          promptVersion: CANVAS_PROMPT_VERSIONS.assistant, succeeded: false, errorCode: error instanceof AIError ? error.code : "AI_INTERNAL_ERROR",
+          pricing: pricingFrom(resolved.model), providerLatencyMs: Math.round(performance.now() - providerStartedAt),
+        }, this.database);
+        throw error;
+      }
+      await recordAIUsage({
+        workspaceId: resolved.workspaceId, projectId: job.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: job.actorUserId,
+        provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: "generation", operation: "assistant",
+        promptVersion: CANVAS_PROMPT_VERSIONS.assistant, succeeded: true, usage: response.usage, pricing: pricingFrom(resolved.model),
+        providerLatencyMs: response.timing?.providerLatencyMs ?? Math.round(performance.now() - providerStartedAt),
+      }, this.database);
+
       if (await this.cancelIfRequested(jobId)) return this.current(jobId);
       const completed = await this.database.transaction(async (transaction) => {
         const [locked] = await transaction.select().from(generationJobs).where(eq(generationJobs.id, jobId)).for("update");
@@ -64,7 +86,9 @@ export class AIOrchestrationService {
         if (!updated) throw new Error("Generation job finalization failed.");
         return updated;
       });
-      observe.generationJob(completed?.status === "cancelled" ? "cancelled" : "completed", { jobId, projectId: job.projectId, operation: "assistant", durationMs: performance.now() - startedAt });
+      const jobDurationMs = performance.now() - startedAt;
+      await attachJobDuration(jobId, jobDurationMs, this.database);
+      observe.generationJob(completed?.status === "cancelled" ? "cancelled" : "completed", { jobId, projectId: job.projectId, operation: "assistant", durationMs: jobDurationMs });
       return completed;
     } catch (cause) {
       const error = safeAIError(cause);

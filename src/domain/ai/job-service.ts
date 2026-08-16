@@ -8,12 +8,17 @@ import { createBlockJobSchema } from "@/domain/blocks/schemas";
 import { elementNotFound, findEditableElement, type ResolvedElementSelection } from "@/domain/generated-source/selection";
 import { createAssistantJobSchema, createPageJobSchema } from "./schemas";
 import { observe } from "@/server/observability/events";
-import { aiProviderDescriptor } from "@/server/ai/config";
+import { projectModelDescriptor } from "./connections/model-resolution";
 
-/** Provider and model recorded on a job row. Never includes credentials. */
-function aiProviderRecord() {
-  const { provider, model } = aiProviderDescriptor();
-  return { provider, providerModel: model };
+/**
+ * Provider identity recorded on a job row at creation, from the project's current
+ * selection. It is a snapshot for display only — the worker resolves the selection again
+ * at execution time — and it never includes a credential. A project with no usable
+ * selection still gets a job row, which then fails with a clear configuration error.
+ */
+async function aiProviderRecord(database: Database, projectId: string) {
+  const descriptor = await projectModelDescriptor(projectId, database);
+  return { provider: descriptor?.provider ?? "unresolved", providerModel: descriptor?.model ?? null, aiConnectionId: descriptor?.connectionId ?? null };
 }
 
 export type GenerationJobStatus = typeof generationJobs.$inferSelect.status;
@@ -44,11 +49,12 @@ export class GenerationJobService {
     if (!conversation) throw new DomainError("NOT_FOUND", "Conversation not found.");
     await applyRateLimit(this.database, "user", userId, 10);
     await applyRateLimit(this.database, "project", parsed.projectId, 30);
+    const providerRecord = await aiProviderRecord(this.database, parsed.projectId);
     return this.database.transaction(async (transaction) => {
       const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content }).returning();
       if (!message) throw new Error("User message insert failed.");
       const targetType = conversation.pageId ? "page" as const : "project" as const;
-      const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType, targetId: conversation.pageId, promptMessageId: message.id, ...aiProviderRecord(), contextMetadata: { selectedMediaIds: parsed.selectedMediaIds } }).returning();
+      const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType, targetId: conversation.pageId, promptMessageId: message.id, ...providerRecord, contextMetadata: { selectedMediaIds: parsed.selectedMediaIds } }).returning();
       if (!job) throw new Error("Generation job insert failed.");
       await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
       await transaction.insert(auditEvents).values({ projectId: parsed.projectId, userId, action: "ai.job_created", entityType: "generation_job", entityId: job.id });
@@ -61,6 +67,7 @@ export class GenerationJobService {
     const parsed = createPageJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
+    const providerRecord = await aiProviderRecord(this.database, parsed.projectId);
     try {
       return await this.database.transaction(async (transaction) => {
         const [page] = await transaction.select().from(pageNodes).where(and(eq(pageNodes.id, parsed.pageId), eq(pageNodes.projectId, parsed.projectId), eq(pageNodes.type, "page"), drizzleSql`${pageNodes.deletedAt} IS NULL`)).for("update");
@@ -85,7 +92,7 @@ export class GenerationJobService {
         const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = page.currentVersionId ? "page_modify" as const : "page_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, queueItemId, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "page", targetId: page.id, operation, basePageVersionId: page.currentVersionId, promptMessageId: message.id, queueItemId, ...providerRecord, contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));
@@ -109,6 +116,7 @@ export class GenerationJobService {
     const parsed = createBlockJobSchema.parse(input);
     await this.access.requireProjectAccess(userId, parsed.projectId);
     await applyRateLimit(this.database, "user", userId, 10); await applyRateLimit(this.database, "project", parsed.projectId, 30);
+    const providerRecord = await aiProviderRecord(this.database, parsed.projectId);
     try {
       return await this.database.transaction(async (transaction) => {
         const [block] = await transaction.select().from(buildingBlocks).where(and(eq(buildingBlocks.id, parsed.blockId), eq(buildingBlocks.projectId, parsed.projectId), drizzleSql`${buildingBlocks.deletedAt} IS NULL`)).for("update");
@@ -131,7 +139,7 @@ export class GenerationJobService {
         const [message] = await transaction.insert(aiMessages).values({ conversationId: conversation.id, role: "user", userId, content: parsed.content, metadata: selectedElement ? { selectedElement } : null }).returning();
         if (!message) throw new Error("User message insert failed.");
         const operation = block.currentVersionId ? "block_modify" as const : "block_generate" as const;
-        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, queueItemId, ...aiProviderRecord(), contextMetadata: selectedElement ? { selectedElement } : null }).returning();
+        const [job] = await transaction.insert(generationJobs).values({ projectId: parsed.projectId, conversationId: conversation.id, actorUserId: userId, targetType: "building_block", targetId: block.id, operation, baseBlockVersionId: block.currentVersionId, promptMessageId: message.id, queueItemId, ...providerRecord, contextMetadata: selectedElement ? { selectedElement } : null }).returning();
         if (!job) throw new Error("Generation job insert failed.");
         if (selectedIds.length) await transaction.insert(generationJobMedia).values(selectedIds.map((mediaAssetId, position) => ({ generationJobId: job.id, projectId: parsed.projectId, mediaAssetId, position })));
         await transaction.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, conversation.id));

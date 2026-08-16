@@ -11,6 +11,7 @@ import { GenerationJobService, claimGenerationJob } from "@/domain/ai/job-servic
 import { AIOrchestrationService } from "@/domain/ai/orchestration-service";
 import type { AIProvider, AIRequest, AIResponse, StructuredValidator } from "@/domain/ai/provider";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 const HERO = `<section data-canvas-id="hero-main" data-canvas-label="Hero"><h1>Original hero</h1></section>`;
 const page = (body: string) => `export default function Page(){return <main className="c-page">${HERO}${body}</main>}`;
@@ -25,7 +26,7 @@ const pageUsingNavbar = (blockId: string) => `import { CanvasBlock } from "@canv
 type FixtureOptions = { targetCanvasId?: string | null; targetRemoved?: boolean; blockUsages?: Array<{ blockId: string; usageKey: string }>; block?: boolean };
 
 /** Deterministic provider: element targeting is verified without real AI credentials. */
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly options: FixtureOptions = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "unused", provider: this.name, model: this.model }; }
@@ -54,13 +55,13 @@ async function runPageJob(userId: string, projectId: string, pageId: string, con
   const { selection, ...fixture } = options;
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content, selectedMediaIds: [], selection: selection ?? null });
   await claimGenerationJob("worker");
-  return { request, job: await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, fixture)).process(request.job.id) };
+  return { request, job: await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, fixture))).process(request.job.id) };
 }
 async function runBlockJob(userId: string, projectId: string, blockId: string, content: string, source: string, options: FixtureOptions & { selection?: Selection } = {}) {
   const { selection, ...fixture } = options;
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content, selectedMediaIds: [], selection: selection ?? null });
   await claimGenerationJob("worker");
-  return { request, job: await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, fixture)).process(request.job.id) };
+  return { request, job: await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, fixture))).process(request.job.id) };
 }
 async function activeSource(pageId: string) {
   const [node] = await db.select().from(pageNodes).where(eq(pageNodes.id, pageId));
@@ -136,7 +137,7 @@ describe.sequential("Phase 10 element-level editing", () => {
     const [replacement] = await db.insert(pageVersions).values({ projectId: project.id, pageId: home.id, versionNumber: 2, sourceCode: pageWithoutCard, manifest: { editableElements: [{ canvasId: "hero-main", elementType: "section", label: "Hero" }] }, seoMetadata: {}, changeSummary: {}, sourceHash: "b".repeat(64), createdByUserId: owner.id }).returning();
     await db.update(generationJobs).set({ basePageVersionId: replacement!.id }).where(eq(generationJobs.id, request.job.id));
 
-    const result = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(pageCompactCard, { targetCanvasId: "pricing-card-pro" })).process(request.job.id);
+    const result = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(pageCompactCard, { targetCanvasId: "pricing-card-pro" }))).process(request.job.id);
     expect(result).toMatchObject({ status: "failed", errorCode: "AI_ELEMENT_STALE" });
     expect((await activeSource(home.id)).id).toBe(first.id);
   });
@@ -171,7 +172,7 @@ describe.sequential("Phase 10 element-level editing", () => {
     await expect(jobs.createPageJob(owner.id, { projectId: project.id, pageId: home.id, content: "Two", selectedMediaIds: [], selection: { canvasId: "hero-main" } })).rejects.toThrow(/already updating/);
 
     await jobs.requestCancellation(owner.id, project.id, active.job.id);
-    await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(pageCompactCard, { targetCanvasId: "pricing-card-pro" })).process(active.job.id);
+    await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(pageCompactCard, { targetCanvasId: "pricing-card-pro" }))).process(active.job.id);
     expect(await db.select().from(pageVersions)).toHaveLength(1);
     expect((await activeSource(home.id)).id).toBe(first.id);
   });

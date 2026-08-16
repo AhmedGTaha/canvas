@@ -1,7 +1,8 @@
 import { ApiError, GoogleGenAI } from "@google/genai";
 import { createHash } from "node:crypto";
 import { ZodError } from "zod";
-import { AIError, type AIProvider, type AIRequest, type AIResponse, type StructuredValidator } from "@/domain/ai/provider";
+import { safeDiagnostic } from "./provider-errors";
+import { AIError, requireModelCapability, type AIProvider, type AIRequest, type AIResponse, type ModelCapabilities, type ProviderModelDescriptor, type StructuredValidator } from "@/domain/ai/provider";
 
 /** HTTP status of a provider failure, from the SDK error or a status-like shape. */
 function errorStatus(error: unknown) {
@@ -17,9 +18,10 @@ function errorStatus(error: unknown) {
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : typeof error === "string" ? error : "";
 }
-/** Short, non-sensitive diagnostic for logs. Never includes credentials. */
+/** Short, non-sensitive diagnostic for logs. Never includes credentials: it goes through
+ *  the same redaction every other adapter uses. */
 function diagnostic(error: unknown) {
-  return messageOf(error).replace(/key=[^&\s]+/gi, "key=[redacted]").slice(0, 200) || undefined;
+  return safeDiagnostic(messageOf(error));
 }
 
 /**
@@ -35,10 +37,10 @@ export function normalizeGeminiError(error: unknown): AIError {
   const detail = diagnostic(error);
 
   if (status === 401 || status === 403 || /API key not valid|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(message)) {
-    return new AIError("AI_PROVIDER_AUTH_FAILED", "Canvas AI is not set up correctly. Check the AI configuration for this environment.", false, undefined, detail);
+    return new AIError("AI_PROVIDER_AUTH_FAILED", "This AI connection was rejected by the provider. Check its API key in AI settings.", false, undefined, detail);
   }
   if (status === 404 || /is not found|not supported|NOT_FOUND/i.test(message)) {
-    return new AIError("AI_NOT_CONFIGURED", "The configured AI model is unavailable. Check the AI configuration for this environment.", false, undefined, detail);
+    return new AIError("AI_NOT_CONFIGURED", "The selected AI model is unavailable from this connection. Choose a different model in AI settings.", false, undefined, detail);
   }
   if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(message)) {
     return new AIError("AI_PROVIDER_RATE_LIMITED", "Canvas AI is busy right now. Try again shortly.", true, retryDelayMs(error));
@@ -110,13 +112,35 @@ function unwrapJson(text: string) {
  */
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
+  readonly capabilities: ModelCapabilities;
   private readonly client: GoogleGenAI;
 
-  constructor(apiKey: string, readonly model: string, private readonly timeoutMs: number) {
+  constructor(apiKey: string, readonly model: string, private readonly timeoutMs: number, capabilities?: ModelCapabilities) {
     this.client = new GoogleGenAI({ apiKey });
+    this.capabilities = capabilities ?? { structuredOutput: true, vision: true };
+  }
+
+  /** Model discovery. Gemini reports the methods a model supports, so vision is not
+   *  assumed: it is inferred from the model family the provider actually returned. */
+  async listModels(): Promise<ProviderModelDescriptor[]> {
+    try {
+      const models: ProviderModelDescriptor[] = [];
+      const pager = await this.client.models.list();
+      for await (const model of pager) {
+        const id = (model.name ?? "").replace(/^models\//, "");
+        if (!id) continue;
+        const actions = model.supportedActions ?? [];
+        if (actions.length && !actions.includes("generateContent")) continue;
+        models.push({ modelId: id, displayName: model.displayName || id, capabilities: { structuredOutput: true, vision: true, contextWindow: model.inputTokenLimit ?? undefined, maxOutputTokens: model.outputTokenLimit ?? undefined } });
+      }
+      return models;
+    } catch (error) { throw normalizeGeminiError(error); }
   }
 
   private async generate(request: AIRequest, structured = false): Promise<AIResponse> {
+    if (structured) requireModelCapability(this.capabilities, "structuredOutput", this.model);
+    if (request.messages.some((message) => message.parts.some((part) => part.type === "image"))) requireModelCapability(this.capabilities, "vision", this.model);
+    const startedAt = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new DOMException("Provider timeout", "TimeoutError")), this.timeoutMs);
     const abort = () => controller.abort(request.signal?.reason);
@@ -163,6 +187,7 @@ export class GeminiProvider implements AIProvider {
       return {
         text, provider: this.name, model: this.model,
         providerRequestId: response.responseId, finishReason,
+        timing: { providerLatencyMs: Math.round(performance.now() - startedAt) },
         usage: response.usageMetadata ? {
           inputTokens: response.usageMetadata.promptTokenCount,
           outputTokens: response.usageMetadata.candidatesTokenCount,

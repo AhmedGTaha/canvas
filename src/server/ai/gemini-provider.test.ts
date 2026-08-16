@@ -17,8 +17,7 @@ vi.mock("@google/genai", async (importOriginal) => {
 });
 
 const { GeminiProvider, normalizeGeminiError } = await import("./gemini-provider");
-const { aiProviderCredentials, aiProviderDescriptor, isAIConfigured, DEFAULT_GEMINI_MODEL } = await import("./config");
-const { getAIProvider } = await import("./provider-registry");
+const { createProvider, providerTimeoutMs } = await import("./provider-registry");
 const { generatedPageResponseJsonSchema, generatedPageResponseSchema } = await import("@/domain/page-generation/contract");
 
 const API_KEY = "AIzaSyTESTKEY0000000000000000000000000000";
@@ -34,62 +33,26 @@ const environment = { ...process.env };
 beforeEach(() => { generateContent.mockReset(); constructed.length = 0; });
 afterEach(() => { process.env = { ...environment }; });
 
-describe("Gemini configuration", () => {
-  it("reads the model from GEMINI_MODEL, falls back to AI_MODEL, then to the default", () => {
-    delete process.env.GEMINI_MODEL; delete process.env.AI_MODEL;
-    expect(aiProviderDescriptor().model).toBe(DEFAULT_GEMINI_MODEL);
-    process.env.AI_MODEL = "gemini-2.5-pro";
-    expect(aiProviderDescriptor().model).toBe("gemini-2.5-pro");
-    process.env.GEMINI_MODEL = "gemini-2.5-flash-lite";
-    expect(aiProviderDescriptor().model).toBe("gemini-2.5-flash-lite");
-    process.env.GEMINI_MODEL = "   ";
-    expect(aiProviderDescriptor().model).toBe("gemini-2.5-pro");
+describe("Gemini adapter construction", () => {
+  it("uses a sane provider timeout and rejects nonsense values", () => {
+    expect(providerTimeoutMs({} as unknown as NodeJS.ProcessEnv)).toBe(120_000);
+    expect(providerTimeoutMs({ AI_PROVIDER_TIMEOUT_MS: "-5" } as unknown as NodeJS.ProcessEnv)).toBe(120_000);
+    expect(providerTimeoutMs({ AI_PROVIDER_TIMEOUT_MS: "45000" } as unknown as NodeJS.ProcessEnv)).toBe(45_000);
   });
 
-  it("uses a sane timeout and rejects nonsense values", () => {
-    delete process.env.AI_PROVIDER_TIMEOUT_MS;
-    expect(aiProviderDescriptor().timeoutMs).toBe(120_000);
-    process.env.AI_PROVIDER_TIMEOUT_MS = "-5";
-    expect(aiProviderDescriptor().timeoutMs).toBe(120_000);
-    process.env.AI_PROVIDER_TIMEOUT_MS = "45000";
-    expect(aiProviderDescriptor().timeoutMs).toBe(45_000);
-  });
-
-  it("never exposes the API key through the descriptor recorded on jobs", () => {
-    process.env.GEMINI_API_KEY = API_KEY;
-    const descriptor = aiProviderDescriptor();
-    expect(Object.keys(descriptor)).toEqual(["provider", "model", "timeoutMs"]);
-    expect(JSON.stringify(descriptor)).not.toContain(API_KEY);
-  });
-
-  it("reports a clear configuration error when no key is set, without crashing", () => {
-    delete process.env.GEMINI_API_KEY;
-    expect(isAIConfigured()).toBe(false);
-    expect(() => aiProviderCredentials()).toThrow(AIError);
-    try { getAIProvider(); expect.unreachable("expected a configuration error"); }
-    catch (error) {
-      expect(error).toMatchObject({ code: "AI_NOT_CONFIGURED", retryable: false });
-      expect((error as AIError).message).toBe("AI is not configured for this environment.");
-      // The user-facing message never names an environment variable or a key.
-      expect((error as AIError).message).not.toMatch(/GEMINI|API|key/i);
-    }
-    process.env.GEMINI_API_KEY = "   ";
-    expect(isAIConfigured()).toBe(false);
-  });
-
-  it("rejects an unsupported provider without leaking configuration", () => {
-    process.env.GEMINI_API_KEY = API_KEY; process.env.AI_PROVIDER = "openai";
-    expect(() => aiProviderCredentials()).toThrow(/not configured/i);
-    process.env.AI_PROVIDER = "gemini";
-    expect(aiProviderCredentials()).toMatchObject({ apiKey: API_KEY, provider: "gemini" });
-  });
-
-  it("passes the configured key to the SDK client and nowhere else", () => {
-    process.env.GEMINI_API_KEY = API_KEY; process.env.GEMINI_MODEL = "gemini-2.5-flash";
-    const provider = getAIProvider();
+  it("passes the connection credential to the SDK client and nowhere else", () => {
+    const provider = createProvider({ provider: "gemini", apiKey: API_KEY, model: "gemini-2.5-flash", baseUrl: null, capabilities: { structuredOutput: true, vision: true }, timeoutMs: 5_000 });
     expect(constructed).toEqual([{ apiKey: API_KEY }]);
+    // Nothing enumerable on the adapter exposes the credential.
     expect(JSON.stringify(provider)).not.toContain(API_KEY);
     expect(provider.model).toBe("gemini-2.5-flash");
+  });
+
+  it("refuses a request needing a capability the selected model does not have", async () => {
+    const textOnly = new GeminiProvider(API_KEY, "gemini-2.5-flash", 5_000, { structuredOutput: false, vision: false });
+    await expect(textOnly.generateStructured(request(), generatedPageResponseSchema)).rejects.toMatchObject({ code: "AI_MODEL_CAPABILITY_UNSUPPORTED" });
+    await expect(textOnly.generateText(request({ messages: [{ role: "user", parts: [{ type: "image", mimeType: "image/png", data: new Uint8Array([1]) }] }] }))).rejects.toMatchObject({ code: "AI_MODEL_CAPABILITY_UNSUPPORTED" });
+    expect(generateContent).not.toHaveBeenCalled();
   });
 });
 

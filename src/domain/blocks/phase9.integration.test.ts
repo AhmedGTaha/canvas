@@ -14,6 +14,7 @@ import type { AIProvider, AIRequest, AIResponse, StructuredValidator } from "@/d
 import { HistoryService } from "@/domain/history/undo-service";
 import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 const navbarV1 = `export default function Block(){return <nav className="c-container" aria-label="Main"><span>Navbar version one</span></nav>}`;
 const navbarV2 = `export default function Block(){return <nav className="c-container" aria-label="Main"><span>Navbar version two</span></nav>}`;
@@ -26,7 +27,7 @@ function pageUsing(usages: Array<{ blockId: string; usageKey: string }>) {
 }
 
 /** Deterministic provider so Phase 9 behaviour is verified without real AI credentials. */
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly blockUsages: Array<{ blockId: string; usageKey: string }> = [], private readonly summary: unknown = { headline: "Updated", changes: ["Applied the requested change"], limitations: [] }) {}
   async generateText(): Promise<AIResponse> { return { text: "unused", provider: this.name, model: this.model }; }
@@ -50,12 +51,12 @@ async function setup() {
 async function runBlockJob(userId: string, projectId: string, blockId: string, content: string, source: string) {
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content, selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  return { request, job: await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source)).process(request.job.id) };
+  return { request, job: await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source))).process(request.job.id) };
 }
 async function runPageJob(userId: string, projectId: string, pageId: string, content: string, source: string, blockUsages: Array<{ blockId: string; usageKey: string }> = []) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content, selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  return { request, job: await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, blockUsages)).process(request.job.id) };
+  return { request, job: await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, blockUsages))).process(request.job.id) };
 }
 
 describe.sequential("Phase 9 Building Blocks", () => {
@@ -89,7 +90,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     const summary = { headline: "H".repeat(180), changes: ["C".repeat(240)], limitations: ["L".repeat(260)] };
     const request = await new GenerationJobService().createBlockJob(owner.id, { projectId: project.id, blockId: navbar.id, content: "Create", selectedMediaIds: [] });
     await claimGenerationJob("worker");
-    const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(navbarV1, [], summary)).process(request.job.id);
+    const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(navbarV1, [], summary))).process(request.job.id);
 
     expect(job).toMatchObject({ status: "completed" });
     const versions = await db.select().from(buildingBlockVersions);
@@ -125,7 +126,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
 
     const cancelled = await new GenerationJobService().createBlockJob(owner.id, { projectId: project.id, blockId: navbar.id, content: "Cancel me", selectedMediaIds: [] });
     await new GenerationJobService().requestCancellation(owner.id, project.id, cancelled.job.id);
-    await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(navbarV2)).process(cancelled.job.id);
+    await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(navbarV2))).process(cancelled.job.id);
     expect(await db.select().from(buildingBlockVersions)).toHaveLength(1);
 
     // A job that started from v1 cannot overwrite a newer active version.
@@ -133,7 +134,7 @@ describe.sequential("Phase 9 Building Blocks", () => {
     await claimGenerationJob("worker");
     const [v2] = await db.insert(buildingBlockVersions).values({ projectId: project.id, buildingBlockId: navbar.id, versionNumber: 2, sourceCode: navbarV2, manifest: {}, sourceHash: "b".repeat(64), createdByUserId: owner.id }).returning();
     await db.update(buildingBlocks).set({ currentVersionId: v2!.id }).where(eq(buildingBlocks.id, navbar.id));
-    const staleResult = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(navbarV1)).process(stale.job.id);
+    const staleResult = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(navbarV1))).process(stale.job.id);
     expect(staleResult).toMatchObject({ status: "failed", errorCode: "AI_BLOCK_STALE" });
     expect((await db.select().from(buildingBlocks).where(eq(buildingBlocks.id, navbar.id)))[0]?.currentVersionId).toBe(v2!.id);
   });

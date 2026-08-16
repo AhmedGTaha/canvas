@@ -1,3 +1,5 @@
+import { CanvasLogo } from "@/components/brand/canvas-logo";
+
 /**
  * Workspace skeleton.
  *
@@ -7,7 +9,7 @@
  */
 export default function WorkspaceLoading() {
   return <div className="ws-shell ws-skeleton" aria-busy="true" aria-label="Opening this website">
-    <div className="ws-menubar"><span className="ws-mark">C</span><span className="ws-skeleton-bar" style={{ width: 240 }} /></div>
+    <div className="ws-menubar"><CanvasLogo variant="mark" size="lg" /><span className="ws-skeleton-bar" style={{ width: 240 }} /></div>
     <div className="ws-body">
       <div className="ws-pane ws-pane-l">
         <div className="ws-pane-hd"><h2>Website</h2></div>

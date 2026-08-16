@@ -17,6 +17,7 @@ import { getObjectStorage } from "@/server/storage";
 import { ExportService } from "@/domain/export/export-service";
 import { ThemeService } from "@/domain/theme/services";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 // A 1x1 PNG: enough for storage round-tripping and format checks.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -26,7 +27,7 @@ const footer = `export default function Block(){return <footer data-canvas-id="f
 const interactiveCard = `"use client";\nimport { useState } from "react";\nexport default function Block(){const [open,setOpen]=useState(false);return <article data-canvas-id="faq-card"><button onClick={()=>setOpen(!open)}>Toggle</button>{open&&<p>Answer</p>}</article>}`;
 
 type FixtureOptions = { blockUsages?: Array<{ blockId: string; usageKey: string }>; referencedMediaIds?: string[] };
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly options: FixtureOptions = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
@@ -51,13 +52,13 @@ async function setup() {
 async function runPageJob(userId: string, projectId: string, pageId: string, source: string, options: FixtureOptions = {}) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "build", selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, options)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, options))).process(request.job.id);
   if (job?.status !== "completed") throw new Error(`page job failed: ${job?.status} ${job?.errorCode}`);
 }
 async function runBlockJob(userId: string, projectId: string, blockId: string, source: string, options: FixtureOptions = {}) {
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: "build", selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, options)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, options))).process(request.job.id);
   if (job?.status !== "completed") throw new Error(`block job failed: ${job?.status} ${job?.errorCode}`);
 }
 async function addMedia(projectId: string, userId: string, displayName: string) {

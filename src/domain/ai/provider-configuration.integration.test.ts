@@ -9,6 +9,7 @@ import { PageTreeService } from "@/domain/pages/service";
 import { GenerationJobService, claimGenerationJob } from "@/domain/ai/job-service";
 import { AIOrchestrationService } from "@/domain/ai/orchestration-service";
 import { setTelemetrySink } from "@/server/observability/telemetry";
+import { ensureFixtureConnection } from "@/domain/ai/testing/provider-fixtures";
 
 const API_KEY = "AIzaSyREALLOOKINGKEY000000000000000000000";
 const environment = { ...process.env };
@@ -27,29 +28,27 @@ describe.sequential("AI provider configuration", () => {
   afterEach(() => { process.env = { ...environment }; setTelemetrySink(null); });
   afterAll(async () => { await sql.end(); });
 
-  it("fails an AI job with a plain configuration error when no key is set", async () => {
-    delete process.env.GEMINI_API_KEY;
+  it("fails an AI job with a plain configuration error when the project has no model selected", async () => {
     const { owner, project, home } = await setup();
-    // Creating the job still works: only the provider call needs credentials.
+    // Creating the job still works: only the provider call needs a configured model.
     const request = await new GenerationJobService().createPageJob(owner.id, { projectId: project.id, pageId: home.id, content: "Build the homepage", selectedMediaIds: [] });
     await claimGenerationJob("worker");
     const job = await new AIOrchestrationService().process(request.job.id);
 
-    expect(job).toMatchObject({ status: "failed", errorCode: "AI_NOT_CONFIGURED", errorMessage: "AI is not configured for this environment." });
+    expect(job).toMatchObject({ status: "failed", errorCode: "AI_NOT_CONFIGURED", errorMessage: "This website has no AI model selected. Choose a connection and model in AI settings." });
     // A configuration problem is never retried and never damages page state.
     expect(await db.select().from(pageVersions)).toHaveLength(0);
     const [node] = await db.select().from(generationJobs).where(eq(generationJobs.id, request.job.id));
     expect(node?.attemptCount).toBe(1);
   });
 
-  it("records only the provider and model on job rows, never the key", async () => {
-    process.env.GEMINI_API_KEY = API_KEY;
-    process.env.GEMINI_MODEL = "gemini-2.5-pro";
+  it("records only the provider, model, and connection id on job rows, never the key", async () => {
     const { owner, project, home } = await setup();
+    const { connection } = await ensureFixtureConnection(project.id, db, { provider: "gemini", modelId: "gemini-2.5-pro" });
     const request = await new GenerationJobService().createPageJob(owner.id, { projectId: project.id, pageId: home.id, content: "Build the homepage", selectedMediaIds: [] });
 
     const [job] = await db.select().from(generationJobs).where(eq(generationJobs.id, request.job.id));
-    expect(job).toMatchObject({ provider: "gemini", providerModel: "gemini-2.5-pro" });
+    expect(job).toMatchObject({ provider: "gemini", providerModel: "gemini-2.5-pro", aiConnectionId: connection.id });
     // Nothing anywhere in the persisted job or its conversation contains the key.
     const persisted = JSON.stringify([job, await db.select().from(aiMessages)]);
     expect(persisted).not.toContain(API_KEY);
@@ -57,7 +56,6 @@ describe.sequential("AI provider configuration", () => {
   });
 
   it("keeps the key out of telemetry even when a caller passes it by mistake", async () => {
-    process.env.GEMINI_API_KEY = API_KEY;
     const lines: string[] = [];
     setTelemetrySink((line) => lines.push(line));
     const { owner, project, home } = await setup();

@@ -1,14 +1,16 @@
 /**
- * Real Gemini smoke check.
+ * Real provider smoke check.
  *
- * Exercises every Canvas AI operation against the live provider and asserts that each
- * result still passes the unchanged Canvas validation pipeline. This makes real,
- * billable API calls; run it only when GEMINI_API_KEY is configured:
+ * Exercises every Canvas AI operation against a live provider and asserts that each
+ * result still passes the unchanged Canvas validation pipeline. It is deliberately
+ * independent of workspace connections: it never reads or decrypts a stored credential,
+ * and takes an opt-in credential from the environment instead, so running it can never
+ * spend a workspace's key by accident. It makes real, billable API calls:
  *
- *   npm run test:ai-provider
+ *   SMOKE_AI_PROVIDER=openai SMOKE_AI_API_KEY=... SMOKE_AI_MODEL=gpt-5 npm run test:ai-provider
  */
-import { getAIProvider } from "./provider-registry";
-import { aiProviderDescriptor, isAIConfigured } from "./config";
+import { createProvider, providerTimeoutMs, PROVIDER_DESCRIPTORS } from "./provider-registry";
+import type { AIProviderKind } from "@/domain/ai/provider";
 import { generatedPageResponseJsonSchema, generatedPageResponseSchema } from "@/domain/page-generation/contract";
 import { generatedBlockResponseJsonSchema, generatedBlockResponseSchema } from "@/domain/block-generation/contract";
 import { validateGeneratedPageSource } from "@/domain/page-generation/validator";
@@ -17,9 +19,16 @@ import { compileGeneratedPage } from "@/domain/page-generation/validator";
 import { PLATFORM_AI_INSTRUCTIONS } from "@/domain/ai/prompt-assembler";
 import type { AIRequest } from "@/domain/ai/provider";
 
-if (!isAIConfigured()) {
-  // Not a failure: an unconfigured environment simply skips the paid checks.
-  console.log("SKIPPED: GEMINI_API_KEY is not set. Add it to .env to run the real Gemini smoke check.");
+const providerKind = (process.env.SMOKE_AI_PROVIDER ?? "gemini") as AIProviderKind;
+const apiKey = process.env.SMOKE_AI_API_KEY?.trim();
+const model = process.env.SMOKE_AI_MODEL?.trim();
+if (!PROVIDER_DESCRIPTORS[providerKind]) {
+  console.error(`SMOKE_AI_PROVIDER must be one of: ${Object.keys(PROVIDER_DESCRIPTORS).join(", ")}`);
+  process.exit(1);
+}
+if (!apiKey || !model) {
+  // Not a failure: an environment without an opt-in credential simply skips paid checks.
+  console.log("SKIPPED: set SMOKE_AI_PROVIDER, SMOKE_AI_API_KEY and SMOKE_AI_MODEL to run the real provider smoke check.");
   process.exit(0);
 }
 
@@ -42,8 +51,10 @@ const BLOCK_RULES = `${PAGE_RULES}
 This is a reusable Building Block, not a page: it may not contain CanvasBlock.`;
 
 type Check = { name: string; run: () => Promise<string> };
-const provider = getAIProvider();
-const descriptor = aiProviderDescriptor();
+const provider = createProvider({
+  provider: providerKind, apiKey, model, baseUrl: process.env.SMOKE_AI_BASE_URL ?? null,
+  capabilities: { structuredOutput: true, vision: true }, timeoutMs: providerTimeoutMs(),
+});
 
 function ask(systemInstructions: string, text: string, responseSchema: unknown, extra: Partial<AIRequest> = {}): AIRequest {
   return {
@@ -157,7 +168,7 @@ const checks: Check[] = [
   },
 ];
 
-console.log(`Running real Gemini smoke checks against ${descriptor.provider}/${descriptor.model}\n`);
+console.log(`Running real provider smoke checks against ${providerKind}/${model}\n`);
 let failures = 0;
 for (const check of checks) {
   const started = Date.now();
@@ -171,5 +182,5 @@ for (const check of checks) {
     console.error(`  FAIL  ${check.name.padEnd(30)} ${reason}${diagnostic ? ` — ${diagnostic}` : ""}`);
   }
 }
-console.log(`\n${checks.length - failures}/${checks.length} real Gemini checks passed.`);
+console.log(`\n${checks.length - failures}/${checks.length} real provider checks passed.`);
 process.exit(failures ? 1 : 0);

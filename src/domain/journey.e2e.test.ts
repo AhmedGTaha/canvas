@@ -28,13 +28,14 @@ import { GeneratedPageContentProvider } from "@/generated-runtime/preview/genera
 import { renderPreviewDocument } from "@/generated-runtime/preview/render-document";
 import { initialPreviewRoute } from "@/generated-runtime/runtime/router";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 /** Set CANVAS_E2E_BUILD=1 to also npm install and next build the exported project. */
 const RUN_STANDALONE_BUILD = process.env.CANVAS_E2E_BUILD === "1";
 
 type FixtureOptions = { blockUsages?: Array<{ blockId: string; usageKey: string }>; referencedMediaIds?: string[]; targetCanvasId?: string | null };
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source: string, private readonly options: FixtureOptions = {}) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
@@ -52,13 +53,13 @@ async function runPageJob(userId: string, projectId: string, pageId: string, pro
   const { selection, ...fixture } = options;
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: prompt, selectedMediaIds: [], selection: selection ?? null });
   await claimGenerationJob("e2e");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, fixture)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, fixture))).process(request.job.id);
   expect(job, `page job for ${prompt}`).toMatchObject({ status: "completed" });
 }
 async function runBlockJob(userId: string, projectId: string, blockId: string, prompt: string, source: string, options: FixtureOptions = {}) {
   const request = await new GenerationJobService().createBlockJob(userId, { projectId, blockId, content: prompt, selectedMediaIds: [] });
   await claimGenerationJob("e2e");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source, options)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, options))).process(request.job.id);
   expect(job, `block job for ${prompt}`).toMatchObject({ status: "completed" });
 }
 function readZip(archive: Uint8Array) {

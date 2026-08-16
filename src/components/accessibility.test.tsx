@@ -33,33 +33,63 @@ function contrast(foreground: string, background: string) {
 const tokenCss = readFileSync("src/app/tokens.css", "utf8");
 const styleSheets = ["base", "ui", "app", "workspace", "panels"].map((name) => [`${name}.css`, readFileSync(`src/app/${name}.css`, "utf8")] as const);
 
-function token(name: string, seen = new Set<string>()): string {
+type Appearance = "light" | "dark";
+
+/*
+ * Resolves a token the way the browser does, in one appearance at a time.
+ *
+ * A semantic token is written once as `light-dark(light, dark)`, so the same
+ * name has two real values and both have to hold up. Picking the arm here — and
+ * following aliases in the same appearance — is what lets every contrast check
+ * below run twice over one list of pairs instead of being written out twice and
+ * drifting.
+ */
+function token(name: string, appearance: Appearance, seen = new Set<string>()): string {
   if (seen.has(name)) throw new Error(`Design token --${name} refers to itself`);
   seen.add(name);
   const match = new RegExp(`--${name}:\\s*([^;]+);`).exec(tokenCss);
   if (!match) throw new Error(`Missing design token --${name}`);
   const value = match[1]!.trim();
-  const alias = /^var\((--[\w-]+)\)$/.exec(value);
-  if (alias) return token(alias[1]!.slice(2), seen);
-  if (!/^#[0-9a-fA-F]{3,6}$/.test(value)) throw new Error(`Design token --${name} is not a colour: ${value}`);
-  return value;
+  const pair = lightDarkArms(value);
+  const resolved = pair ? pair[appearance === "light" ? 0 : 1]! : value;
+  const alias = /^var\((--[\w-]+)\)$/.exec(resolved);
+  if (alias) return token(alias[1]!.slice(2), appearance, seen);
+  if (!/^#[0-9a-fA-F]{3,6}$/.test(resolved)) throw new Error(`Design token --${name} is not a colour in ${appearance}: ${resolved}`);
+  return resolved;
 }
 
+/** Splits `light-dark(a, b)` at the comma that separates its two arms — its arms contain commas of their own. */
+function lightDarkArms(value: string): [string, string] | null {
+  if (!value.startsWith("light-dark(") || !value.endsWith(")")) return null;
+  const inner = value.slice("light-dark(".length, -1);
+  let depth = 0;
+  for (let index = 0; index < inner.length; index += 1) {
+    const character = inner[index];
+    if (character === "(") depth += 1;
+    else if (character === ")") depth -= 1;
+    else if (character === "," && depth === 0) return [inner.slice(0, index).trim(), inner.slice(index + 1).trim()];
+  }
+  throw new Error(`light-dark() with one arm: ${value}`);
+}
+
+const APPEARANCES: Appearance[] = ["light", "dark"];
+
 describe("Canvas UI accessibility", () => {
-  it("meets WCAG AA contrast for the core text palette", () => {
-    const surface = token("surface"); const app = token("surface-app"); const muted = token("text-muted");
+  it.each(APPEARANCES)("meets WCAG AA contrast for the core text palette in %s", (appearance) => {
+    const at = (name: string) => token(name, appearance);
+    const surface = at("surface"); const app = at("surface-app"); const muted = at("text-muted");
     const pairs: Array<[string, string, string, number]> = [
-      ["body text on surface", token("text"), surface, 4.5],
-      ["body text on the app background", token("text"), app, 4.5],
+      ["body text on surface", at("text"), surface, 4.5],
+      ["body text on the app background", at("text"), app, 4.5],
       ["muted text on surface", muted, surface, 4.5],
       ["muted text on the app background", muted, app, 4.5],
-      ["primary button label", token("accent-contrast"), token("accent"), 4.5],
-      ["danger text on surface", token("danger"), surface, 4.5],
-      ["success text on surface", token("success"), surface, 4.5],
-      ["accent on chrome", token("focus"), token("surface-chrome"), 4.5],
+      ["primary button label", at("accent-contrast"), at("accent"), 4.5],
+      ["danger text on surface", at("danger"), surface, 4.5],
+      ["success text on surface", at("success"), surface, 4.5],
+      ["accent on chrome", at("focus"), at("surface-chrome"), 4.5],
     ];
     for (const [name, foreground, over, minimum] of pairs) {
-      expect(contrast(foreground, over), `${name} (${foreground} on ${over})`).toBeGreaterThanOrEqual(minimum);
+      expect(contrast(foreground, over), `${name} in ${appearance} (${foreground} on ${over})`).toBeGreaterThanOrEqual(minimum);
     }
   });
 
@@ -73,23 +103,77 @@ describe("Canvas UI accessibility", () => {
     }
   });
 
-  it("keeps every text token above the AA threshold on the surface it sits on", () => {
+  it.each(APPEARANCES)("keeps every text token above the AA threshold on the surface it sits on in %s", (appearance) => {
+    const at = (name: string) => token(name, appearance);
     const pairs: Array<[string, string, string]> = [
-      ["secondary text", token("text-secondary"), token("surface")],
-      ["secondary text on the app background", token("text-secondary"), token("surface-app")],
-      ["subtle text", token("text-subtle"), token("surface")],
-      ["subtle text on the app background", token("text-subtle"), token("surface-app")],
-      ["muted text on a muted surface", token("text-muted"), token("surface-muted")],
-      ["muted text on the preview mat", token("text-muted"), token("surface-sunken")],
-      ["muted text on chrome", token("text-muted"), token("surface-chrome")],
-      ["selected row", token("focus-strong"), token("surface-selected")],
-      ["danger text on its surface", token("danger"), token("danger-soft")],
-      ["success text on its surface", token("success"), token("success-soft")],
-      ["draft badge", token("warning"), token("warning-soft")],
+      ["secondary text", at("text-secondary"), at("surface")],
+      ["secondary text on the app background", at("text-secondary"), at("surface-app")],
+      ["subtle text", at("text-subtle"), at("surface")],
+      ["subtle text on the app background", at("text-subtle"), at("surface-app")],
+      ["muted text on a muted surface", at("text-muted"), at("surface-muted")],
+      ["muted text on a hovered row", at("text-muted"), at("surface-hover")],
+      ["body text in a field", at("text"), at("surface-field")],
+      ["a placeholder in a field", at("text-subtle"), at("surface-field")],
+      ["muted text on the preview mat", at("text-muted"), at("surface-sunken")],
+      ["muted text on chrome", at("text-muted"), at("surface-chrome")],
+      ["subtle text on chrome", at("text-subtle"), at("surface-chrome")],
+      ["selected row", at("focus-strong"), at("surface-selected")],
+      ["tooltip label", at("tooltip-text"), at("tooltip-surface")],
+      ["danger text on its surface", at("danger"), at("danger-soft")],
+      ["success text on its surface", at("success"), at("success-soft")],
+      ["draft badge", at("warning"), at("warning-soft")],
     ];
     for (const [name, foreground, over] of pairs) {
-      expect(contrast(foreground, over), `${name} (${foreground} on ${over})`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(foreground, over), `${name} in ${appearance} (${foreground} on ${over})`).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  /*
+   * Selection, focus and control edges are not text, so AA does not apply to
+   * them — but they are the marks that say "this is the thing you are editing"
+   * and "this is a control", and at 1.2:1 on a dark backdrop they simply are not
+   * there. 3:1 is the non-text threshold, held in both appearances.
+   */
+  it.each(APPEARANCES)("keeps non-text indicators visible in %s", (appearance) => {
+    const at = (name: string) => token(name, appearance);
+    const pairs: Array<[string, string, string]> = [
+      ["the focus ring on the app background", at("focus"), at("surface-app")],
+      ["the focus ring on chrome", at("focus"), at("surface-chrome")],
+      ["the focus ring on the preview mat", at("focus"), at("surface-sunken")],
+      ["the selection spine", at("focus"), at("surface-selected")],
+    ];
+    for (const [name, foreground, over] of pairs) {
+      expect(contrast(foreground, over), `${name} in ${appearance} (${foreground} on ${over})`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  /*
+   * The edge of a control — an input's border, a switch's track — is the only
+   * thing saying it is a control, and a hairline that survives on paper can
+   * vanish entirely on a dark surface. Dark is held to 3:1 outright. Light is
+   * held to "no worse than it already was", because raising the paper hairline
+   * to 3:1 would visibly reweight every field in the product, which is a
+   * separate decision from adding an appearance.
+   */
+  it("keeps control edges readable, and never softer in dark than on paper", () => {
+    const surfaceFor = (name: string) => (name === "border-strong" ? "surface-field" : "surface");
+    for (const name of ["border-strong", "control-track"]) {
+      const over = surfaceFor(name);
+      const dark = contrast(token(name, "dark"), token(over, "dark"));
+      const light = contrast(token(name, "light"), token(over, "light"));
+      expect(dark, `--${name} against a dark ${over}`).toBeGreaterThanOrEqual(3);
+      expect(dark, `--${name} is softer in dark than in light`).toBeGreaterThanOrEqual(light);
+    }
+  });
+
+  /*
+   * The website in the preview is not Canvas chrome. Its paper stays the paper
+   * whatever appearance Canvas is in, which is the whole reason the token is
+   * written without a light-dark() pair — this is the check that keeps someone
+   * from "finishing" dark mode by flipping it.
+   */
+  it("never darkens the sheet the user's own website is rendered on", () => {
+    expect(token("preview-paper", "light")).toBe(token("preview-paper", "dark"));
   });
 
   it("gives icon-only controls an accessible name", () => {

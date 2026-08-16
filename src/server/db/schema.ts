@@ -4,6 +4,7 @@ import {
   char,
   index,
   integer,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -27,6 +28,11 @@ export const changeSetOperation = pgEnum("change_set_operation", ["page_generate
 export const changeSetEntityType = pgEnum("change_set_entity_type", ["page", "building_block", "project"]);
 export const generationOperation = pgEnum("generation_operation", ["assistant", "page_generate", "page_modify", "block_generate", "block_modify"]);
 export const aiQueueStatus = pgEnum("ai_queue_status", ["queued", "paused", "claimed", "completed", "cancelled"]);
+export const aiProviderKind = pgEnum("ai_provider_kind", ["gemini", "openai", "anthropic", "openai_compatible"]);
+export const aiConnectionTestStatus = pgEnum("ai_connection_test_status", ["untested", "passed", "failed"]);
+export const aiModelSource = pgEnum("ai_model_source", ["discovered", "manual"]);
+export const aiRequestKind = pgEnum("ai_request_kind", ["generation", "repair", "test_console"]);
+export const aiCostSource = pgEnum("ai_cost_source", ["provider_reported", "canvas_estimate"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -255,7 +261,7 @@ export const generationJobs = pgTable("generation_jobs", {
   promptMessageId: uuid("prompt_message_id"),
   status: generationJobStatus("status").notNull().default("queued"),
   progressStage: varchar("progress_stage", { length: 80 }).notNull().default("Queued"),
-  provider: varchar("provider", { length: 40 }).notNull(),
+  provider: varchar("provider", { length: 40 }).notNull().default("unresolved"),
   providerModel: varchar("provider_model", { length: 120 }),
   providerRequestId: varchar("provider_request_id", { length: 255 }),
   errorCode: varchar("error_code", { length: 80 }),
@@ -264,6 +270,11 @@ export const generationJobs = pgTable("generation_jobs", {
   resultMessageId: uuid("result_message_id"),
   resultChangeSetId: uuid("result_change_set_id"),
   queueItemId: uuid("queue_item_id"),
+  aiConnectionId: uuid("ai_connection_id"),
+  promptVersion: varchar("prompt_version", { length: 60 }),
+  providerLatencyMs: integer("provider_latency_ms"),
+  validationDurationMs: integer("validation_duration_ms"),
+  repairAttemptCount: integer("repair_attempt_count").notNull().default(0),
   usageMetadata: jsonb("usage_metadata"),
   contextFingerprint: char("context_fingerprint", { length: 64 }),
   contextMetadata: jsonb("context_metadata"),
@@ -430,6 +441,100 @@ export const exportJobs = pgTable("export_jobs", {
   finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
 }, (table) => [unique("export_jobs_id_project_unique").on(table.id, table.projectId), index("export_jobs_project_created_idx").on(table.projectId, table.createdAt)]);
 
+/**
+ * A workspace's own provider credential (BYOK).
+ *
+ * Only the ciphertext and a short masked hint are stored. Nothing in this table is
+ * readable without the server-only Canvas master key, and no query path returns the
+ * ciphertext to a browser.
+ */
+export const aiConnections = pgTable("ai_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  provider: aiProviderKind("provider").notNull(),
+  name: varchar("name", { length: 80 }).notNull(),
+  baseUrl: varchar("base_url", { length: 500 }),
+  credentialCiphertext: text("credential_ciphertext").notNull(),
+  credentialKeyVersion: integer("credential_key_version").notNull().default(1),
+  credentialHint: varchar("credential_hint", { length: 24 }).notNull(),
+  credentialUpdatedAt: timestamp("credential_updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  lastTestedAt: timestamp("last_tested_at", { withTimezone: true, mode: "date" }),
+  lastTestStatus: aiConnectionTestStatus("last_test_status").notNull().default("untested"),
+  lastTestError: varchar("last_test_error", { length: 300 }),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+}, (table) => [unique("ai_connections_id_workspace_unique").on(table.id, table.workspaceId), index("ai_connections_workspace_idx").on(table.workspaceId, table.createdAt)]);
+
+export const aiConnectionModels = pgTable("ai_connection_models", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  connectionId: uuid("connection_id").notNull().references(() => aiConnections.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  modelId: varchar("model_id", { length: 200 }).notNull(),
+  displayName: varchar("display_name", { length: 200 }).notNull(),
+  source: aiModelSource("source").notNull().default("manual"),
+  enabled: boolean("enabled").notNull().default(false),
+  supportsStructuredOutput: boolean("supports_structured_output").notNull().default(true),
+  supportsVision: boolean("supports_vision").notNull().default(false),
+  contextWindow: integer("context_window"),
+  maxOutputTokens: integer("max_output_tokens"),
+  inputPricePerMillion: numeric("input_price_per_million"),
+  outputPricePerMillion: numeric("output_price_per_million"),
+  pricingCurrency: char("pricing_currency", { length: 3 }),
+  pricingVersion: integer("pricing_version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  unique("ai_connection_models_connection_model_unique").on(table.connectionId, table.modelId),
+  unique("ai_connection_models_id_connection_unique").on(table.id, table.connectionId),
+  index("ai_connection_models_connection_idx").on(table.connectionId, table.enabled),
+]);
+
+export const projectAISettings = pgTable("project_ai_settings", {
+  projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  connectionId: uuid("connection_id").references(() => aiConnections.id, { onDelete: "set null" }),
+  modelId: uuid("model_id").references(() => aiConnectionModels.id, { onDelete: "set null" }),
+  updatedByUserId: uuid("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+/** One durable row per provider request. Never holds prompts, source, or credentials. */
+export const aiUsageEvents = pgTable("ai_usage_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  connectionId: uuid("connection_id").references(() => aiConnections.id, { onDelete: "set null" }),
+  generationJobId: uuid("generation_job_id"),
+  actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  provider: aiProviderKind("provider").notNull(),
+  modelId: varchar("model_id", { length: 200 }).notNull(),
+  requestKind: aiRequestKind("request_kind").notNull(),
+  operation: varchar("operation", { length: 40 }).notNull(),
+  promptVersion: varchar("prompt_version", { length: 60 }),
+  succeeded: boolean("succeeded").notNull(),
+  errorCode: varchar("error_code", { length: 80 }),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  totalTokens: integer("total_tokens"),
+  providerLatencyMs: integer("provider_latency_ms"),
+  jobDurationMs: integer("job_duration_ms"),
+  validationDurationMs: integer("validation_duration_ms"),
+  costSource: aiCostSource("cost_source"),
+  costAmount: numeric("cost_amount"),
+  costCurrency: char("cost_currency", { length: 3 }),
+  pricingInputPerMillion: numeric("pricing_input_per_million"),
+  pricingOutputPerMillion: numeric("pricing_output_per_million"),
+  pricingVersion: integer("pricing_version"),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  index("ai_usage_events_project_created_idx").on(table.projectId, table.createdAt),
+  index("ai_usage_events_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  index("ai_usage_events_job_idx").on(table.generationJobId),
+]);
+
 export const aiJobRateLimits = pgTable("ai_job_rate_limits", {
   scope: varchar("scope", { length: 16 }).notNull(),
   subjectId: uuid("subject_id").notNull(),
@@ -462,3 +567,7 @@ export type ExportJob = typeof exportJobs.$inferSelect;
 export type BuildingBlock = typeof buildingBlocks.$inferSelect;
 export type BuildingBlockVersion = typeof buildingBlockVersions.$inferSelect;
 export type BuildingBlockUsage = typeof buildingBlockUsages.$inferSelect;
+export type AIConnection = typeof aiConnections.$inferSelect;
+export type AIConnectionModel = typeof aiConnectionModels.$inferSelect;
+export type ProjectAISettings = typeof projectAISettings.$inferSelect;
+export type AIUsageEvent = typeof aiUsageEvents.$inferSelect;

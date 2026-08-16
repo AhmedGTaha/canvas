@@ -2,23 +2,25 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, buildingBlockVersions, buildingBlocks, generationJobMedia, generationJobs, mediaAssets } from "@/server/db/schema";
-import { getAIProvider } from "@/server/ai/provider-registry";
+import { resolveProjectProvider } from "@/domain/ai/connections/model-resolution";
+import { attachJobDuration, pricingFrom, recordAIUsage } from "@/domain/ai/analytics/usage-service";
+import { generateWithRepair, type ProviderCallRecorder } from "@/domain/ai/generation-runner";
+import type { ProjectProviderResolver } from "@/domain/page-generation/orchestration";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { MediaService } from "@/domain/media/service";
 import { EditingLeaseService } from "@/domain/collaboration/lease-service";
 import { DomainError } from "@/domain/shared/errors";
-import { AIError, type AIProvider } from "@/domain/ai/provider";
+import { AIError } from "@/domain/ai/provider";
 import { ProjectContextBuilder } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
 import { validateGeneratedBlockSource, type GeneratedBlockManifest } from "@/domain/blocks/validation";
 import { recordChangeSet } from "@/domain/history/change-set-service";
 import { elementInvalid, elementStale, findEditableElement, readResolvedSelection } from "@/domain/generated-source/selection";
 import { generatedBlockResponseSchema, type BlockChangeSummary } from "./contract";
-import { assembleBlockGenerationRequest } from "./prompt";
+import { assembleBlockGenerationRequest, blockPromptVersion } from "./prompt";
 import { observe } from "@/server/observability/events";
 import { persistedGenerationDiagnostic } from "@/domain/generated-source/diagnostics";
 import { repairGeneratedCanvasIds } from "@/domain/generated-source/canvas-id-repair";
-import { generatedSourceCorrectionRequest } from "@/domain/generated-source/correction";
 
 function summaryMessage(summary: BlockChangeSummary) {
   return [summary.headline, ...summary.changes.map((item) => `• ${item}`), ...summary.limitations.map((item) => `Limitation: ${item}`)].join("\n");
@@ -41,7 +43,7 @@ export class BlockGenerationOrchestrationService {
     private readonly database: Database = db,
     private readonly contextBuilder = new ProjectContextBuilder(),
     private readonly lifecycle = new GenerationJobLifecycle(database),
-    private readonly providerResolver: () => AIProvider = getAIProvider,
+    private readonly providerResolver: ProjectProviderResolver = (projectId) => resolveProjectProvider(projectId, database),
     private readonly leases = new EditingLeaseService(),
     private readonly access = new ProjectAccessService(),
   ) {}
@@ -106,45 +108,59 @@ export class BlockGenerationOrchestrationService {
         if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable.");
         return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName };
       }));
-      const provider = this.providerResolver();
-      
-      const providerRequest = assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal });
-      let response = await provider.generateStructured(providerRequest, generatedBlockResponseSchema);
-      if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
-      // Provider metadata is useful even if deterministic validation rejects the candidate.
-      // Invalid source itself remains ephemeral and is never activated or persisted.
-      await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
-      
-      if (await this.cancellation(jobId)) return this.current(jobId);
+      // project → selected connection → selected enabled model → adapter, resolved and
+      // decrypted here rather than carried in the job payload.
+      const { provider, resolved } = await this.providerResolver(initial.projectId);
+      const promptVersion = blockPromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
+      await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
 
-      await this.lifecycle.transition(jobId, "validating", "Validating block");
+      const providerRequest = assembleBlockGenerationRequest({ context, userRequest: prompt.content, currentSource: base?.sourceCode ?? null, selectedElement, block: { name: block.name, kind: block.kind, isGlobal: block.isGlobal }, imageParts, signal: providerAbort.signal });
       const approved = new Set(context.media.map(({ id }) => id));
       const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
-      let repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
-      let manifest: GeneratedBlockManifest;
-      try {
-        manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
-      } catch (error) {
-        if (!(error instanceof AIError) || error.code !== "AI_GENERATED_SOURCE_INVALID") throw error;
-        response = await provider.generateStructured(generatedSourceCorrectionRequest(providerRequest, response.text, error.diagnostic), generatedBlockResponseSchema);
-        if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
-        await this.database.update(generationJobs).set({ provider: response.provider, providerModel: response.model, providerRequestId: response.providerRequestId, usageMetadata: response.usage }).where(eq(generationJobs.id, jobId));
-        repaired = repairGeneratedCanvasIds(response.structuredData.sourceCode);
-        manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: response.structuredData.referencedMediaIds });
-      }
-      
-      if (selectedElement) {
-        const { targetCanvasId, targetRemoved } = response.structuredData;
-        if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
-        if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
-      }
+      const pricing = pricingFrom(resolved.model);
+      const record: ProviderCallRecorder = async (entry) => {
+        const row = await recordAIUsage({
+          workspaceId: resolved.workspaceId, projectId: initial.projectId, connectionId: resolved.connection.id, generationJobId: jobId, actorUserId: initial.actorUserId,
+          provider: resolved.connection.provider, modelId: resolved.model.modelId, requestKind: entry.requestKind, operation: initial.operation,
+          promptVersion: entry.promptVersion, succeeded: entry.succeeded, errorCode: entry.errorCode, usage: entry.usage, pricing,
+          providerLatencyMs: entry.providerLatencyMs, validationDurationMs: entry.validationDurationMs,
+        }, this.database);
+        return row?.id ?? null;
+      };
+
+      const run = await generateWithRepair({
+        provider, request: providerRequest, schema: generatedBlockResponseSchema, promptVersion, record,
+        // Provider metadata is useful even if deterministic validation rejects the
+        // candidate. Invalid source stays ephemeral and is never activated or persisted.
+        onCandidate: async (candidate) => { await this.database.update(generationJobs).set({ provider: candidate.provider, providerModel: candidate.model, providerRequestId: candidate.providerRequestId, usageMetadata: candidate.usage }).where(eq(generationJobs.id, jobId)); },
+        validate: async (data) => {
+          const repaired = repairGeneratedCanvasIds(data.sourceCode);
+          const manifest = await validateGeneratedBlockSource({ sourceCode: repaired.sourceCode, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds });
+          if (selectedElement) {
+            const { targetCanvasId, targetRemoved } = data;
+            if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
+            if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
+          }
+          return { manifest, sourceCode: repaired.sourceCode };
+        },
+      });
+      const response = run.response;
+      const manifest: GeneratedBlockManifest = run.validated.manifest;
+      const repaired = { sourceCode: run.validated.sourceCode };
+      if (!response.structuredData) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Canvas could not produce a valid Building Block from this request. Try again.");
+
+      if (await this.cancellation(jobId)) return this.current(jobId);
+      await this.lifecycle.transition(jobId, "validating", "Validating block", { providerLatencyMs: run.providerLatencyMs, validationDurationMs: run.validationDurationMs, repairAttemptCount: run.repairAttempts });
+
       if (leaseLost) throw new AIError("AI_BLOCK_CONFLICT", "This Building Block is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
 
       await this.lifecycle.transition(jobId, "applying", "Applying block update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
       const completed = await this.commit({ jobId, sourceCode: repaired.sourceCode, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
-      observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: performance.now() - startedAt });
+      const jobDurationMs = performance.now() - startedAt;
+      await attachJobDuration(jobId, jobDurationMs, this.database);
+      observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: jobDurationMs, providerLatencyMs: run.providerLatencyMs, repairAttempts: run.repairAttempts, promptVersion });
       return completed;
     } catch (cause) {
       const error = cause instanceof DomainError && cause.code === "ACCESS_DENIED" ? new AIError("AI_BLOCK_CONFLICT", "You no longer have access to update this Building Block.") : safeAIError(cause);
@@ -156,6 +172,7 @@ export class BlockGenerationOrchestrationService {
         const errorDiagnostic = persistedGenerationDiagnostic(error.diagnostic);
         const pipelineStage = failureStage(error, current.progressStage);
         await this.lifecycle.transition(jobId, "failed", "Failed", { errorCode: error.code, errorMessage: error.message, errorDiagnostic });
+        await attachJobDuration(jobId, performance.now() - startedAt, this.database);
         await this.database.insert(auditEvents).values({ projectId: current.projectId, userId: current.actorUserId, action: "ai.block_generation_failed", entityType: "generation_job", entityId: jobId, metadata: { errorCode: error.code, validationRule: errorDiagnostic } });
         observe.generationJob("failed", { jobId, projectId: current.projectId, operation: current.operation, targetId: current.targetId, reason: error.code, durationMs: performance.now() - startedAt, pipelineStage, provider: current.provider, model: current.providerModel, diagnostic: errorDiagnostic });
         if (["AI_RESPONSE_SCHEMA_INVALID", "AI_RESPONSE_MALFORMED", "AI_GENERATED_SOURCE_INVALID"].includes(error.code)) observe.validationFailed("block", { projectId: current.projectId, jobId, entityId: current.targetId ?? undefined, reason: error.code, diagnostic: errorDiagnostic, pipelineStage, provider: current.provider, model: current.providerModel });

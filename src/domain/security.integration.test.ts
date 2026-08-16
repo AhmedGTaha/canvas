@@ -25,11 +25,12 @@ import { PreviewManifestService } from "@/generated-runtime/manifest/service";
 import { PreviewTokenService } from "@/generated-runtime/security/preview-token";
 import { previewSecurityHeaders, PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import { redactTelemetry } from "@/server/observability/telemetry";
+import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const simplePage = `export default function Page(){return <main className="c-page"><h1>Home</h1></main>}`;
 
-class FixtureProvider implements AIProvider {
+class FixtureProvider implements AIProvider { readonly capabilities = { structuredOutput: true, vision: true };
   name = "fixture"; model = "fixture-1";
   constructor(private readonly source = simplePage) {}
   async generateText(): Promise<AIResponse> { return { text: "", provider: this.name, model: this.model }; }
@@ -48,7 +49,7 @@ async function makeProject(userId: string, name: string) {
 async function generateHome(userId: string, projectId: string, pageId: string, source = simplePage) {
   const request = await new GenerationJobService().createPageJob(userId, { projectId, pageId, content: "build", selectedMediaIds: [] });
   await claimGenerationJob("worker");
-  const job = await new AIOrchestrationService(db, undefined, undefined, () => new FixtureProvider(source)).process(request.job.id);
+  const job = await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source))).process(request.job.id);
   if (job?.status !== "completed") throw new Error(`generation failed: ${job?.errorCode}`);
 }
 async function addMedia(projectId: string, userId: string) {
