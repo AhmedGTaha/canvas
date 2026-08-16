@@ -21,6 +21,10 @@ export class ProjectService {
     return this.projects.listActiveOwned(userId);
   }
 
+  listArchived(userId: string) {
+    return this.projects.listArchivedOwned(userId);
+  }
+
   async listAccessible(userId: string) {
     const [owned, sharedRows] = await Promise.all([this.projects.listActiveOwned(userId), this.projects.listActiveShared(userId)]);
     return { owned, shared: sharedRows.map(({ project }) => project) };
@@ -51,6 +55,24 @@ export class ProjectService {
     await this.access.requireProjectOwner(userId, id);
     const project = await this.projects.rename(id, userId, name);
     if (!project) throw new DomainError("ACCESS_DENIED", "You do not have access to this project.");
+    return project;
+  }
+
+  async archive(userId: string, rawId: unknown) {
+    const id = projectIdSchema.parse(rawId);
+    await this.access.requireProjectOwner(userId, id);
+    const project = await this.projects.archive(id, userId);
+    if (!project) throw new DomainError("NOT_FOUND", "Project not found.");
+    return project;
+  }
+
+  async restore(userId: string, rawId: unknown) {
+    const id = projectIdSchema.parse(rawId);
+    const archived = await this.projects.findById(id);
+    if (!archived || archived.ownerUserId !== userId || archived.status !== "archived") throw new DomainError("NOT_FOUND", "Archived project not found.");
+    requireWorkspaceOwner(userId, await this.workspaces.findById(archived.workspaceId));
+    const project = await this.projects.restore(id, userId);
+    if (!project) throw new DomainError("NOT_FOUND", "Archived project not found.");
     return project;
   }
 }

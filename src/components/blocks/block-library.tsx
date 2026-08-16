@@ -12,12 +12,14 @@ import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import type { ProjectPreviewManifest } from "@/generated-runtime/manifest/schema";
 import { parsePreviewParentMessage, type ParentPreviewMessage, type PreviewElementSelection } from "@/generated-runtime/runtime/messages";
 import { SelectedElementChip } from "@/components/builder/builder-workspace";
+import { StarterPreviewCard, starterPreviewUrl } from "@/components/blocks/starter-preview-card";
 import { HistoryMessages, UndoRedoControls, VersionList } from "@/components/history/history-controls";
 import { useHistoryController } from "@/components/history/use-history-controller";
 import type { HistoryController } from "@/components/history/use-history-controller";
 import type { MediaAsset, MediaFolder } from "@/server/db/schema";
 import { BLOCK_MEDIA_ATTACHMENT_LIMIT } from "@/domain/generated-source/limits";
 import { SUGGESTED_BLOCK_KINDS, blockKindLabel } from "@/domain/blocks/schemas";
+import { STARTER_CATEGORY_LABELS, type StarterCategory } from "@/domain/blocks/starter-library/types";
 
 export type BlockSummary = {
   id: string; name: string; kind: string; isGlobal: boolean; currentVersionId: string | null;
@@ -31,6 +33,7 @@ type BlockAIState = {
   messages: Array<{ id: string; role: "user" | "assistant" | "system_internal"; content: string; createdAt: string }>;
   job: null | { id: string; status: string; progressStage: string; errorMessage: string | null; resultBlockVersionId: string | null };
 };
+type StarterEntry = { id: string; category: StarterCategory; name: string; description: string; kind: string; interactive: boolean };
 type ElementSelection = Omit<PreviewElementSelection, "type" | "sessionId" | "instanceId">;
 type ParentPreviewCommand = ParentPreviewMessage extends infer Message ? Message extends { sessionId: string; instanceId: string } ? Omit<Message, "sessionId" | "instanceId"> : never : never;
 const ACTIVE_JOB_STATUSES = new Set(["queued", "preparing_context", "generating", "validating", "applying"]);
@@ -68,6 +71,13 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
   const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
   const [selectMode, setSelectMode] = useState(false);
   const [selection, setSelection] = useState<ElementSelection | null>(null);
+  const [starters, setStarters] = useState<StarterEntry[] | null>(null);
+  const [selectedStarterId, setSelectedStarterId] = useState<string | null>(null);
+  const [starterFilter, setStarterFilter] = useState<StarterCategory | "all">("all");
+  const [starterIsGlobal, setStarterIsGlobal] = useState(false);
+  const [starterError, setStarterError] = useState<string>();
+  const [creationMode, setCreationMode] = useState<"library" | "scratch">("library");
+  const [starterPreviewInstances, setStarterPreviewInstances] = useState<Record<string, string>>({});
   const completedRefresh = useRef<string | null>(null);
   const pendingSelection = useRef<ElementSelection | null>(null);
 
@@ -76,7 +86,11 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
     const term = search.trim().toLowerCase();
     return term ? blocks.filter((block) => block.name.toLowerCase().includes(term) || block.kind.includes(term)) : blocks;
   }, [blocks, search]);
+  const visibleStarters = useMemo(() => starterFilter === "all" ? starters ?? [] : (starters ?? []).filter((starter) => starter.category === starterFilter), [starterFilter, starters]);
+  const selectedStarter = starters?.find((starter) => starter.id === selectedStarterId) ?? null;
+  const selectedStarterPreviewInstance = selectedStarter ? starterPreviewInstances[selectedStarter.id] : undefined;
   const frameSrc = session && selectedId ? `/preview/${encodeURIComponent(session.token)}?block=${selectedId}&mode=${theme}&instance=${instanceId}` : null;
+  const starterPreviewSrc = session && selectedStarter && selectedStarterPreviewInstance ? starterPreviewUrl(session.token, selectedStarter.id, theme, selectedStarterPreviewInstance) : null;
 
   const post = useCallback((message: ParentPreviewCommand, sessionId: string, instance: string) => { frame.current?.contentWindow?.postMessage({ ...message, sessionId, instanceId: instance }, "*"); }, []);
   useEffect(() => {
@@ -177,6 +191,36 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
     }, (block) => { createDialog.current?.close(); setSelectedId(block.id); });
   }
 
+  async function openCreateDialog() {
+    setCreationMode("library"); setStarterError(undefined); setStarterFilter("all"); setStarterIsGlobal(false);
+    createDialog.current?.showModal();
+    if (starters) {
+      setSelectedStarterId(starters[0]?.id ?? null);
+      setStarterPreviewInstances((current) => Object.keys(current).length ? current : Object.fromEntries(starters.map((starter) => [starter.id, crypto.randomUUID()])));
+      return;
+    }
+    try {
+      const value = await request<{ starters: StarterEntry[] }>(`/api/projects/${projectId}/starter-sections`);
+      setStarters(value.starters);
+      setSelectedStarterId(value.starters[0]?.id ?? null);
+      setStarterPreviewInstances(Object.fromEntries(value.starters.map((starter) => [starter.id, crypto.randomUUID()])));
+    } catch (cause) { setStarterError(cause instanceof Error ? cause.message : "The ready-made building blocks could not be loaded."); }
+  }
+
+  async function addStarter() {
+    if (!selectedStarter) return;
+    setBusy(true); setStarterError(undefined);
+    try {
+      const value = await request<{ block: BlockSummary }>(`/api/projects/${projectId}/starter-sections`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starterId: selectedStarter.id, isGlobal: starterIsGlobal }),
+      });
+      await reloadBlocks(); await refreshPreview();
+      createDialog.current?.close(); setSelectedId(value.block.id);
+    } catch (cause) { setStarterError(cause instanceof Error ? cause.message : "That building block could not be added."); }
+    finally { setBusy(false); }
+  }
+
   async function submitPrompt() {
     if (!selectedId || !prompt.trim() || activeJob) return;
     setAILoading(true); setAIError(undefined);
@@ -201,12 +245,12 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
     <aside className="blocks-list-panel">
       <div className="tool-aside-title">
         <h2>Sections</h2>
-        <Button type="button" variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => createDialog.current?.showModal()}>New</Button>
+        <Button type="button" variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => void openCreateDialog()}>New</Button>
       </div>
       <SearchField label="Search sections" value={search} onValueChange={setSearch} placeholder="Search sections" />
       {libraryError ? <AgentError>{libraryError}</AgentError> : null}
       {blocks.length === 0
-        ? <EmptyState size="inline" icon={<Blocks size={19} />} title="No reusable sections yet" description="Build a navigation bar, footer or call-to-action once, then use it on any page." action={<Button type="button" size="sm" icon={<Plus size={14} />} onClick={() => createDialog.current?.showModal()}>Create a section</Button>} />
+        ? <EmptyState size="inline" icon={<Blocks size={19} />} title="No reusable sections yet" description="Start with a ready-made building block, then make it yours." action={<Button type="button" size="sm" icon={<Plus size={14} />} onClick={() => void openCreateDialog()}>Browse building blocks</Button>} />
         : <ul className="blocks-list">{visible.map((block) => <li key={block.id}>
           <button type="button" className={block.id === selectedId ? "active" : ""} onClick={() => setSelectedId(block.id)}>
             <span className="blocks-list-name">{block.name}</span>
@@ -259,15 +303,43 @@ export function BlockLibrary({ projectId, initialBlocks, initialBlockId, initial
         onArchive={() => void action(async () => { await request(`/api/projects/${projectId}/blocks/${selected.id}`, { method: "DELETE" }); const remaining = await reloadBlocks(); await refreshPreview(); return remaining; }, (remaining) => setSelectedId(remaining[0]?.id ?? null))} /> : null}
     </section>
 
-    <dialog className="dialog" ref={createDialog} onClick={(event) => { if (event.target === createDialog.current) createDialog.current?.close(); }}>
+    <dialog className="dialog starter-picker-dialog" ref={createDialog} onClick={(event) => { if (event.target === createDialog.current) createDialog.current?.close(); }}>
       <div className="dialog-panel">
-        <div className="dialog-header"><div><h2>New reusable section</h2><p>Give it a name now; you describe what it should contain next.</p></div><Button variant="ghost" aria-label="Close dialog" onClick={() => createDialog.current?.close()}><X size={18} /></Button></div>
-        <form action={(form) => void createBlock(form)}>
+        <div className="dialog-header"><div><h2>{creationMode === "library" ? "Choose a building block" : "New reusable section"}</h2><p>{creationMode === "library" ? "Select a ready-made section to see its layout before adding it to your website." : "Give it a name now; you describe what it should contain next."}</p></div><Button variant="ghost" aria-label="Close dialog" onClick={() => createDialog.current?.close()}><X size={18} /></Button></div>
+        {creationMode === "library" ? <div className="starter-picker">
+          {starterError ? <p className="form-error" role="alert">{starterError}</p> : null}
+          {!starters ? <p className="starter-picker-loading"><LoaderCircle className="spin" size={15} /> Loading ready-made building blocks…</p> : <>
+            <div className="starter-picker-toolbar">
+              <label htmlFor="starter-category">Show</label>
+              <select id="starter-category" className="input" value={starterFilter} onChange={(event) => { const category = event.target.value as StarterCategory | "all"; setStarterFilter(category); setSelectedStarterId((category === "all" ? starters : starters.filter((starter) => starter.category === category))[0]?.id ?? null); }}>
+                <option value="all">All building blocks</option>
+                {Object.entries(STARTER_CATEGORY_LABELS).map(([category, label]) => <option key={category} value={category}>{label}</option>)}
+              </select>
+            </div>
+            <div className="starter-picker-layout">
+              <div className="starter-picker-list" role="listbox" aria-label="Ready-made building blocks">
+                {visibleStarters.map((starter) => {
+                  const previewInstance = starterPreviewInstances[starter.id];
+                  return <button key={starter.id} type="button" className="starter-picker-card" role="option" aria-selected={starter.id === selectedStarterId} onClick={() => setSelectedStarterId(starter.id)}>
+                    <StarterPreviewCard src={session && previewInstance ? starterPreviewUrl(session.token, starter.id, theme, previewInstance) : null} name={starter.name} />
+                    <span><strong>{starter.name}</strong><small>{STARTER_CATEGORY_LABELS[starter.category]}{starter.interactive ? " · Interactive" : ""}</small></span>
+                  </button>;
+                })}
+              </div>
+              {selectedStarter ? <aside className="starter-picker-preview" aria-label={`Preview: ${selectedStarter.name}`}>
+                <div className="starter-preview-frame">{starterPreviewSrc ? <iframe key={starterPreviewSrc} src={starterPreviewSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${selectedStarter.name} preview`} /> : <p>Preparing the exact preview…</p>}</div>
+                <div><span className="starter-picker-category">{STARTER_CATEGORY_LABELS[selectedStarter.category]}</span><h3>{selectedStarter.name}</h3><p>{selectedStarter.description}</p></div>
+                <Checkbox checked={starterIsGlobal} onChange={(event) => setStarterIsGlobal(event.target.checked)} label="Use the same section on every page" description="Pages that use it stay up to date automatically when you change it." />
+              </aside> : null}
+            </div>
+            <div className="form-actions starter-picker-actions"><Button type="button" variant="ghost" onClick={() => setCreationMode("scratch")}>Create from scratch</Button><span /><Button type="button" variant="secondary" onClick={() => createDialog.current?.close()}>Cancel</Button><Button type="button" loading={busy} disabled={!selectedStarter} onClick={() => void addStarter()}>Use {selectedStarter?.name ?? "building block"}</Button></div>
+          </>}
+        </div> : <form action={(form) => void createBlock(form)}>
           <Input label="Name" name="name" maxLength={120} required placeholder="Main navigation" />
           <Select label="Category" name="kind" defaultValue="section">{SUGGESTED_BLOCK_KINDS.map((kind) => <option key={kind} value={kind}>{blockKindLabel(kind)}</option>)}</Select>
           <Checkbox name="isGlobal" label="Use the same section on every page" description="Pages that use it stay up to date automatically when you change it." />
-          <div className="form-actions"><Button type="button" variant="secondary" onClick={() => createDialog.current?.close()}>Cancel</Button><Button type="submit" disabled={busy}>Create</Button></div>
-        </form>
+          <div className="form-actions"><Button type="button" variant="ghost" onClick={() => setCreationMode("library")}>Back to building blocks</Button><span /><Button type="button" variant="secondary" onClick={() => createDialog.current?.close()}>Cancel</Button><Button type="submit" disabled={busy}>Create</Button></div>
+        </form>}
       </div>
     </dialog>
   </div>;

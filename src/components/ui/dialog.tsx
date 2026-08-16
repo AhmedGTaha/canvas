@@ -13,8 +13,8 @@ import { IconButton } from "./icon-button";
  * that only closes through its own button traps anyone who opened it by
  * accident.
  */
-export function Modal({ open, title, description, onClose, footer, size = "default", children }: {
-  open: boolean; title: string; description?: string; onClose: () => void; footer?: ReactNode; size?: "default" | "wide"; children: ReactNode;
+export function Modal({ open, title, description, onClose, footer, size = "default", className = "", children }: {
+  open: boolean; title: string; description?: string; onClose: () => void; footer?: ReactNode; size?: "default" | "wide"; className?: string; children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const headingId = useId();
@@ -30,7 +30,7 @@ export function Modal({ open, title, description, onClose, footer, size = "defau
   }, [open]);
 
   return <dialog
-    className={`dialog ${size === "wide" ? "dialog-wide" : ""}`.trim()}
+    className={`dialog ${size === "wide" ? "dialog-wide" : ""} ${className}`.trim()}
     ref={ref}
     aria-labelledby={headingId}
     onCancel={(event) => { event.preventDefault(); onClose(); }}

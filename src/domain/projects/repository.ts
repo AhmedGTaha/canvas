@@ -1,28 +1,34 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
-import { projectBrandSettings, projectMembers, projects, projectThemeSettings, users } from "@/server/db/schema";
+import { projectBrandSettings, projectMembers, projects, projectThemeSettings, users, workspaces } from "@/server/db/schema";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
 
 export class ProjectRepository {
   constructor(private readonly database: Database = db) {}
 
   listActiveInWorkspace(workspaceId: string, ownerUserId: string) {
-    return this.database.select().from(projects).where(and(
+    return this.database.select().from(projects).innerJoin(workspaces, eq(workspaces.id, projects.workspaceId)).where(and(
       eq(projects.workspaceId, workspaceId),
       eq(projects.ownerUserId, ownerUserId),
       eq(projects.status, "active"),
-    )).orderBy(asc(projects.createdAt));
+      isNull(workspaces.archivedAt),
+    )).orderBy(asc(projects.createdAt)).then((rows) => rows.map(({ projects: project }) => project));
   }
 
   listActiveOwned(ownerUserId: string) {
-    return this.database.select().from(projects).where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.status, "active"))).orderBy(asc(projects.updatedAt));
+    return this.database.select().from(projects).innerJoin(workspaces, eq(workspaces.id, projects.workspaceId)).where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.status, "active"), isNull(workspaces.archivedAt))).orderBy(asc(projects.updatedAt)).then((rows) => rows.map(({ projects: project }) => project));
   }
 
   listActiveShared(userId: string) {
     return this.database.select({ project: projects }).from(projectMembers)
       .innerJoin(projects, eq(projects.id, projectMembers.projectId))
-      .where(and(eq(projectMembers.userId, userId), eq(projectMembers.role, "collaborator"), eq(projects.status, "active")))
+      .innerJoin(workspaces, eq(workspaces.id, projects.workspaceId))
+      .where(and(eq(projectMembers.userId, userId), eq(projectMembers.role, "collaborator"), eq(projects.status, "active"), isNull(workspaces.archivedAt)))
       .orderBy(asc(projects.updatedAt));
+  }
+
+  listArchivedOwned(ownerUserId: string) {
+    return this.database.select().from(projects).innerJoin(workspaces, eq(workspaces.id, projects.workspaceId)).where(and(eq(projects.ownerUserId, ownerUserId), eq(projects.status, "archived"), isNull(workspaces.archivedAt))).orderBy(desc(projects.updatedAt)).then((rows) => rows.map(({ projects: project }) => project));
   }
 
   async findById(id: string) {
@@ -50,6 +56,16 @@ export class ProjectRepository {
 
   async rename(id: string, ownerUserId: string, name: string) {
     const [project] = await this.database.update(projects).set({ name, updatedAt: new Date() }).where(and(eq(projects.id, id), eq(projects.ownerUserId, ownerUserId), eq(projects.status, "active"))).returning();
+    return project;
+  }
+
+  async archive(id: string, ownerUserId: string) {
+    const [project] = await this.database.update(projects).set({ status: "archived", updatedAt: new Date() }).where(and(eq(projects.id, id), eq(projects.ownerUserId, ownerUserId), eq(projects.status, "active"))).returning();
+    return project;
+  }
+
+  async restore(id: string, ownerUserId: string) {
+    const [project] = await this.database.update(projects).set({ status: "active", updatedAt: new Date() }).where(and(eq(projects.id, id), eq(projects.ownerUserId, ownerUserId), eq(projects.status, "archived"))).returning();
     return project;
   }
 }

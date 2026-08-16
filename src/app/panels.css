@@ -241,6 +241,57 @@
 .blocks-list-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); color: var(--text-muted); font-size: var(--fs-micro); }
 .blocks-chip { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-full); font-style: normal; font-weight: var(--fw-semibold); }
 .blocks-chip.muted { color: var(--text-muted); }
+
+/* The starter library is a choice, not a form with a hidden outcome. Every
+   option carries a small structural sketch and the selected option gets a
+   larger reading area before it is copied into the project. */
+.starter-picker-dialog { width: min(1040px, calc(100vw - var(--sp-16))); }
+.starter-picker-dialog .dialog-panel { padding: var(--sp-12); }
+.starter-picker { display: grid; gap: var(--sp-6); }
+.starter-picker-loading { display: flex; align-items: center; gap: var(--sp-3); min-height: 180px; margin: 0; color: var(--text-muted); }
+.starter-picker-toolbar { display: flex; align-items: center; gap: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); }
+.starter-picker-toolbar .input { width: 190px; height: 30px; }
+.starter-picker-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 0.75fr); align-items: start; min-height: 420px; border: 1px solid var(--border); border-radius: var(--r-3); }
+.starter-picker-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: var(--sp-4); max-height: min(52vh, 520px); padding: var(--sp-6); overflow-y: auto; border-radius: var(--r-3) 0 0 var(--r-3); background: var(--surface-chrome); }
+.starter-picker-card {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .starter-picker-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+}
+.starter-picker-card:active { transform: scale(0.98); }
+.starter-picker-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.starter-picker-card[aria-selected="true"] { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+.starter-picker-card > span { display: grid; gap: var(--sp-1); min-width: 0; }
+.starter-picker-card strong { overflow: hidden; font-size: var(--fs-body); font-weight: var(--fw-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.starter-picker-card small { color: var(--text-muted); font-size: var(--fs-micro); }
+.starter-picker-preview { position: sticky; top: 0; display: grid; align-content: start; gap: var(--sp-6); padding: var(--sp-8); border-left: 1px solid var(--border); border-radius: 0 var(--r-3) var(--r-3) 0; background: var(--surface); }
+.starter-picker-preview > div:not(.starter-preview-frame) { display: grid; gap: var(--sp-2); }
+.starter-preview-frame { min-height: 250px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--r-1); background: var(--preview-paper); }
+.starter-preview-frame iframe { display: block; width: 100%; height: 250px; border: 0; background: var(--preview-paper); }
+.starter-preview-frame p { display: grid; height: 250px; margin: 0; place-items: center; color: var(--text-muted); }
+.starter-picker-category { color: var(--text-muted); font-size: var(--fs-micro); font-weight: var(--fw-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.starter-picker-preview h3, .starter-picker-preview p { margin: 0; }
+.starter-picker-preview h3 { font-size: var(--fs-lg); }
+.starter-picker-preview p { color: var(--text-secondary); font-size: var(--fs-body); line-height: var(--lh-snug); }
+.starter-picker-actions { padding-top: 0; }
+.starter-picker-dialog .form-actions > span { flex: 1; }
+
+/* Every card is the real starter rendered in the same sandbox as the large preview.
+   The frames ignore pointer input so selecting a card always remains one direct click. */
+.starter-card-preview { min-height: 132px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--r-1); background: var(--preview-paper); }
+.starter-card-preview iframe { display: block; width: 100%; height: 132px; border: 0; pointer-events: none; background: var(--preview-paper); }
+.starter-card-preview span { display: grid; height: 132px; place-items: center; color: var(--text-muted); font-size: var(--fs-micro); }
 /* The agent, inside the sections tool. Same parts as the workspace agent, in
    the space a sidebar can spare. */
 .blocks-composer { display: grid; gap: var(--sp-4); margin-top: auto; padding-top: var(--sp-8); border-top: 1px solid var(--border-subtle); }
@@ -678,6 +729,11 @@
   .media-toolbar { flex-wrap: wrap; }
   .media-toolbar-actions { width: 100%; margin-left: 0; }
   .media-toolbar-actions .search-field { flex: 1; width: auto; }
+  .starter-picker-dialog .dialog-panel { padding: var(--sp-8); }
+  .starter-picker-layout { grid-template-columns: 1fr; min-height: 0; }
+  .starter-picker-list { max-height: 360px; }
+  .starter-picker-preview { position: static; border-top: 1px solid var(--border); border-left: 0; border-radius: 0 0 var(--r-3) var(--r-3); }
+  .starter-picker-toolbar .input { flex: 1; width: auto; }
   .color-grid, .logo-picker-grid { grid-template-columns: 1fr; }
   .blocks-usage li { grid-template-columns: 1fr; gap: var(--sp-2); }
   .export-row, .reset-row { align-items: stretch; flex-direction: column; }

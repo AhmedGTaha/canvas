@@ -4,7 +4,7 @@ import { CreateProjectDialog } from "@/components/projects/project-forms";
 import { ProjectCard } from "@/components/projects/project-card";
 import { EmptyState } from "@/components/ui/states";
 import { PageHeader } from "@/components/ui/page-header";
-import { RenameWorkspaceDialog } from "@/components/workspaces/workspace-forms";
+import { ArchiveWorkspaceDialog, RenameWorkspaceDialog } from "@/components/workspaces/workspace-forms";
 import { ProjectService } from "@/domain/projects/service";
 import { WorkspaceService } from "@/domain/workspaces/service";
 import { requireAuthenticatedUser } from "@/server/auth/session";
@@ -23,7 +23,7 @@ export default async function WorkspacePage({ params }: { params: Promise<{ work
       title={workspace.name}
       description={projects.length === 1 ? "1 website in this workspace." : `${projects.length} websites in this workspace.`}
       back={{ href: "/workspaces", label: "Workspaces" }}
-      actions={<><RenameWorkspaceDialog id={workspace.id} name={workspace.name} /><CreateProjectDialog workspaceId={workspace.id} /></>}
+      actions={<><ArchiveWorkspaceDialog id={workspace.id} name={workspace.name} /><RenameWorkspaceDialog id={workspace.id} name={workspace.name} /><CreateProjectDialog workspaceId={workspace.id} /></>}
     />
     {projects.length === 0
       ? <EmptyState icon={<Globe size={19} />} title="No websites here yet" description="Create the first website in this workspace and start describing the pages you want." action={<CreateProjectDialog workspaceId={workspace.id} />} />

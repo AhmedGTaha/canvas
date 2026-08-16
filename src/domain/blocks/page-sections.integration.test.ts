@@ -218,6 +218,17 @@ describe.sequential("composing pages from reusable sections", () => {
     await expect(new BuildingBlockService().archive(user.id, { projectId: project.id, blockId: created.id })).resolves.toBeDefined();
   });
 
+  it("renders a ready-made section for preview without creating a Building Block", async () => {
+    const user = await account("owner");
+    const { project } = await siteWithHomePage(user.id);
+
+    const preview = await new StarterSectionService().preview(user.id, { projectId: project.id, starterId: "hero-statement" });
+
+    expect(preview.starter.name).toBe("Single claim");
+    expect(preview.bundle).toContain("generated-root");
+    expect(await new BuildingBlockService().list(user.id, { projectId: project.id })).toHaveLength(0);
+  });
+
   it("keeps a collaborator's concurrent composition edit out of another's", async () => {
     const user = await account("owner");
     const { project, page } = await siteWithHomePage(user.id);

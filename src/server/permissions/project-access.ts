@@ -1,6 +1,7 @@
 import { DomainError } from "@/domain/shared/errors";
 import { MembershipRepository } from "@/domain/collaboration/membership-repository";
 import { ProjectRepository } from "@/domain/projects/repository";
+import { WorkspaceRepository } from "@/domain/workspaces/repository";
 import { observe } from "@/server/observability/events";
 
 export type EffectiveProjectRole = "owner" | "collaborator";
@@ -9,18 +10,19 @@ export class ProjectAccessService {
   constructor(
     private readonly projects = new ProjectRepository(),
     private readonly memberships = new MembershipRepository(),
+    private readonly workspaces = new WorkspaceRepository(),
   ) {}
 
   async getProjectRole(userId: string, projectId: string): Promise<EffectiveProjectRole | null> {
     const project = await this.projects.findById(projectId);
-    if (!project || project.status === "deleted") return null;
+    if (!project || project.status !== "active" || (await this.workspaces.findById(project.workspaceId))?.archivedAt) return null;
     if (project.ownerUserId === userId) return "owner";
     return (await this.memberships.find(projectId, userId))?.role === "collaborator" ? "collaborator" : null;
   }
 
   async requireProjectAccess(userId: string, projectId: string) {
     const project = await this.projects.findById(projectId);
-    if (!project || project.status === "deleted") throw new DomainError("NOT_FOUND", "Project not found.");
+    if (!project || project.status !== "active" || (await this.workspaces.findById(project.workspaceId))?.archivedAt) throw new DomainError("NOT_FOUND", "Project not found.");
     if (project.ownerUserId === userId) return { project, role: "owner" as const };
     const membership = await this.memberships.find(projectId, userId);
     if (membership?.role === "collaborator") return { project, role: "collaborator" as const };

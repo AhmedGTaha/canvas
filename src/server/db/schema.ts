@@ -73,6 +73,7 @@ export const workspaces = pgTable("workspaces", {
   name: varchar("name", { length: 100 }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
 }, (table) => [index("workspaces_owner_user_id_idx").on(table.ownerUserId), unique("workspaces_id_owner_unique").on(table.id, table.ownerUserId)]);
 
 export const projects = pgTable("projects", {

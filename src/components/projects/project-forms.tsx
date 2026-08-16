@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { createProjectAction, renameProjectAction } from "@/app/actions/projects";
+import { archiveProjectAction, createProjectAction, renameProjectAction, restoreProjectAction } from "@/app/actions/projects";
 import type { MutationState } from "@/app/actions/workspaces";
 import { Dialog } from "@/components/ui/dialog";
 import { Input, Select, Textarea } from "@/components/ui/form-controls";
@@ -46,4 +46,26 @@ export function RenameProjectDialog({ id, name }: { id: string; name: string }) 
       <SubmitButton>Save changes</SubmitButton>
     </form>
   </Dialog>;
+}
+
+export function ArchiveProjectDialog({ id, name, workspaceId }: { id: string; name: string; workspaceId: string }) {
+  const [state, action] = useActionState(archiveProjectAction, initialState);
+  return <Dialog title={`Archive ${name}?`} description="It will no longer appear in your websites. Nothing is deleted, and you can restore it from Archive." triggerLabel="Archive website" triggerVariant="danger">
+    <form action={action} className="stack">
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="workspaceId" value={workspaceId} />
+      {state.error ? <p className="form-error" role="alert">{state.error}</p> : null}
+      <SubmitButton variant="danger" pendingLabel="Archiving…">Archive website</SubmitButton>
+    </form>
+  </Dialog>;
+}
+
+export function RestoreProjectButton({ id }: { id: string }) {
+  const [state, action] = useActionState(restoreProjectAction, initialState);
+  return <form action={action} className="archive-row-action">
+    <input type="hidden" name="id" value={id} />
+    <SubmitButton variant="secondary" pendingLabel="Restoring…">Restore</SubmitButton>
+    {state.error ? <p className="form-error" role="alert">{state.error}</p> : null}
+    {state.success ? <p className="form-success" role="status">{state.success}</p> : null}
+  </form>;
 }

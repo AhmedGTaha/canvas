@@ -11,7 +11,7 @@ import { BrandLogoSettings } from "@/components/media/brand-logo-settings";
 import { MediaManager } from "@/components/media/media-manager";
 import { PageSettingsEditor } from "@/components/pages/page-tree-manager";
 import { ProjectInstructionsEditor } from "@/components/projects/project-instructions-editor";
-import { RenameProjectDialog } from "@/components/projects/project-forms";
+import { ArchiveProjectDialog, RenameProjectDialog } from "@/components/projects/project-forms";
 import { ThemeEditor } from "@/components/theme/theme-editor";
 import { InlineAlert } from "@/components/ui/feedback";
 import { Section } from "@/components/ui/panel";
@@ -60,7 +60,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
       // set when the website is created, and nothing here edits it.
       description: project.description || "No description yet.",
       size: "drawer",
-      actions: role === "owner" ? <RenameProjectDialog id={project.id} name={project.name} /> : undefined,
+      actions: role === "owner" ? <><ArchiveProjectDialog id={project.id} name={project.name} workspaceId={project.workspaceId} /><RenameProjectDialog id={project.id} name={project.name} /></> : undefined,
       body: <>
         <Section title="This website">
           <dl className="detail-list">

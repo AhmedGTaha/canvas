@@ -35,3 +35,29 @@ export async function renameWorkspaceAction(_state: MutationState, formData: For
     return { error: userMessage(error, "Workspace could not be renamed.") };
   }
 }
+
+export async function archiveWorkspaceAction(_state: MutationState, formData: FormData): Promise<MutationState> {
+  try {
+    const user = await requireAuthenticatedUser();
+    await new WorkspaceService().archive(user.id, formData.get("id"));
+  } catch (error: unknown) {
+    return { error: userMessage(error, "Workspace could not be moved to archive.") };
+  }
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/workspaces");
+  revalidatePath("/archive");
+  redirect("/archive");
+}
+
+export async function restoreWorkspaceAction(_state: MutationState, formData: FormData): Promise<MutationState> {
+  try {
+    const user = await requireAuthenticatedUser();
+    await new WorkspaceService().restore(user.id, formData.get("id"));
+  } catch (error: unknown) {
+    return { error: userMessage(error, "Workspace could not be restored.") };
+  }
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/workspaces");
+  revalidatePath("/archive");
+  return { success: "Workspace restored." };
+}

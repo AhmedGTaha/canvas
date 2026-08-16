@@ -629,7 +629,6 @@ export function WorkspaceShell({
       pageId={currentPageId}
       pageName={currentPage?.name ?? "this page"}
       selectionAnchor={selection?.usageKey ?? selection?.canvasId ?? null}
-      selectionLabel={selection?.label ?? null}
       projectSections={Object.values(session.manifest.blocks).map((block) => ({ id: block.id, name: block.name, isGlobal: block.isGlobal, contentStatus: block.contentStatus }))}
       onClose={() => setAddSectionOpen(false)}
       onAdded={onSectionAdded}

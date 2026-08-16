@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/dialog";
 import { SegmentedControl } from "@/components/ui/segmented";
+import { StarterPreviewCard, starterPreviewUrl } from "@/components/blocks/starter-preview-card";
+import { PREVIEW_IFRAME_SANDBOX } from "@/generated-runtime/security/headers";
 import { STARTER_CATEGORY_LABELS, type StarterCategory } from "@/domain/blocks/starter-library/types";
 
 type StarterEntry = { id: string; category: StarterCategory; name: string; description: string; kind: string; interactive: boolean };
@@ -21,14 +23,13 @@ type Source = "project" | "library";
  * from that moment on. Placement is expressed the way someone thinks about a page —
  * top, bottom, or beside the thing they have selected — rather than by dragging.
  */
-export function AddSectionDialog({ projectId, open, pageId, pageName, selectionAnchor, selectionLabel, projectSections, onClose, onAdded }: {
+export function AddSectionDialog({ projectId, open, pageId, pageName, selectionAnchor, projectSections, onClose, onAdded }: {
   projectId: string;
   open: boolean;
   pageId: string | null;
   pageName: string;
   /** The `data-canvas-id` or usage key currently selected in the Preview, if any. */
   selectionAnchor: string | null;
-  selectionLabel: string | null;
   projectSections: ProjectSection[];
   onClose: () => void;
   onAdded: () => void;
@@ -39,6 +40,9 @@ export function AddSectionDialog({ projectId, open, pageId, pageName, selectionA
   const [placement, setPlacement] = useState<SectionPlacement["position"]>("bottom");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [previewInstances, setPreviewInstances] = useState<Record<string, string>>({});
+  const [starterFilter, setStarterFilter] = useState<StarterCategory | "all">("all");
 
   // Opening is a fresh decision, so the dialog forgets the last one. Adjusting state
   // during render rather than in an effect avoids a visible frame of the previous
@@ -46,7 +50,7 @@ export function AddSectionDialog({ projectId, open, pageId, pageName, selectionA
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) { setChosen(null); setError(undefined); setPlacement(selectionAnchor ? "after" : "bottom"); }
+    if (open) { setChosen(source === "library" ? starters?.[0]?.id ?? null : null); setError(undefined); setPlacement(selectionAnchor ? "after" : "bottom"); setStarterFilter("all"); }
   }
 
   useEffect(() => {
@@ -54,16 +58,25 @@ export function AddSectionDialog({ projectId, open, pageId, pageName, selectionA
     let active = true;
     void fetch(`/api/projects/${projectId}/starter-sections`, { cache: "no-store" })
       .then((response) => response.json() as Promise<{ starters?: StarterEntry[]; error?: string }>)
-      .then((value) => { if (active) { if (value.starters) setStarters(value.starters); else setError(value.error ?? "The starter library could not be loaded."); } })
+      .then((value) => { if (active) { if (value.starters) { setStarters(value.starters); setChosen(value.starters[0]?.id ?? null); setPreviewInstances(Object.fromEntries(value.starters.map((starter) => [starter.id, crypto.randomUUID()]))); } else setError(value.error ?? "The starter library could not be loaded."); } })
       .catch(() => { if (active) setError("The starter library could not be loaded."); });
     return () => { active = false; };
   }, [open, projectId, source, starters]);
 
-  const grouped = useMemo(() => {
-    const groups = new Map<StarterCategory, StarterEntry[]>();
-    for (const entry of starters ?? []) groups.set(entry.category, [...(groups.get(entry.category) ?? []), entry]);
-    return [...groups.entries()];
-  }, [starters]);
+  useEffect(() => {
+    if (!open || source !== "library" || previewToken) return;
+    let active = true;
+    void fetch(`/api/projects/${projectId}/preview-session`, { method: "POST", cache: "no-store" })
+      .then((response) => response.json() as Promise<{ token?: string }>)
+      .then((value) => { if (active && value.token) setPreviewToken(value.token); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [open, previewToken, projectId, source]);
+
+  const visibleStarters = useMemo(() => starterFilter === "all" ? starters ?? [] : (starters ?? []).filter((starter) => starter.category === starterFilter), [starterFilter, starters]);
+  const chosenStarter = starters?.find((starter) => starter.id === chosen) ?? null;
+  const chosenPreviewInstance = chosenStarter ? previewInstances[chosenStarter.id] : undefined;
+  const chosenPreviewSrc = previewToken && chosenStarter && chosenPreviewInstance ? starterPreviewUrl(previewToken, chosenStarter.id, "light", chosenPreviewInstance) : null;
 
   const usable = projectSections.filter((section) => section.contentStatus !== "unbuilt");
 
@@ -96,22 +109,23 @@ export function AddSectionDialog({ projectId, open, pageId, pageName, selectionA
   return <Modal
     open={open}
     size="wide"
+    className={`add-section-dialog ${source === "library" ? "add-section-dialog-library" : ""}`}
     title="Add a section"
     description={pageId ? `Choose a reusable section to add to ${pageName}.` : "Open a page first, then add a section to it."}
     onClose={onClose}
     footer={<div className="dialog-footer">
-      {error ? <p className="form-error" role="alert">{error}</p> : <p className="text-sm text-muted">{selectionAnchor && (placement === "before" || placement === "after") ? `Placed ${placement} ${selectionLabel ?? "the selected section"}.` : `Placed at the ${placement} of the page.`}</p>}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
       <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
       <Button type="button" variant="primary" icon={<Check size={15} />} loading={busy} disabled={!chosen || !pageId} onClick={() => void add()}>Add section</Button>
     </div>}
   >
     <div className="add-section">
       <div className="add-section-controls">
-        <SegmentedControl label="Where the section comes from" value={source} onChange={(value) => { setSource(value); setChosen(null); }} options={[
+        <SegmentedControl label="Where the section comes from" value={source} onChange={(value) => { setSource(value); setChosen(value === "library" ? starters?.[0]?.id ?? null : null); }} options={[
           { value: "project", label: `This website (${usable.length})`, icon: <Blocks size={13} /> },
           { value: "library", label: "Canvas library", icon: <Sparkles size={13} /> },
         ]} />
-        <SegmentedControl label="Where to place it" value={placement} onChange={setPlacement} options={placementOptions} />
+        <div className="add-section-placement"><span>Add at</span><SegmentedControl label="Where to place it" value={placement} onChange={setPlacement} options={placementOptions} /></div>
       </div>
 
       {source === "project" ? <div className="add-section-list">
@@ -123,21 +137,29 @@ export function AddSectionDialog({ projectId, open, pageId, pageName, selectionA
           selected={chosen === section.id}
           onSelect={setChosen}
         />) : <p className="text-sm text-muted">This website has no built reusable sections yet. Try the Canvas library.</p>}
-      </div> : starters ? <div className="add-section-groups">
-        {grouped.map(([category, entries]) => <section key={category}>
-          <h3>{STARTER_CATEGORY_LABELS[category]}</h3>
-          <div className="add-section-list">
-            {entries.map((entry) => <SectionChoice
-              key={entry.id}
-              id={entry.id}
-              name={entry.name}
-              description={entry.description}
-              badge={entry.interactive ? "Interactive" : undefined}
-              selected={chosen === entry.id}
-              onSelect={setChosen}
-            />)}
+      </div> : starters ? <div className="add-section-library">
+        <div className="starter-picker-toolbar">
+          <label htmlFor="add-section-starter-category">Show</label>
+          <select id="add-section-starter-category" className="input" value={starterFilter} onChange={(event) => { const category = event.target.value as StarterCategory | "all"; const next = category === "all" ? starters : starters.filter((starter) => starter.category === category); setStarterFilter(category); setChosen(next[0]?.id ?? null); }}>
+            <option value="all">All building blocks</option>
+            {Object.entries(STARTER_CATEGORY_LABELS).map(([category, label]) => <option key={category} value={category}>{label}</option>)}
+          </select>
+        </div>
+        <div className="starter-picker-layout">
+          <div className="starter-picker-list" role="listbox" aria-label="Ready-made building blocks">
+            {visibleStarters.map((starter) => {
+              const previewInstance = previewInstances[starter.id];
+              return <button key={starter.id} type="button" className="starter-picker-card" role="option" aria-selected={starter.id === chosen} onClick={() => setChosen(starter.id)}>
+                <StarterPreviewCard src={previewToken && previewInstance ? starterPreviewUrl(previewToken, starter.id, "light", previewInstance) : null} name={starter.name} />
+                <span><strong>{starter.name}</strong><small>{STARTER_CATEGORY_LABELS[starter.category]}{starter.interactive ? " · Interactive" : ""}</small></span>
+              </button>;
+            })}
           </div>
-        </section>)}
+          {chosenStarter ? <aside className="starter-picker-preview" aria-label={`Preview: ${chosenStarter.name}`}>
+            <div className="starter-preview-frame">{chosenPreviewSrc ? <iframe key={chosenPreviewSrc} src={chosenPreviewSrc} sandbox={PREVIEW_IFRAME_SANDBOX} title={`${chosenStarter.name} preview`} /> : <p>Preparing the exact preview…</p>}</div>
+            <div><span className="starter-picker-category">{STARTER_CATEGORY_LABELS[chosenStarter.category]}</span><h3>{chosenStarter.name}</h3><p>{chosenStarter.description}</p></div>
+          </aside> : null}
+        </div>
       </div> : <p className="text-sm text-muted"><LoaderCircle className="spin" size={14} /> Loading the Canvas library…</p>}
     </div>
   </Modal>;

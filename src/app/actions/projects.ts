@@ -39,3 +39,29 @@ export async function renameProjectAction(_state: MutationState, formData: FormD
     return { error: userMessage(error, "Project could not be renamed.") };
   }
 }
+
+export async function archiveProjectAction(_state: MutationState, formData: FormData): Promise<MutationState> {
+  try {
+    const user = await requireAuthenticatedUser();
+    await new ProjectService().archive(user.id, formData.get("id"));
+  } catch (error: unknown) {
+    return { error: userMessage(error, "Website could not be moved to archive.") };
+  }
+  revalidatePath("/dashboard", "layout");
+  revalidatePath(`/workspaces/${formData.get("workspaceId")}`);
+  revalidatePath("/archive");
+  redirect("/archive");
+}
+
+export async function restoreProjectAction(_state: MutationState, formData: FormData): Promise<MutationState> {
+  try {
+    const user = await requireAuthenticatedUser();
+    const project = await new ProjectService().restore(user.id, formData.get("id"));
+    revalidatePath(`/workspaces/${project.workspaceId}`);
+  } catch (error: unknown) {
+    return { error: userMessage(error, "Website could not be restored.") };
+  }
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/archive");
+  return { success: "Website restored." };
+}

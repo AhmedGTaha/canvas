@@ -86,6 +86,30 @@ describe.sequential("Phase 1 persistence and tenant isolation", () => {
     await expect(new ProjectService().listInWorkspace(owner.id, workspace.id)).resolves.toEqual([]);
   });
 
+  it("archives workspaces and websites until their owner restores them", async () => {
+    const owner = await createUser("owner");
+    const workspaces = new WorkspaceService();
+    const projects = new ProjectService();
+    const workspace = await workspaces.create(owner.id, { name: "Archive me" });
+    const project = await projects.create(owner.id, { workspaceId: workspace.id, name: "Archive site" });
+
+    await projects.archive(owner.id, project.id);
+    await expect(projects.listAccessible(owner.id)).resolves.toMatchObject({ owned: [] });
+    await expect(projects.read(owner.id, project.id)).rejects.toThrowError(/not found/i);
+    await expect(projects.listArchived(owner.id)).resolves.toMatchObject([{ id: project.id, status: "archived" }]);
+    await projects.restore(owner.id, project.id);
+    await expect(projects.read(owner.id, project.id)).resolves.toMatchObject({ id: project.id, status: "active" });
+
+    await workspaces.archive(owner.id, workspace.id);
+    await expect(workspaces.list(owner.id)).resolves.toEqual([]);
+    await expect(workspaces.read(owner.id, workspace.id)).rejects.toThrowError(/not found/i);
+    await expect(projects.listAccessible(owner.id)).resolves.toMatchObject({ owned: [] });
+    await expect(projects.read(owner.id, project.id)).rejects.toThrowError(/not found/i);
+    await expect(workspaces.listArchived(owner.id)).resolves.toMatchObject([{ id: workspace.id }]);
+    await workspaces.restore(owner.id, workspace.id);
+    await expect(projects.read(owner.id, project.id)).resolves.toMatchObject({ id: project.id, status: "active" });
+  });
+
   it("distinguishes owner, collaborator, and unrelated project access", async () => {
     const owner = await createUser("owner");
     const collaborator = await createUser("collaborator");

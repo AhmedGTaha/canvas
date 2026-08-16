@@ -6,11 +6,13 @@ import { previewSecurityHeaders } from "@/generated-runtime/security/headers";
 import { initialPreviewRoute, normalizePreviewRoute } from "@/generated-runtime/runtime/router";
 import { GeneratedPageContentProvider } from "@/generated-runtime/preview/generated-page-provider";
 import { BuildingBlockContentProvider } from "@/domain/blocks/preview";
+import { StarterSectionService } from "@/domain/blocks/starter-library/service";
 import { PreviewError, previewNotFound } from "@/generated-runtime/preview/errors";
 import { observe } from "@/server/observability/events";
 import { errorCode } from "@/server/observability/telemetry";
 
-const querySchema = z.object({ route: z.string().max(1000).optional(), mode: z.enum(["light", "dark"]).optional(), instance: z.uuid(), block: z.uuid().optional() }).strict();
+const querySchema = z.object({ route: z.string().max(1000).optional(), mode: z.enum(["light", "dark"]).optional(), instance: z.uuid(), block: z.uuid().optional(), starter: z.string().trim().min(1).max(80).optional() }).strict()
+  .refine((value) => !(value.block && value.starter), { message: "Choose either a saved block or a starter preview." });
 
 export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const nonce = randomBytes(18).toString("base64url");
@@ -20,8 +22,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
   try {
     const { token } = await params;
     const url = new URL(request.url);
-    const query = querySchema.parse({ route: url.searchParams.get("route") || undefined, mode: url.searchParams.get("mode") || undefined, instance: url.searchParams.get("instance"), block: url.searchParams.get("block") || undefined });
+    const query = querySchema.parse({ route: url.searchParams.get("route") || undefined, mode: url.searchParams.get("mode") || undefined, instance: url.searchParams.get("instance"), block: url.searchParams.get("block") || undefined, starter: url.searchParams.get("starter") || undefined });
     const { payload, manifest } = await new PreviewManifestService().fromToken(token);
+
+    if (query.starter) {
+      errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route: "/", pageId: null };
+      const preview = await new StarterSectionService().preview(payload.userId, { projectId: payload.projectId, starterId: query.starter });
+      const document = renderBlockPreviewDocument({ manifest, nonce, parentOrigin: canvasOrigin, instanceId: query.instance, initialMode: query.mode ?? "light", block: { id: `starter:${preview.starter.id}`, name: preview.starter.name, contentStatus: "generated" }, blockBundle: preview.bundle });
+      return new Response(document, { headers });
+    }
 
     if (query.block) {
       errorContext = { sessionId: manifest.previewSessionId, instanceId: query.instance, parentOrigin: canvasOrigin, route: "/", pageId: null };

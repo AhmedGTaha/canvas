@@ -23,6 +23,7 @@ export function AppShell({ user, children }: { user: { displayName: string; emai
       <nav className="app-nav" aria-label="Main">
         <NavLink href="/dashboard" label="Websites" />
         <NavLink href="/workspaces" label="Workspaces" />
+        <NavLink href="/archive" label="Archive" />
       </nav>
       <div className="app-bar-end">
         <AccountMenu userName={user.displayName} email={user.email} onSignOut={() => startTransition(() => { void signOutAction(); })} />
