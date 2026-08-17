@@ -28,7 +28,9 @@ async function createUser(label: string) {
   return user;
 }
 
-describe.sequential("Phase 1 persistence and tenant isolation", { timeout: 60_000 }, () => {
+// Comprehensive collaborator workflows cross multiple project-scoped services
+// and can exceed one minute on the remote integration database.
+describe.sequential("Phase 1 persistence and tenant isolation", { timeout: 120_000 }, () => {
   beforeEach(async () => {
     await sql`TRUNCATE TABLE media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`;
   });
