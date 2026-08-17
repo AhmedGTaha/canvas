@@ -24,4 +24,15 @@ export default async function setup() {
   }
 
   await runMigrations(databaseUrl);
+
+  return async () => {
+    const cleanup = postgres(adminDatabaseUrl(databaseUrl), { max: 1, onnotice: () => undefined });
+    try {
+      // Workers have already exited before global teardown. FORCE also cleans up a
+      // leaked connection without ever touching the development database.
+      await cleanup.unsafe(`DROP DATABASE IF EXISTS "${name.replace(/"/g, '""')}" WITH (FORCE)`);
+    } finally {
+      await cleanup.end();
+    }
+  };
 }

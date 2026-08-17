@@ -14,7 +14,7 @@ const manifest: ProjectPreviewManifest = projectPreviewManifestSchema.parse({
   routes: { "/": { pageId: homeId, name: "Home" } },
   pages: [{ pageId: homeId, parentId: null, name: "Home", canonicalRoute: "/", isHomepage: true, currentVersionId: "00000000-0000-4000-8000-000000000009", contentStatus: "generated", seo: { title: null, description: null } }],
   brand: { companyName: "Acme", companyDescription: null, primaryLogoMediaId: null, alternateLogoMediaId: null, logoMediaIds: { light: null, dark: null } },
-  theme: { colors: { light: colors, dark: colors }, radius: { sm: "2px", md: "4px", lg: "8px", xl: "12px" }, spacing: { multiplier: 1, xs: "4px", sm: "8px", md: "16px", lg: "24px", xl: "40px" }, shadows: { sm: "none", md: "none", lg: "none" }, typography: { multiplier: 1, body: "16px", heading: "36px" }, borders: { width: "1px", strongWidth: "2px" } },
+  theme: { colors: { light: colors, dark: colors }, radius: { sm: "2px", md: "4px", lg: "8px", xl: "12px" }, spacing: { multiplier: 1, xs: "4px", sm: "8px", md: "16px", lg: "24px", xl: "40px" }, shadows: { sm: "none", md: "none", lg: "none" }, typography: { multiplier: 1, body: "16px", heading: "36px", headingFamily: "Georgia, serif", bodyFamily: "Arial, sans-serif" }, borders: { width: "1px", strongWidth: "2px" } },
   media: {}, blocks: { [blockId]: { id: blockId, name: "Global Navbar", kind: "navbar", isGlobal: true, activeVersionId: "00000000-0000-4000-8000-00000000000a", contentStatus: "generated" } }, navigation: [],
 });
 

@@ -69,7 +69,9 @@ async function activeSource(pageId: string) {
   return { ...row!, source: (row!.document as { html: string }).html };
 }
 
-describe.sequential("composing pages from reusable sections", () => {
+// Composition scenarios persist generated page versions; remote DB work needs a
+// suite-local allowance so a timeout cannot leave a transaction in flight.
+describe.sequential("composing pages from reusable sections", { timeout: 120_000 }, () => {
   beforeEach(async () => {
     await sql`TRUNCATE TABLE building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, generation_jobs, ai_messages, ai_conversations, page_nodes, change_set_items, change_sets, project_checkpoint_items, project_checkpoints, editing_leases, audit_events, projects, workspaces, users RESTART IDENTITY CASCADE`;
   });

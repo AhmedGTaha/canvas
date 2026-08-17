@@ -63,7 +63,9 @@ async function runPageJob(userId: string, projectId: string, pageId: string, con
   return { request, job: await new AIOrchestrationService(db, undefined, undefined, fixtureProviderResolver(() => new FixtureProvider(source, blockUsages))).process(request.job.id) };
 }
 
-describe.sequential("Phase 9 Building Blocks", () => {
+// Some scenarios create several immutable block versions through the complete
+// generation path, which exceeds Vitest's unit-test timeout on the remote DB.
+describe.sequential("Phase 9 Building Blocks", { timeout: 120_000 }, () => {
   process.env.PREVIEW_TOKEN_SECRET = "phase-nine-test-preview-secret-value";
   beforeEach(async () => { await sql`TRUNCATE TABLE change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });

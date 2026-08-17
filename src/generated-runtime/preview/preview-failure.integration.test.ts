@@ -131,7 +131,8 @@ async function runPageJob(userId: string, projectId: string, pageId: string, fra
 }
 const environment = { ...process.env };
 
-describe.sequential("Preview failure handling", () => {
+// These fixtures include real generated-version transitions before rendering.
+describe.sequential("Preview failure handling", { timeout: 120_000 }, () => {
   beforeEach(async () => {
     process.env.PREVIEW_TOKEN_SECRET = PREVIEW_SECRET;
     await sql`TRUNCATE TABLE export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`;

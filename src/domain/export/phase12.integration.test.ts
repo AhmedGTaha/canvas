@@ -118,7 +118,10 @@ async function exportedFiles(userId: string, projectId: string) {
 }
 const asText = (files: Map<string, Buffer>, path: string) => files.get(path)?.toString("utf8") ?? "";
 
-describe.sequential("Phase 12 validated ZIP export", () => {
+// This suite uses a real PostgreSQL database and exercises generation before export.
+// Individual cases can generate multiple pages or blocks; one transition measures ~22s
+// and the two largest cases run just over two minutes on the remote test database.
+describe.sequential("Phase 12 validated ZIP export", { timeout: 180_000 }, () => {
   beforeEach(async () => { await sql`TRUNCATE TABLE export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => {
     await rm(path.resolve(process.cwd(), process.env.LOCAL_STORAGE_PATH || ".canvas-storage", "test-media"), { recursive: true, force: true });
@@ -167,6 +170,7 @@ describe.sequential("Phase 12 validated ZIP export", () => {
         lightTokens: { ...DEFAULT_THEME.lightTokens, primary: "#135790", text: "#246801", surface: "#357912" },
         darkTokens: { ...DEFAULT_THEME.darkTokens, primary: "#FDB975", text: "#ECA864", surface: "#102030" },
         radiusScale: 75, spacingScale: 65, shadowScale: 55, fontScale: 45, borderScale: 35,
+        typography: { headingFont: "georgia", bodyFont: "arial" },
       },
     });
     const block = await new BuildingBlockService().create(owner.id, { projectId: project.id, name: "Global Navbar", kind: "navbar", isGlobal: true });
@@ -181,6 +185,13 @@ describe.sequential("Phase 12 validated ZIP export", () => {
     expect(css).toContain("--color-surface:#357912");
     expect(css).toContain("@media (prefers-color-scheme: dark){:root{--color-primary:#FDB975");
     for (const variable of ["--radius-md", "--space-md", "--shadow-md", "--body-size", "--border-width"]) expect(css).toContain(variable);
+    // Typography travels as resolved stacks the browser already has: an exported site
+    // must render with the project's faces without reaching a font service.
+    expect(css).toContain(`--font-heading:Georgia, "Times New Roman", Times, serif`);
+    expect(css).toContain(`--font-body:Arial, "Helvetica Neue", Helvetica, sans-serif`);
+    expect(css).toContain("font-family:var(--font-heading)");
+    expect(css).toContain("var(--font-body)");
+    expect(css).not.toMatch(/@font-face|@import|fonts\.googleapis|fonts\.gstatic/i);
     expect(css).toContain(".c-navbar,nav.c-section");
     expect(css).toContain("a{color:var(--color-accent)");
     expect(css).toContain("img.c-logo{display:block;width:auto;height:calc(var(--body-size)*2.5)");

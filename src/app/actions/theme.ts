@@ -13,6 +13,7 @@ function themeValue(value: ThemeSettingsInput): ThemeSettingsInput {
   return {
     lightTokens: value.lightTokens, darkTokens: value.darkTokens, radiusScale: value.radiusScale,
     spacingScale: value.spacingScale, shadowScale: value.shadowScale, fontScale: value.fontScale, borderScale: value.borderScale,
+    typography: { headingFont: value.typography.headingFont, bodyFont: value.typography.bodyFont },
   };
 }
 

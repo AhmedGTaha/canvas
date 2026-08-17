@@ -12,6 +12,16 @@
         }
       ]
     },
+    "src/app/api/queues/export-jobs/route.ts": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "canvas-export-jobs",
+          "retryAfterSeconds": 30
+        }
+      ]
+    },
     "src/app/api/cron/generation-maintenance/route.ts": {
       "maxDuration": 300
     }

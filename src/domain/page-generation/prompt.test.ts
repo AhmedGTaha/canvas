@@ -56,7 +56,11 @@ describe("Page generation prompt", () => {
     expect(instructions).toContain("Exactly one h1 per page");
     expect(instructions).toContain("Placeholder text is a defect");
     expect(instructions).toContain("Lorem ipsum");
-    expect(instructions).toContain("Composition patterns");
+    // How the classes behave, so composition is an informed decision — not a sample page
+    // to reproduce, which is what turned the design system into a template.
+    expect(instructions).toContain("How the classes behave");
+    expect(instructions).toContain("Design system versus composition");
+    expect(instructions).not.toContain("Composition patterns");
   });
 
   it("re-anchors the user request after the project context", () => {

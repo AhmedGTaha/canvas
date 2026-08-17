@@ -176,6 +176,66 @@ describe("generation quality and precedence", () => {
     expect(instructions).toContain("Accessibility is part of the contract");
   });
 
+  /**
+   * The regression this guards: a craft guide that showed a complete sample page — hero,
+   * card grid, closing panel — was reproduced almost verbatim on every generation, so a
+   * project's theme behaved like a page template. Design tokens constrain treatment; the
+   * composition is the model's to decide from the content.
+   */
+  it("frames the project design system as visual constraints, not a page to reproduce", () => {
+    const instructions = createPage().systemInstructions;
+    for (const rule of [
+      "Design system versus composition",
+      "The project's design settings are a visual vocabulary, not a page to reproduce",
+      "There is no Canvas page template and you must not invent one",
+      "Do not reproduce a standard generated-site skeleton",
+      "structure is a design decision you are making here, for this page",
+    ]) expect(instructions, `missing "${rule}"`).toContain(rule);
+  });
+
+  it("names the inputs a composition is designed from, and the tokens it may not override", () => {
+    const instructions = createPage().systemInstructions;
+    for (const input of ["the company", "audience", "page's purpose", "the request", "Media actually available", "the rest of the site", "persistent project instructions"]) {
+      expect(instructions, `missing "${input}"`).toContain(input);
+    }
+    expect(instructions).toContain("Fixed by the project, and not yours to override");
+    expect(instructions).toContain("Overriding the project's colours, typefaces, radius language, or spacing rhythm to make a page look different is a defect");
+  });
+
+  it("ships no canonical page skeleton for the model to copy", () => {
+    const instructions = createPage().systemInstructions;
+    // Contract mechanics still need their two examples: a Media reference and a block
+    // host. Whole sample sections — the thing that was actually being cloned — do not.
+    expect(instructions).not.toMatch(/<section[^>]*class="[^"]*c-hero/);
+    expect(instructions).not.toContain("<h1>");
+    expect(instructions).not.toContain("<article class=");
+    expect(instructions).toContain("there is deliberately no sample page here");
+    expect(instructions).toContain("data-canvas-media=");
+    expect(instructions).toContain("data-canvas-block=");
+  });
+
+  it("asks for continuity of design language across pages without cloning a page skeleton", () => {
+    const instructions = createPage().systemInstructions;
+    expect(instructions).toContain("Continuity across the site");
+    expect(instructions).toContain("Continuing a design means matching its treatment; it does not mean copying its layout");
+    expect(instructions).toContain("if two of them end up with the same section sequence, one of them was not designed");
+  });
+
+  it("makes the composition check the last thing a page generation reads", () => {
+    const closing = createPage().systemInstructions;
+    expect(closing).toContain("the order came from this page's purpose rather than from a familiar shape");
+    expect(closing).toContain("would look wrong on a different business even though the colours, type and other design tokens would carry over unchanged");
+  });
+
+  it("carries the project's typography as a constraint the model must not replace", () => {
+    for (const request of [createPage(), createBlock()]) {
+      expect(request.systemInstructions).toContain("var(--font-heading)");
+      expect(request.systemInstructions).toContain("var(--font-body)");
+      expect(request.systemInstructions).toContain("Never name a typeface");
+      expect(request.systemInstructions).toContain("Typography is a project setting");
+    }
+  });
+
   it("ranks the user's request above the aesthetic defaults but below the platform rules", () => {
     for (const request of [createPage(), modifyPage(), createBlock(), modifyBlock()]) {
       expect(request.systemInstructions.trimEnd().endsWith("Build what was asked for.")).toBe(true);

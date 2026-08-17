@@ -451,6 +451,9 @@
 .preset-swatch-bar { display: flex; align-items: center; gap: 4px; padding: 5px 6px; border: 1px solid; border-radius: 3px; }
 .preset-swatch-bar > span:first-child { width: 26px; height: 5px; border-radius: 3px; }
 .preset-swatch-bar > span:last-child { width: 14px; height: 5px; border-radius: 3px; }
+.preset-swatch-type { display: flex; align-items: baseline; gap: var(--sp-3); overflow: hidden; }
+.preset-swatch-type > span:first-child { font-size: 15px; font-weight: 700; line-height: 1; }
+.preset-swatch-type > span:last-child { overflow: hidden; font-size: 10px; line-height: 1; white-space: nowrap; }
 .preset-swatch-dots { display: flex; gap: 4px; }
 .preset-swatch-dots > span { width: 14px; height: 14px; border: 1px solid; border-radius: 50%; }
 .preset-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); padding-top: var(--sp-4); border-top: 1px solid var(--border-subtle); }
@@ -486,7 +489,10 @@
 .logo-preview img { object-fit: contain; padding: var(--sp-6); }
 
 /* The generated site's own tokens drive this preview; do not tokenize it. */
-.project-theme-preview { overflow: hidden; min-height: 520px; border: var(--project-border-width) solid var(--project-border); border-radius: var(--project-radius-lg); background: var(--project-background); color: var(--project-text); box-shadow: var(--project-shadow-md); font-size: var(--project-body-size); }
+.project-theme-preview { overflow: hidden; min-height: 520px; border: var(--project-border-width) solid var(--project-border); border-radius: var(--project-radius-lg); background: var(--project-background); color: var(--project-text); box-shadow: var(--project-shadow-md); font-family: var(--project-font-body); font-size: var(--project-body-size); }
+/* Headings take the project's heading face, everything else inherits the body face —
+   the same split generated pages get, so the preview tells the truth about both. */
+.project-theme-preview :is(h1, h2, h3, h4, h5, h6) { font-family: var(--project-font-heading); }
 .project-theme-preview nav { display: flex; align-items: center; justify-content: space-between; gap: var(--project-space-md); padding: var(--project-space-md) var(--project-space-lg); border-bottom: var(--project-border-width) solid var(--project-border); background: var(--project-surface); }
 .project-theme-preview nav strong { color: var(--project-primary); font-size: .85em; }
 .project-theme-preview nav span { color: var(--project-muted-text); font-size: .62em; }

@@ -24,7 +24,7 @@ ${CANVAS_EDITABLE_REGION_CONTRACT}`;
 
 /** Re-anchors the request after the project context so it is the last thing read. */
 const PAGE_CLOSING = `Before returning
-Name the sections you chose and confirm each one does a different job than its neighbour. Confirm the copy names this business rather than describing a generic company. Then re-read the complete html, css, and js once against the hard contract and fix every violation, even where the construct would be valid on an ordinary website.
+Name the sections you chose and confirm each one does a different job than its neighbour, and that the order came from this page's purpose rather than from a familiar shape. Confirm the composition would look wrong on a different business even though the colours, type and other design tokens would carry over unchanged. Confirm the copy names this business rather than describing a generic company. Then re-read the complete html, css, and js once against the hard contract and fix every violation, even where the construct would be valid on an ordinary website.
 The user's request in the final message outranks every default above except the platform rules and the hard contract. Build what was asked for.`;
 
 /**

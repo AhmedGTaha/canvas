@@ -161,7 +161,7 @@ export async function resolvePanel(projectId: string, name: PanelName, options: 
         <ThemeEditor
           projectId={project.id}
           initialBrand={{ companyName: brand.companyName, companyDescription: brand.companyDescription, brandNotes: brand.brandNotes, revision: brand.revision }}
-          initialTheme={{ lightTokens: theme.lightTokens, darkTokens: theme.darkTokens, radiusScale: theme.radiusScale, spacingScale: theme.spacingScale, shadowScale: theme.shadowScale, fontScale: theme.fontScale, borderScale: theme.borderScale, revision: theme.revision }}
+          initialTheme={{ lightTokens: theme.lightTokens, darkTokens: theme.darkTokens, radiusScale: theme.radiusScale, spacingScale: theme.spacingScale, shadowScale: theme.shadowScale, fontScale: theme.fontScale, borderScale: theme.borderScale, typography: theme.typography, revision: theme.revision }}
           recoveredFromInvalidState={"recoveredFromInvalidState" in theme}
         />
       </div>,

@@ -11,9 +11,12 @@ import { BuildValidator } from "./build-validator";
 import { ZipPackager } from "./zip-packager";
 import { ExportError, exportActive, exportBuildFailed, exportExpired, exportNotFound, exportNotReady, exportValidationFailed } from "./errors";
 import { observe } from "@/server/observability/events";
+import { dispatchExportJob } from "@/server/queue/export-queue";
 
 export type ExportJobStatus = typeof exportJobs.$inferSelect.status;
 const ACTIVE_STATUSES: ExportJobStatus[] = ["queued", "validating", "assembling", "building", "packaging"];
+/** Two execution attempts keep retryable infrastructure failures bounded. */
+export const MAX_EXPORT_ATTEMPTS = 2;
 
 /**
  * Durable project export. Each job validates the active project, assembles a standalone
@@ -38,6 +41,10 @@ export class ExportService {
       if (!job) throw new Error("Export job insert did not return a record.");
       await this.database.insert(auditEvents).values({ projectId, userId, action: "export.requested", entityType: "export_job", entityId: job.id });
       observe.exportJob("created", { exportId: job.id, projectId });
+      // Persist first. A dispatch outage must never erase the durable work request; the
+      // per-job watchdog will recover it, while local mode intentionally leaves it for
+      // `npm run worker`.
+      await dispatchExportJob({ jobId: job.id, projectId, attempt: job.attemptCount, reason: "created" });
       return job;
     } catch (error) {
       const code = (error as { cause?: { code?: string } }).cause?.code;
@@ -98,7 +105,7 @@ export class ExportService {
    * Runs one export job end to end. Any failure leaves the job `failed` with a
    * user-safe reason and no downloadable artifact.
    */
-  async process(exportId: string) {
+  async process(exportId: string, options: { rethrowUnexpected?: boolean } = {}) {
     const startedAt = performance.now();
     const [job] = await this.database.select().from(exportJobs).where(eq(exportJobs.id, exportId)).limit(1);
     if (!job || !ACTIVE_STATUSES.includes(job.status)) return job ?? null;
@@ -124,7 +131,10 @@ export class ExportService {
       const archive = this.packager.pack(assembled.files);
       const fileName = `${fileStem(state.project.name, state.project.id, "website")}.zip`;
       const storageKey = `exports/${job.projectId}/${exportId}.zip`;
-      await this.storage.put(storageKey, archive);
+      // A function may die after the durable write but before it marks the row complete.
+      // The same claimed job can safely resume: the deterministic private key means the
+      // already-written archive is the exact artifact this job needs.
+      if (!(await this.storage.exists(storageKey))) await this.storage.put(storageKey, archive);
 
       const completed = await this.transition(exportId, "completed", "Ready to download", {
         artifactStorageKey: storageKey, artifactFileName: fileName, artifactBytes: archive.length, artifactFileCount: assembled.files.length,
@@ -133,6 +143,9 @@ export class ExportService {
       observe.exportJob("completed", { exportId, projectId: job.projectId, fileCount: assembled.files.length, bytes: archive.length, durationMs: performance.now() - startedAt });
       return completed;
     } catch (error) {
+      // Queue execution treats unknown infrastructure faults as retryable. Domain export
+      // failures (validation/build) remain terminal and keep the established UI behavior.
+      if (options.rethrowUnexpected && !(error instanceof ExportError)) throw error;
       const failure = error instanceof ExportError ? error : new ExportError("EXPORT_FAILED", "VALIDATION", "Canvas could not export this website. Try again.");
 
       const failed = await this.transition(exportId, "failed", "Failed", { errorCode: failure.exportCode, errorMessage: failure.message.slice(0, 500) });
@@ -151,11 +164,26 @@ export async function claimExportJob(workerId: string) {
     WHERE id = (SELECT id FROM export_jobs
       WHERE ((status = 'queued' AND available_at <= now())
              OR (status IN ('validating', 'assembling', 'building', 'packaging') AND claimed_at < now() - interval '15 minutes'))
-        AND attempt_count < 2
+        AND attempt_count < ${MAX_EXPORT_ATTEMPTS}
       ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT 1)
     RETURNING id`;
   if (!rows[0]) return null;
   const [job] = await db.select().from(exportJobs).where(eq(exportJobs.id, rows[0].id)).limit(1);
+  return job ?? null;
+}
+
+/** Claims one named export job for a queue delivery, including a safely stale lease. */
+export async function claimExportJobById(exportId: string, workerId: string, database: Database = db) {
+  const rows = await sql<{ id: string }[]>`
+    UPDATE export_jobs SET status = 'validating', progress_stage = 'Checking your website', claimed_at = now(),
+      worker_id = ${workerId}, attempt_count = attempt_count + 1, started_at = COALESCE(started_at, now())
+    WHERE id = ${exportId}
+      AND ((status = 'queued' AND available_at <= now())
+        OR (status IN ('validating', 'assembling', 'building', 'packaging') AND claimed_at < now() - interval '5 minutes'))
+      AND attempt_count < ${MAX_EXPORT_ATTEMPTS}
+    RETURNING id`;
+  if (!rows[0]) return null;
+  const [job] = await database.select().from(exportJobs).where(eq(exportJobs.id, rows[0].id)).limit(1);
   return job ?? null;
 }
 

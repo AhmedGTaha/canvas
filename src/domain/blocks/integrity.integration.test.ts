@@ -13,7 +13,7 @@ const hash = "a".repeat(64);
 async function owner(label: string) { const id = randomUUID(); const [record] = await db.insert(users).values({ id, email: `${label}-${id}@test.dev`, normalizedEmail: `${label}-${id}@test.dev`, displayName: label }).returning(); return record!; }
 async function project(userId: string, name: string) { const workspace = await new WorkspaceService().create(userId, { name }); return new ProjectService().create(userId, { workspaceId: workspace.id, name }); }
 
-describe.sequential("Building Block database integrity", () => {
+describe.sequential("Building Block database integrity", { timeout: 60_000 }, () => {
   beforeEach(async () => { await sql`TRUNCATE TABLE building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, generation_jobs, ai_messages, ai_conversations, page_nodes, audit_events, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });
 

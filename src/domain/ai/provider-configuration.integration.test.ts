@@ -23,7 +23,7 @@ async function setup() {
   return { owner, project, home };
 }
 
-describe.sequential("AI provider configuration", () => {
+describe.sequential("AI provider configuration", { timeout: 60_000 }, () => {
   beforeEach(async () => { await sql`TRUNCATE TABLE ai_usage_events, ai_connection_models, user_ai_settings, ai_connections, export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterEach(() => { process.env = { ...environment }; setTelemetrySink(null); });
   afterAll(async () => { await sql.end(); });

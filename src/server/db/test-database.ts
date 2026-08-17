@@ -6,10 +6,13 @@
  * get a database of their own instead, derived from the configured one so there
  * is nothing extra to set up, and nothing to forget to set up.
  */
-export function testDatabaseUrl(databaseUrl: string) {
+export function testDatabaseUrl(databaseUrl: string, runId?: string) {
   const url = new URL(databaseUrl);
   const name = url.pathname.replace(/^\//, "") || "postgres";
-  url.pathname = `/${name}${name.endsWith("_test") ? "" : "_test"}`;
+  const testName = `${name}${name.endsWith("_test") ? "" : "_test"}`;
+  // Each Vitest invocation owns a database. Independent test commands otherwise
+  // race when their integration suites truncate the same shared tables.
+  url.pathname = `/${runId ? `${testName}_${runId}` : testName}`;
   return url.toString();
 }
 

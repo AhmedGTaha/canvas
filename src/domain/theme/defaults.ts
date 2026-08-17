@@ -1,3 +1,4 @@
+import { DEFAULT_BODY_FONT, DEFAULT_HEADING_FONT } from "./fonts";
 import type { ThemeSettingsInput } from "./schemas";
 
 export const DEFAULT_LIGHT_TOKENS = Object.freeze({
@@ -18,4 +19,7 @@ export const DEFAULT_THEME: ThemeSettingsInput = Object.freeze({
   shadowScale: 50,
   fontScale: 50,
   borderScale: 50,
+  // The system stacks: what every project rendered with before typography was a setting,
+  // so a project that has never touched it looks exactly as it did.
+  typography: { headingFont: DEFAULT_HEADING_FONT, bodyFont: DEFAULT_BODY_FONT },
 });

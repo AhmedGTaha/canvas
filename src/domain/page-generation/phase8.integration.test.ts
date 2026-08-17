@@ -43,7 +43,9 @@ class SummaryFixtureProvider implements AIProvider { readonly capabilities = { s
 async function user(label:string){const id=randomUUID();const [record]=await db.insert(users).values({id,email:`${label}-${id}@test.dev`,normalizedEmail:`${label}-${id}@test.dev`,displayName:label}).returning();return record!}
 async function setup(){const owner=await user("owner");const workspace=await new WorkspaceService().create(owner.id,{name:"Workspace"});const project=await new ProjectService().create(owner.id,{workspaceId:workspace.id,name:"Site"});const page=await new PageTreeService().create(owner.id,{projectId:project.id,type:"page",name:"Home"});return {owner,project,page}}
 
-describe.sequential("Phase 8 page generation",()=>{
+// Cases can run several real-PostgreSQL generation/repair transitions; keep
+// their measured remote-database allowance local to this serial suite.
+describe.sequential("Phase 8 page generation", { timeout: 120_000 },()=>{
   process.env.PREVIEW_TOKEN_SECRET="phase-eight-test-preview-secret-value";
   beforeEach(async()=>{await sql`TRUNCATE TABLE generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`});
   afterAll(async()=>{await sql.end()});

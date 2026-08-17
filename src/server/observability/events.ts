@@ -39,6 +39,14 @@ export const observe = {
     metrics.count("generation.delivery", { action, reason: fields.reason });
     emit(`generation.delivery_${action}`, fields);
   },
+  exportDispatch(action: "published" | "skipped" | "failed", fields: { jobId: string; projectId?: string; mode: "queue" | "worker"; reason: string; attempt?: number; round?: number; duplicate?: boolean; error?: string }) {
+    metrics.count("export.dispatch", { action, mode: fields.mode, reason: fields.reason });
+    emit(`export.dispatch_${action}`, fields, action === "failed" ? "error" : "info");
+  },
+  exportDelivery(action: "processed" | "requeued" | "skipped" | "deferred" | "watchdog", fields: { jobId: string; projectId?: string; reason?: string; status?: string; deliveryCount?: number; retryAfterSeconds?: number; round?: number; verdict?: string }) {
+    metrics.count("export.delivery", { action });
+    emit(`export.delivery_${action}`, fields, "info");
+  },
   validationFailed(kind: "page" | "block" | "export" | "restore", fields: { projectId?: string; jobId?: string; entityId?: string; reason?: string; diagnostic?: string | null; pipelineStage?: string; provider?: string | null; model?: string | null }) {
     metrics.count("validation.failure", { kind });
     emit("validation.failed", { kind, ...fields }, "warn");

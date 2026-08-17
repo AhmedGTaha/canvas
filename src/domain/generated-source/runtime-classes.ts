@@ -19,5 +19,6 @@ export const GENERATED_RUNTIME_CLASS_GUIDE = `Canvas supplies these theme-aware 
 - Surfaces: c-card, c-surface, c-bordered, c-rounded, c-shadow.
 - Navbar: c-navbar on the nav, c-nav-brand on the logo link, c-nav-links around navigation links, and c-link on normal text links.
 - Actions/text/media: c-button, c-button-secondary, c-muted, c-kicker, c-media for content images, and c-logo on an image that is a brand logo.
-All of these classes resolve colors, spacing, radius, shadows, typography, and borders through the current project theme and update automatically when that theme changes.
-Your own CSS must use the same theme variables — var(--color-primary), var(--color-surface), var(--space-lg), var(--radius-md), var(--shadow-md), var(--border-width) — rather than hard-coded colours or pixel values, so a theme change keeps working.`;
+All of these classes resolve colors, spacing, radius, shadows, typography, and borders through the current project theme and update automatically when that theme changes. They are a visual vocabulary: they say how things look, never which sections a page has or in what order.
+Headings inherit the project's heading typeface and everything else inherits its body typeface, so generated markup never declares a font family.
+Your own CSS must use the same theme variables — var(--color-primary), var(--color-surface), var(--space-lg), var(--radius-md), var(--shadow-md), var(--font-heading), var(--font-body), var(--border-width) — rather than hard-coded colours, pixel values, or font names, so a theme change keeps working.`;

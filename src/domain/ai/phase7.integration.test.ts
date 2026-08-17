@@ -9,6 +9,7 @@ import { PageTreeService } from "@/domain/pages/service";
 import { ProjectInstructionService } from "./instruction-service";
 import { AIConversationService } from "./conversation-service";
 import { ProjectContextBuilder } from "./context";
+import { ThemeService } from "@/domain/theme/services";
 import { GenerationJobLifecycle, GenerationJobService, claimGenerationJob } from "./job-service";
 import { AIOrchestrationService } from "./orchestration-service";
 import type { AIProvider } from "./provider";
@@ -17,7 +18,7 @@ import { fixtureProviderResolver } from "@/domain/ai/testing/provider-fixtures";
 async function user(label: string) { const id = randomUUID(); const [record] = await db.insert(users).values({ id, email: `${label}-${id}@test.dev`, normalizedEmail: `${label}-${id}@test.dev`, displayName: label }).returning(); return record!; }
 async function project(ownerId: string, name: string) { const workspace = await new WorkspaceService().create(ownerId, { name: `${name} workspace` }); return new ProjectService().create(ownerId, { workspaceId: workspace.id, name, description: `${name} description` }); }
 
-describe.sequential("Phase 7 AI context infrastructure", () => {
+describe.sequential("Phase 7 AI context infrastructure", { timeout: 60_000 }, () => {
   beforeEach(async () => { await sql`TRUNCATE TABLE ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });
 
@@ -54,6 +55,41 @@ describe.sequential("Phase 7 AI context infrastructure", () => {
     await expect(builder.build({ projectId: a.id, actorUserId: owner.id, target: { type: "page", id: foreignPage.id } })).rejects.toThrow(/not found in this project/i);
     await expect(builder.build({ projectId: a.id, actorUserId: owner.id, target: { type: "project" }, selectedMediaIds: [foreignAsset!.id] })).rejects.toThrow(/not active in this project/i);
     await expect(builder.build({ projectId: a.id, actorUserId: owner.id, target: { type: "project" }, conversationId: foreignConversation.id })).rejects.toThrow(/not found in this project/i);
+  });
+
+  /**
+   * The design system reaches the model as constraints on visual treatment. It must carry
+   * the project's typography, and it must carry no page structure at all — the repeated
+   * layout problem began with structure travelling under the theme's name.
+   */
+  it("sends the project design system as typed constraints, per project, with no page structure", async () => {
+    const owner = await user("owner"); const studio = await project(owner.id, "Studio"); const bistro = await project(owner.id, "Bistro");
+    const themes = new ThemeService();
+    const stored = await themes.read(owner.id, studio.id);
+    const before = { lightTokens: stored.lightTokens, darkTokens: stored.darkTokens, radiusScale: stored.radiusScale, spacingScale: stored.spacingScale, shadowScale: stored.shadowScale, fontScale: stored.fontScale, borderScale: stored.borderScale, typography: stored.typography };
+    const saved = await themes.update(owner.id, { projectId: studio.id, expectedRevision: stored.revision, theme: { ...before, typography: { headingFont: "georgia", bodyFont: "arial" } } });
+    expect(saved.typography).toEqual({ headingFont: "georgia", bodyFont: "arial" });
+    // Reloading returns what was saved, not the defaults.
+    expect((await themes.read(owner.id, studio.id)).typography).toEqual({ headingFont: "georgia", bodyFont: "arial" });
+
+    const builder = new ProjectContextBuilder();
+    const context = await builder.build({ projectId: studio.id, actorUserId: owner.id, target: { type: "project" } });
+    expect(context.theme).toMatchObject({ role: "design_constraints", typography: { headingFont: "georgia", bodyFont: "arial", headingFontLabel: "Georgia", bodyFontLabel: "Arial" }, fontScale: before.fontScale });
+    expect(context.theme.resolved.typography.headingFamily).toContain("Georgia");
+    // No markup, no component tree, no sample page travels with the design system. The
+    // only structural words allowed are the ones naming what the theme does *not* govern.
+    const { doesNotApplyTo, ...tokens } = context.theme;
+    expect(doesNotApplyTo).toContain("page composition");
+    expect(JSON.stringify(tokens)).not.toMatch(/<[a-z]|<\/|c-hero|c-section|c-card|c-navbar|\bhero\b|\bcard\b|\bnavbar\b/i);
+
+    // Another project keeps its own typography.
+    const neighbour = await builder.build({ projectId: bistro.id, actorUserId: owner.id, target: { type: "project" } });
+    expect(neighbour.theme.typography).toMatchObject({ headingFont: "system-sans", bodyFont: "system-sans" });
+
+    // Reset restores the defaults, typography included.
+    const reset = await themes.reset(owner.id, { projectId: studio.id, expectedRevision: saved.revision });
+    expect(reset.typography).toEqual({ headingFont: "system-sans", bodyFont: "system-sans" });
+    await expect(themes.update(owner.id, { projectId: studio.id, expectedRevision: reset.revision, theme: { ...before, typography: { headingFont: "Inter", bodyFont: "arial" } } as never })).rejects.toThrow();
   });
 
   it("scopes conversations and jobs, enforces lifecycle timestamps, claiming, idempotent completion, and cancellation", async () => {

@@ -3,6 +3,7 @@
 import { Check, Moon, Sun, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { THEME_PRESETS, type ThemePreset } from "@/domain/theme/presets";
+import { resolveFontStack } from "@/domain/theme/fonts";
 import type { SemanticColorTokens, ThemeSettingsInput } from "@/domain/theme/schemas";
 
 const SWATCHES: Array<keyof SemanticColorTokens> = ["primary", "accent", "surface", "background", "border"];
@@ -62,13 +63,21 @@ export function ThemePresetPicker({ stagedPresetId, appliedPresetId, mode, onMod
   </div>;
 }
 
-/** A compact, honest sample: page background, a surface, and the accent colours on it. */
+/**
+ * A compact, honest sample: page background, a surface, the two typefaces, and the accent
+ * colours on it. The type is shown because a preset's character is as much its heading and
+ * body faces as its palette — and because reading "Georgia" is no substitute for seeing it.
+ */
 function PresetSwatch({ theme, mode }: { theme: ThemeSettingsInput; mode: "light" | "dark" }) {
   const tokens = mode === "light" ? theme.lightTokens : theme.darkTokens;
   return <span className="preset-swatch" style={{ background: tokens.background, borderColor: tokens.border }} aria-hidden="true">
     <span className="preset-swatch-bar" style={{ background: tokens.surface, borderColor: tokens.border }}>
       <span style={{ background: tokens.text }} />
       <span style={{ background: tokens.mutedText }} />
+    </span>
+    <span className="preset-swatch-type">
+      <span style={{ color: tokens.text, fontFamily: resolveFontStack(theme.typography.headingFont) }}>Ag</span>
+      <span style={{ color: tokens.mutedText, fontFamily: resolveFontStack(theme.typography.bodyFont) }}>Body text</span>
     </span>
     <span className="preset-swatch-dots">
       {SWATCHES.map((key) => <span key={key} style={{ background: tokens[key], borderColor: tokens.border }} />)}

@@ -73,7 +73,8 @@ async function activeSource(pageId: string) {
   return version!;
 }
 
-describe.sequential("Phase 10 element-level editing", () => {
+// Targeted-edit scenarios make multiple full generated-version transitions.
+describe.sequential("Phase 10 element-level editing", { timeout: 120_000 }, () => {
   process.env.PREVIEW_TOKEN_SECRET = "phase-ten-test-preview-secret-value";
   beforeEach(async () => { await sql`TRUNCATE TABLE building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });

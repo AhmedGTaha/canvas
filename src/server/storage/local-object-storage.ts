@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ObjectStorage } from "./object-storage";
+import { assertObjectStorageKey, type ObjectStorage } from "./object-storage";
 
 export class LocalObjectStorage implements ObjectStorage {
   private readonly root: string;
@@ -10,8 +10,7 @@ export class LocalObjectStorage implements ObjectStorage {
   }
 
   private resolve(key: string) {
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(key)) throw new Error("Invalid object storage key.");
-    const resolved = path.resolve(this.root, key);
+    const resolved = path.resolve(this.root, assertObjectStorageKey(key));
     if (resolved === this.root || !resolved.startsWith(`${this.root}${path.sep}`)) throw new Error("Object storage key escapes its root.");
     return resolved;
   }

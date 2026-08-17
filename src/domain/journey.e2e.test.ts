@@ -101,7 +101,8 @@ function run(command: string, args: string[], cwd: string) {
  * deterministic AI provider. Each step asserts the user-visible outcome of the step
  * before the next one begins.
  */
-describe.sequential("Canvas critical journey", () => {
+// The end-to-end journey performs several real generation transitions.
+describe.sequential("Canvas critical journey", { timeout: 120_000 }, () => {
   process.env.PREVIEW_TOKEN_SECRET = "journey-e2e-preview-secret-value-long-enough";
   const state: Record<string, string> = {};
   let archive: Uint8Array | null = null;

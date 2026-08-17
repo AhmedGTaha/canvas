@@ -59,7 +59,7 @@ requests fail with a clear configuration error rather than crashing.
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
 | `npm start` | Run the production build |
-| `npm run worker` | Local runner: AI generation, export jobs, periodic housekeeping. Not used in production, where generation runs on Vercel Queues |
+| `npm run worker` | Local runner: AI generation, export jobs, periodic housekeeping. Not used in Vercel production, where queues run both job types |
 | `npm run maintenance` | One-shot housekeeping pass (for a scheduler/cron) |
 | `npm run db:migrate` | Apply every pending migration in order |
 | `npm test` | Full test suite |
@@ -86,10 +86,12 @@ Migrations are forward-only. To roll back, restore a database backup.
 ## Storage
 
 `STORAGE_DRIVER=local` writes private objects under `LOCAL_STORAGE_PATH`
-(`.canvas-storage` by default). The directory is gitignored and must be writable and
-included in backups: it holds uploaded media bytes and export archives. Media is served
-only through the authenticated `/api/media/{assetId}` route or a short-lived, project-
-scoped Preview token. Object keys are never exposed to clients.
+(`.canvas-storage` by default). `STORAGE_DRIVER=vercel-blob` uses a **private** Vercel
+Blob store for the same `ObjectStorage` interface, and is required on Vercel: a function
+filesystem is not durable shared storage. Both adapters hold uploaded media and export
+archives. Media is served only through the authenticated `/api/media/{assetId}` route or
+a short-lived, project-scoped Preview token. Object keys and Blob URLs are never exposed
+to clients.
 
 ## AI providers and credentials
 
@@ -217,8 +219,9 @@ suite uses mocks and makes no paid calls.
 | `APP_URL` | Yes | Public Canvas origin; used for links and Preview frame ancestry. |
 | `PREVIEW_TOKEN_SECRET` | Yes | HMAC secret (32+ characters) for Preview sessions. |
 | `NODE_ENV` | Runtime | `production` enables Secure session cookies. |
-| `STORAGE_DRIVER` | No | Object storage adapter; `local` (default). |
+| `STORAGE_DRIVER` | No | Object storage adapter; `local` by default off Vercel, `vercel-blob` by default on Vercel. |
 | `LOCAL_STORAGE_PATH` | No | Private object root; defaults to `.canvas-storage`. |
+| `BLOB_READ_WRITE_TOKEN` | With `vercel-blob` outside linked Vercel runtime | Vercel Blob read/write token. A connected private Blob store adds it automatically. |
 | `MEDIA_MAX_BYTES` | No | Maximum bytes per uploaded image; defaults to 10 MB. |
 | `PREVIEW_TOKEN_TTL_SECONDS` | No | Preview session lifetime (30–900); defaults to `300`. |
 | `INVITE_TTL_DAYS` | No | Invitation lifetime; defaults to `7`. |
@@ -228,24 +231,25 @@ suite uses mocks and makes no paid calls.
 | `SMOKE_AI_PROVIDER` / `SMOKE_AI_MODEL` / `SMOKE_AI_API_KEY` / `SMOKE_AI_BASE_URL` | No | Opt-in credentials for the paid provider smoke check only. |
 | `CANVAS_EXPORT_BUILD` | No | `typecheck` (default) or `full` to run a real `next build` per export. |
 | `CANVAS_GENERATION_DISPATCH` | No | `queue` or `worker`. Defaults to `queue` on Vercel and `worker` elsewhere. |
+| `CANVAS_EXPORT_DISPATCH` | No | `queue` or `worker`. Defaults to `queue` on Vercel and `worker` elsewhere. |
 | `CRON_SECRET` | On Vercel | Bearer token Vercel Cron presents to `/api/cron/generation-maintenance`. Without it the route refuses every request. |
 | `CANVAS_METRICS_TOKEN` | No | Enables `GET /api/internal/metrics` for callers with this bearer token. |
 
 ## Deployment
 
-1. Provision PostgreSQL 15+ and persistent storage for `LOCAL_STORAGE_PATH`.
+1. Provision PostgreSQL 15+. On Vercel, create and connect a **private Vercel Blob**
+   store, set `STORAGE_DRIVER=vercel-blob`, and ensure `BLOB_READ_WRITE_TOKEN` is
+   available to Production (Vercel normally provisions it when the store is connected).
 2. Set every required variable above; set `NODE_ENV=production` and an `APP_URL` on HTTPS.
 3. Run `npm run db:migrate` before starting new application instances.
 4. Start the web process (`npm run build && npm start`).
-5. Run AI generation one of two ways:
-   - **On Vercel (default):** `vercel.json` registers `/api/queues/generation-jobs` as a
-     push consumer of the `canvas-generation-jobs` topic, and a cron calls
-     `/api/cron/generation-maintenance` every five minutes. Nothing long-running is
-     needed. Set `CRON_SECRET` so the maintenance route cannot be driven by anyone else.
-   - **On your own host:** set `CANVAS_GENERATION_DISPATCH=worker` and run at least one
-     `npm run worker`, plus `npm run maintenance` on a schedule.
-6. Export jobs are still processed by `npm run worker`: they build a project with the
-   local toolchain and are not part of the queue path.
+5. Run jobs one of two ways:
+   - **On Vercel (default):** `vercel.json` registers `/api/queues/generation-jobs` and
+     `/api/queues/export-jobs` as push consumers. Nothing long-running is needed. Set
+     `CRON_SECRET` so the once-daily maintenance route cannot be driven by anyone else.
+   - **On your own host:** set `CANVAS_GENERATION_DISPATCH=worker` and
+     `CANVAS_EXPORT_DISPATCH=worker`, run at least one `npm run worker`, plus
+     `npm run maintenance` on a schedule.
 7. Probe `GET /api/health` for liveness and database reachability.
 
 ### AI generation on Vercel Queues
@@ -256,6 +260,16 @@ conditional UPDATE before doing any work, so at-least-once delivery is safe: a d
 claims nothing and returns. Retries, cancellation, provider selection, progress, and
 results all continue to live in `generation_jobs`; the queue never carries prompts,
 credentials, or provider material.
+
+### Export jobs on Vercel Queues
+
+Creating an export writes `export_jobs` first, then sends only `{ jobId }` to the
+`canvas-export-jobs` topic. The consumer claims that exact row before calling the existing
+export pipeline, so duplicate queue delivery cannot create two archives. An export queue
+message also schedules a bounded delayed watchdog: it republishes only rows that stayed
+queued or whose function claim expired. Unexpected infrastructure faults retry once with
+a short backoff; validation and build failures remain terminal and user-safe. The daily
+maintenance sweep is only the final recovery net.
 
 Preview runs in an `allow-scripts` opaque-origin iframe under a restrictive CSP. In
 production, serving the Preview routes from a **separate origin** to `APP_URL` gives the

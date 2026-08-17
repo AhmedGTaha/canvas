@@ -6,6 +6,7 @@ import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DomainError } from "@/domain/shared/errors";
 import { resolveProjectDesignTokens } from "@/domain/theme/resolver";
 import { parseStoredThemeSettings } from "@/domain/theme/schemas";
+import { findFontChoice } from "@/domain/theme/fonts";
 import { DEFAULT_THEME } from "@/domain/theme/defaults";
 import { AI_LIMITS } from "./limits";
 
@@ -110,7 +111,24 @@ export class ProjectContextBuilder {
     const context = {
       project: { id: project.id, name: project.name, description: clip(project.description, AI_LIMITS.projectDescriptionCharacters) },
       brand: { companyName: brand?.companyName ?? project.name, companyDescription: clip(brand?.companyDescription ?? null, AI_LIMITS.brandTextCharacters), brandNotes: clip(brand?.brandNotes ?? null, AI_LIMITS.brandTextCharacters), primaryLogoMediaId: brand?.primaryLogoMediaId ?? null, alternateLogoMediaId: brand?.alternateLogoMediaId ?? null, revision: brand?.revision ?? 0 },
-      theme: { light: theme.lightTokens, dark: theme.darkTokens, radius: theme.radiusScale, spacing: theme.spacingScale, shadows: theme.shadowScale, fontScale: theme.fontScale, borderThickness: theme.borderScale, revision: rawTheme?.revision ?? 0, resolved: resolveProjectDesignTokens(theme) },
+      // Design constraints only. This is a vocabulary — colour, type, radius, spacing,
+      // shadow, border weight — and carries no page structure, no reference markup, and
+      // no sample composition, because none of that is a project setting.
+      theme: {
+        role: "design_constraints" as const,
+        appliesTo: "visual treatment (colour, typography, radius, spacing, shadow, border weight)",
+        doesNotApplyTo: "page composition, section order, column counts, hero shape, or where a call to action goes",
+        light: theme.lightTokens, dark: theme.darkTokens,
+        radius: theme.radiusScale, spacing: theme.spacingScale, shadows: theme.shadowScale, fontScale: theme.fontScale, borderThickness: theme.borderScale,
+        typography: {
+          headingFont: theme.typography.headingFont,
+          bodyFont: theme.typography.bodyFont,
+          headingFontLabel: findFontChoice(theme.typography.headingFont)?.label ?? theme.typography.headingFont,
+          bodyFontLabel: findFontChoice(theme.typography.bodyFont)?.label ?? theme.typography.bodyFont,
+          note: "Headings and body text already inherit these through --font-heading and --font-body. Never name a font family of your own.",
+        },
+        revision: rawTheme?.revision ?? 0, resolved: resolveProjectDesignTokens(theme),
+      },
       instructions: { content: currentInstruction?.content ?? "", revisionId: currentInstruction?.id ?? null, revisionNumber: currentInstruction?.revisionNumber ?? 0 },
       structure: { homepage: nodes.find((node) => node.type === "page" && node.isHomepage)?.id ?? null, pages: nodes.map((node) => ({ id: node.id, parentId: node.parentId, type: node.type, name: node.name, route: node.routePath, isHomepage: node.isHomepage, seo: node.type === "page" ? { title: node.pageTitle, description: node.metaDescription } : null })) },
       target: targetPage

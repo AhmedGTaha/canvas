@@ -88,7 +88,10 @@ async function renderedPage(projectId: string, pageId: string) {
   return node?.currentVersionId ? (await new GeneratedPageContentProvider().get(projectId, pageId, node.currentVersionId, previewMedia))?.composed.html ?? "" : "";
 }
 
-describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", () => {
+// This real-PostgreSQL suite performs several generated version transitions in
+// individual cases. On the remote test database each transition takes ~22s, so
+// multi-version cases need a scoped allowance rather than Vitest's 5s default.
+describe.sequential("Phase 11 versioning, undo/redo, and checkpoints", { timeout: 120_000 }, () => {
   process.env.PREVIEW_TOKEN_SECRET = "phase-eleven-test-preview-secret-value";
   beforeEach(async () => { await sql`TRUNCATE TABLE project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });

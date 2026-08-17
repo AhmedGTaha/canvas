@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { projectBrandSettings, projectThemeSettings } from "@/server/db/schema";
-import type { BrandSettingsInput, ThemeSettingsInput } from "./schemas";
+import { themeSettingsColumns, type BrandSettingsInput, type ThemeSettingsInput } from "./schemas";
 import { DEFAULT_THEME } from "./defaults";
 
 export class BrandRepository {
@@ -28,11 +28,11 @@ export class ThemeRepository {
     return record;
   }
   async ensure(projectId: string) {
-    await this.database.insert(projectThemeSettings).values({ projectId, ...DEFAULT_THEME }).onConflictDoNothing();
+    await this.database.insert(projectThemeSettings).values({ projectId, ...themeSettingsColumns(DEFAULT_THEME) }).onConflictDoNothing();
     return this.find(projectId);
   }
   async update(projectId: string, expectedRevision: number, theme: ThemeSettingsInput) {
-    const [record] = await this.database.update(projectThemeSettings).set({ ...theme, revision: sql`${projectThemeSettings.revision} + 1`, updatedAt: new Date() })
+    const [record] = await this.database.update(projectThemeSettings).set({ ...themeSettingsColumns(theme), revision: sql`${projectThemeSettings.revision} + 1`, updatedAt: new Date() })
       .where(and(eq(projectThemeSettings.projectId, projectId), eq(projectThemeSettings.revision, expectedRevision))).returning();
     return record;
   }

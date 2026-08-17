@@ -1,3 +1,4 @@
+import { resolveFontStack } from "./fonts";
 import type { SemanticColorTokens, ThemeSettingsInput } from "./schemas";
 
 export type ResolvedDesignTokens = {
@@ -5,7 +6,12 @@ export type ResolvedDesignTokens = {
   radius: { sm: string; md: string; lg: string; xl: string };
   spacing: { multiplier: number; xs: string; sm: string; md: string; lg: string; xl: string };
   shadows: { sm: string; md: string; lg: string };
-  typography: { multiplier: number; body: string; heading: string };
+  /**
+   * `multiplier`, `body` and `heading` are the font *scale*; `headingFamily` and
+   * `bodyFamily` are the resolved font stacks. Size and family are separate decisions and
+   * are resolved separately.
+   */
+  typography: { multiplier: number; body: string; heading: string; headingFamily: string; bodyFamily: string };
   borders: { width: string; strongWidth: string };
 };
 
@@ -30,7 +36,13 @@ export function resolveProjectDesignTokens(theme: ThemeSettingsInput): ResolvedD
       md: `${round(16 * spacingMultiplier)}px`, lg: `${round(24 * spacingMultiplier)}px`, xl: `${round(40 * spacingMultiplier)}px`,
     },
     shadows: { sm: shadowValue(1, 3, 0.12), md: shadowValue(4, 14, 0.16), lg: shadowValue(12, 30, 0.2) },
-    typography: { multiplier: fontMultiplier, body: `${round(16 * fontMultiplier)}px`, heading: `${round(36 * fontMultiplier)}px` },
+    typography: {
+      multiplier: fontMultiplier,
+      body: `${round(16 * fontMultiplier)}px`,
+      heading: `${round(36 * fontMultiplier)}px`,
+      headingFamily: resolveFontStack(theme.typography.headingFont),
+      bodyFamily: resolveFontStack(theme.typography.bodyFont),
+    },
     borders: { width: `${borderWidth}px`, strongWidth: `${round(borderWidth + 0.75)}px` },
   };
 }
@@ -59,6 +71,8 @@ export function projectThemeCssVariables(resolved: ResolvedDesignTokens, mode: "
     "--project-font-scale": String(resolved.typography.multiplier),
     "--project-body-size": resolved.typography.body,
     "--project-heading-size": resolved.typography.heading,
+    "--project-font-heading": resolved.typography.headingFamily,
+    "--project-font-body": resolved.typography.bodyFamily,
     "--project-border-width": resolved.borders.width,
   } as const;
 }

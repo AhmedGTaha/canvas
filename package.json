@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "db:migrate": "tsx --env-file=.env src/server/db/migrate.ts",
     "worker": "tsx --env-file=.env src/server/jobs/worker.ts",
@@ -19,6 +19,7 @@
   "dependencies": {
     "@google/genai": "^2.16.0",
     "@node-rs/argon2": "2.0.2",
+    "@vercel/blob": "^2.8.0",
     "@vercel/queue": "^0.4.0",
     "drizzle-orm": "0.45.2",
     "lucide-react": "0.468.0",

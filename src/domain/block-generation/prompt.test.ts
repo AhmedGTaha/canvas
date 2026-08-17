@@ -50,7 +50,8 @@ describe("Building Block generation prompt", () => {
   // from a different design system than the page hosting it.
   it("shares the page craft brief but scopes the section count to one block", () => {
     const instructions = generate().systemInstructions;
-    expect(instructions).toContain("Composition patterns");
+    expect(instructions).toContain("How the classes behave");
+    expect(instructions).toContain("Design system versus composition");
     expect(instructions).toContain("Placeholder text is a defect");
     expect(instructions).toContain("the page-level \"5 to 8 sections\" target does not apply");
     expect(instructions).toContain("Never use a data-canvas-block host inside block html");

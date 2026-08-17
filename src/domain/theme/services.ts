@@ -2,7 +2,7 @@ import { DomainError } from "@/domain/shared/errors";
 import { ProjectAccessService } from "@/server/permissions/project-access";
 import { DEFAULT_THEME } from "./defaults";
 import { resolveProjectDesignTokens } from "./resolver";
-import { brandSettingsSchema, parseStoredThemeSettings, resetThemeSchema, themeSettingsSchema, updateBrandSchema, updateThemeSchema } from "./schemas";
+import { brandSettingsSchema, parseStoredThemeSettings, resetThemeSchema, updateBrandSchema, updateThemeSchema } from "./schemas";
 import { BrandRepository, ThemeRepository } from "./repositories";
 
 export class BrandService {
@@ -49,8 +49,9 @@ export class ThemeService {
     await this.access.requireProjectAccess(userId, parsed.projectId);
     const record = await this.repository.update(parsed.projectId, parsed.expectedRevision, parsed.theme);
     if (!record) throw new DomainError("CONFLICT", "This theme changed elsewhere. Your latest edits will be retried.");
-    const theme = themeSettingsSchema.parse({ lightTokens: record.lightTokens, darkTokens: record.darkTokens, radiusScale: record.radiusScale, spacingScale: record.spacingScale, shadowScale: record.shadowScale, fontScale: record.fontScale, borderScale: record.borderScale });
-    return { ...theme, revision: record.revision, resolvedDesignTokens: resolveProjectDesignTokens(theme) };
+    const stored = parseStoredThemeSettings(record);
+    if (!stored.success) throw new DomainError("VALIDATION", "The saved theme is not a valid design system.");
+    return { ...stored.data, revision: record.revision, resolvedDesignTokens: resolveProjectDesignTokens(stored.data) };
   }
 
   async reset(userId: string, input: unknown) {

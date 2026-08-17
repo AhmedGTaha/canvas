@@ -7,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/panel";
 import { SegmentedControl } from "@/components/ui/segmented";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
-import { Input, Textarea } from "@/components/ui/form-controls";
+import { Input, Select, Textarea } from "@/components/ui/form-controls";
 import { Disclosure } from "@/components/ui/disclosure";
 import { projectThemeCssVariables, resolveProjectDesignTokens } from "@/domain/theme/resolver";
 import { THEME_PRESETS, type ThemePreset } from "@/domain/theme/presets";
-import type { BrandSettingsInput, SemanticColorTokens, ThemeSettingsInput } from "@/domain/theme/schemas";
+import { FONT_CATEGORY_LABELS, FONT_CHOICES, type FontCategory } from "@/domain/theme/fonts";
+import type { BrandSettingsInput, SemanticColorTokens, ThemeSettingsInput, TypographySettingsInput } from "@/domain/theme/schemas";
 import { ThemePresetPicker } from "./theme-presets";
 
 /* Idle renders nothing: a tick reading "Saved" on a form nobody has edited
@@ -22,12 +23,19 @@ const COLOR_FIELDS: Array<{ key: keyof SemanticColorTokens; label: string }> = [
   { key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "text", label: "Text" },
   { key: "mutedText", label: "Muted Text" }, { key: "border", label: "Border" },
 ];
-const SCALE_FIELDS: Array<{ key: Exclude<keyof ThemeSettingsInput, "lightTokens" | "darkTokens">; label: string; low: string; high: string }> = [
+type ScaleKey = Exclude<keyof ThemeSettingsInput, "lightTokens" | "darkTokens" | "typography">;
+/* Font scale is not here: it belongs beside the typefaces in Typography, because
+   "how big" and "which face" are the same decision made twice. */
+const SCALE_FIELDS: Array<{ key: ScaleKey; label: string; low: string; high: string }> = [
   { key: "radiusScale", label: "Corner Radius", low: "Square", high: "Rounded" },
   { key: "spacingScale", label: "Spacing", low: "Compact", high: "Spacious" },
   { key: "shadowScale", label: "Shadows", low: "Flat", high: "Elevated" },
-  { key: "fontScale", label: "Font Scale", low: "Smaller", high: "Larger" },
   { key: "borderScale", label: "Border Thickness", low: "Thin", high: "Strong" },
+];
+const FONT_GROUPS = (["sans", "serif", "mono"] as FontCategory[]).map((category) => ({ category, fonts: FONT_CHOICES.filter((font) => font.category === category) }));
+const TYPOGRAPHY_FIELDS: Array<{ key: keyof TypographySettingsInput; label: string; hint: string }> = [
+  { key: "headingFont", label: "Heading font", hint: "Used for every heading on your website." },
+  { key: "bodyFont", label: "Body font", hint: "Used for paragraphs, lists, labels and navigation." },
 ];
 
 function SaveIndicator({ status, error }: { status: SaveStatus; error?: string }) {
@@ -43,7 +51,23 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
 /** Key-order-independent identity for a theme, so "which preset is this" is stable. */
 function canonicalTheme(theme: ThemeSettingsInput) {
   const colors = (tokens: SemanticColorTokens) => COLOR_FIELDS.map(({ key }) => `${key}:${tokens[key]}`).join(",");
-  return [colors(theme.lightTokens), colors(theme.darkTokens), ...SCALE_FIELDS.map(({ key }) => `${key}:${theme[key]}`)].join("|");
+  return [
+    colors(theme.lightTokens), colors(theme.darkTokens),
+    ...SCALE_FIELDS.map(({ key }) => `${key}:${theme[key]}`),
+    `fontScale:${theme.fontScale}`,
+    ...TYPOGRAPHY_FIELDS.map(({ key }) => `${key}:${theme.typography[key]}`),
+  ].join("|");
+}
+
+const fontLabel = (id: string) => FONT_CHOICES.find((font) => font.id === id)?.label ?? id;
+
+/** A curated select: the fonts are grouped by category so the list stays readable. */
+function FontField({ label, hint, value, onChange }: { label: string; hint: string; value: string; onChange: (value: string) => void }) {
+  return <Select label={label} hint={hint} value={value} onChange={(event) => onChange(event.target.value)}>
+    {FONT_GROUPS.map(({ category, fonts }) => <optgroup key={category} label={FONT_CATEGORY_LABELS[category]}>
+      {fonts.map((font) => <option key={font.id} value={font.id}>{font.label}</option>)}
+    </optgroup>)}
+  </Select>;
 }
 
 function ScaleField({ label, low, high, value, onChange }: { label: string; low: string; high: string; value: number; onChange: (value: number) => void }) {
@@ -57,7 +81,7 @@ export function ThemeEditor({ projectId, initialBrand, initialTheme, recoveredFr
   recoveredFromInvalidState?: boolean;
 }) {
   const [brand, setBrand] = useState<BrandSettingsInput>({ companyName: initialBrand.companyName, companyDescription: initialBrand.companyDescription, brandNotes: initialBrand.brandNotes });
-  const [theme, setTheme] = useState<ThemeSettingsInput>({ lightTokens: initialTheme.lightTokens, darkTokens: initialTheme.darkTokens, radiusScale: initialTheme.radiusScale, spacingScale: initialTheme.spacingScale, shadowScale: initialTheme.shadowScale, fontScale: initialTheme.fontScale, borderScale: initialTheme.borderScale });
+  const [theme, setTheme] = useState<ThemeSettingsInput>({ lightTokens: initialTheme.lightTokens, darkTokens: initialTheme.darkTokens, radiusScale: initialTheme.radiusScale, spacingScale: initialTheme.spacingScale, shadowScale: initialTheme.shadowScale, fontScale: initialTheme.fontScale, borderScale: initialTheme.borderScale, typography: { ...initialTheme.typography } });
   const [mode, setMode] = useState<"light" | "dark">("light");
   // A staged preset is a preview, never a save: it changes what the preview column
   // paints and nothing else until Apply is pressed.
@@ -146,15 +170,23 @@ export function ThemeEditor({ projectId, initialBrand, initialTheme, recoveredFr
       />
     </Section>
     <Section title="Colours" description="Every page uses these. Light and dark are set separately." actions={<SaveIndicator status={themeStatus} error={themeError} />}><SegmentedControl label="Colours to edit" value={mode} onChange={setMode} options={[{ value: "light", label: "Light", icon: <Sun size={13} /> }, { value: "dark", label: "Dark", icon: <Moon size={13} /> }]} />{themeError ? <p className="form-error" role="alert">{themeError}</p> : null}<div className="color-grid">{COLOR_FIELDS.map((field) => <ColorField key={field.key} label={field.label} value={theme[mode === "light" ? "lightTokens" : "darkTokens"][field.key]} onChange={(value) => updateColor(field.key, value)} />)}</div></Section>
-    {/* The five scales are the lower-level controls: real, kept, and out of the
-        way until someone wants them. A preset already sets all five. */}
+    {/* Typography is a design decision, not a shape control: which faces the site is set
+        in, and how big. It sits with the colours rather than behind a disclosure. */}
+    <Section title="Typography" description="The typefaces every generated page uses. Headings and body text are set separately." actions={<SaveIndicator status={themeStatus} error={themeError} />}>
+      <div className="stack">
+        {TYPOGRAPHY_FIELDS.map((field) => <FontField key={field.key} label={field.label} hint={field.hint} value={theme.typography[field.key]} onChange={(value) => updateTheme({ typography: { ...themeRef.current.typography, [field.key]: value } })} />)}
+        <ScaleField label="Font Scale" low="Smaller" high="Larger" value={theme.fontScale} onChange={(value) => updateTheme({ fontScale: value })} />
+      </div>
+    </Section>
+    {/* The remaining scales are the lower-level controls: real, kept, and out of the
+        way until someone wants them. A preset already sets all of them. */}
     <Section>
-      <Disclosure title="Shape & spacing" hint="Corners, spacing, shadows, type, borders">
+      <Disclosure title="Shape & spacing" hint="Corners, spacing, shadows, borders">
         <div className="scale-list">{SCALE_FIELDS.map((field) => <ScaleField key={field.key} label={field.label} low={field.low} high={field.high} value={theme[field.key]} onChange={(value) => updateTheme({ [field.key]: value })} />)}</div>
       </Disclosure>
     </Section>
-    <Section><div className="reset-row"><div><strong>Start the design again</strong><p>Puts every colour and style control back to the Canvas defaults. Your company details are kept.</p></div><ConfirmationDialog title="Reset the design?" triggerLabel="Reset design" description="Light and dark colours and every style control return to their defaults. Your company name, description and notes are kept." action={<Button type="button" variant="danger" icon={<RotateCcw size={15} />} onClick={() => void resetTheme()}>Reset the design</Button>} /></div></Section>
+    <Section><div className="reset-row"><div><strong>Start the design again</strong><p>Puts every colour, font and style control back to the Canvas defaults. Your company details are kept.</p></div><ConfirmationDialog title="Reset the design?" triggerLabel="Reset design" description="Light and dark colours, both fonts, and every style control return to their defaults. Your company name, description and notes are kept." action={<Button type="button" variant="danger" icon={<RotateCcw size={15} />} onClick={() => void resetTheme()}>Reset the design</Button>} /></div></Section>
   </div>
-  <aside className="theme-preview-column"><div className="preview-heading"><div><h2>{brand.companyName || "Your company"}</h2><p className="text-sm text-muted">A sample of how these settings look.</p></div><SegmentedControl label="Preview appearance" value={mode} onChange={setMode} options={[{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} /></div><div className="project-theme-preview" style={previewStyle}><nav><strong>{brand.companyName || "Company"}</strong><span>About&nbsp;&nbsp; Work&nbsp;&nbsp; Contact</span></nav><main><span className="preview-badge">New perspective</span><h3>Build something great</h3><p>{brand.companyDescription || "A sample heading and supporting body copy that demonstrates your project’s typography and colors."}</p><div className="preview-buttons"><button>Primary button</button><button>Secondary button</button></div><section><h4>Example card</h4><p>This surface demonstrates your spacing, borders, radius, shadows, and muted text.</p><label>Example input<input placeholder="Type something…" /></label><a href="#preview">Text link</a></section></main></div></aside>
+  <aside className="theme-preview-column"><div className="preview-heading"><div><h2>{brand.companyName || "Your company"}</h2><p className="text-sm text-muted">A sample of how these settings look. It shows the design system, not a page layout — the structure of each page is designed for that page.</p><p className="text-sm text-muted">Headings: {fontLabel(previewTheme.typography.headingFont)} · Body: {fontLabel(previewTheme.typography.bodyFont)}</p></div><SegmentedControl label="Preview appearance" value={mode} onChange={setMode} options={[{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} /></div><div className="project-theme-preview" style={previewStyle}><nav><strong>{brand.companyName || "Company"}</strong><span>About&nbsp;&nbsp; Work&nbsp;&nbsp; Contact</span></nav><main><span className="preview-badge">New perspective</span><h3>Build something great</h3><p>{brand.companyDescription || "A sample heading and supporting body copy that demonstrates your project’s typography and colors."}</p><div className="preview-buttons"><button>Primary button</button><button>Secondary button</button></div><section><h4>Example card</h4><p>This surface demonstrates your spacing, borders, radius, shadows, and muted text.</p><label>Example input<input placeholder="Type something…" /></label><a href="#preview">Text link</a></section></main></div></aside>
   </div>;
 }

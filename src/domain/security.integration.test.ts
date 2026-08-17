@@ -61,7 +61,9 @@ async function addMedia(projectId: string, userId: string) {
 }
 const denied = /do not have access|not found|Project not found/i;
 
-describe.sequential("security boundaries", () => {
+// The two cross-domain sweeps exercise every project-scoped service and several
+// complete generation/export paths on the remote test database.
+describe.sequential("security boundaries", { timeout: 120_000 }, () => {
   process.env.PREVIEW_TOKEN_SECRET = "security-suite-preview-secret-value-long-enough";
   beforeEach(async () => { await sql`TRUNCATE TABLE export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => {

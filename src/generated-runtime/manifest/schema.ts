@@ -7,7 +7,7 @@ const resolvedTokens = z.object({
   radius: z.object({ sm: cssValue, md: cssValue, lg: cssValue, xl: cssValue }).strict(),
   spacing: z.object({ multiplier: z.number(), xs: cssValue, sm: cssValue, md: cssValue, lg: cssValue, xl: cssValue }).strict(),
   shadows: z.object({ sm: cssValue, md: cssValue, lg: cssValue }).strict(),
-  typography: z.object({ multiplier: z.number(), body: cssValue, heading: cssValue }).strict(),
+  typography: z.object({ multiplier: z.number(), body: cssValue, heading: cssValue, headingFamily: cssValue, bodyFamily: cssValue }).strict(),
   borders: z.object({ width: cssValue, strongWidth: cssValue }).strict(),
 }).strict();
 const page = z.object({ pageId: z.uuid(), parentId: z.uuid().nullable(), name: z.string(), canonicalRoute: z.string().startsWith("/"), isHomepage: z.boolean(), currentVersionId: z.uuid().nullable().default(null), contentStatus: z.enum(["unbuilt", "generated"]).default("unbuilt"), seo: z.object({ title: z.string().nullable(), description: z.string().nullable() }).strict() }).strict();

@@ -83,7 +83,8 @@ function recordingResolver(seen: Array<{ actorUserId: string; connectionId: stri
   };
 }
 
-describe.sequential("Account AI connections, model selection, and analytics", () => {
+// Credential-selection cases exercise several full generation attempts across projects.
+describe.sequential("Account AI connections, model selection, and analytics", { timeout: 120_000 }, () => {
   beforeEach(async () => { await truncate(); setTelemetrySink(null); });
   afterAll(async () => { await sql.end(); });
 

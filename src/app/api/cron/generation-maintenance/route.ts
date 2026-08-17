@@ -1,6 +1,7 @@
 import { MaintenanceService } from "@/domain/maintenance/service";
 import { promoteQueuedFollowUp } from "@/domain/ai-queue/service";
 import { recoverStalledGenerationJobs } from "@/server/jobs/generation-execution";
+import { recoverStalledExportJobs } from "@/server/jobs/export-execution";
 import { emit } from "@/server/observability/telemetry";
 
 /**
@@ -34,8 +35,9 @@ export async function GET(request: Request) {
 
   const promoted = await promoteQueuedFollowUp();
   const recovery = await recoverStalledGenerationJobs();
+  const exportRecovery = await recoverStalledExportJobs();
   const maintenance = await new MaintenanceService().run();
-  emit("maintenance.completed", { ...maintenance, ...recovery, promotedFollowUp: promoted ? 1 : 0 });
+  emit("maintenance.completed", { ...maintenance, ...recovery, exportRecovery, promotedFollowUp: promoted ? 1 : 0 });
 
-  return Response.json({ promotedFollowUp: promoted?.id ?? null, ...recovery, maintenance }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json({ promotedFollowUp: promoted?.id ?? null, ...recovery, exportRecovery, maintenance }, { headers: { "Cache-Control": "no-store" } });
 }

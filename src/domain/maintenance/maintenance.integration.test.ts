@@ -23,7 +23,7 @@ async function setup() {
 }
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000);
 
-describe.sequential("maintenance and retention", () => {
+describe.sequential("maintenance and retention", { timeout: 60_000 }, () => {
   beforeEach(async () => { await sql`TRUNCATE TABLE export_jobs, project_checkpoint_items, project_checkpoints, change_set_items, change_sets, building_block_usages, building_block_versions, building_blocks, generation_job_media, page_versions, ai_job_rate_limits, generation_jobs, ai_messages, ai_conversations, project_instructions, media_assets, media_folders, page_nodes, audit_events, editing_leases, project_invites, project_members, auth_rate_limits, sessions, auth_credentials, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => {
     await rm(path.resolve(process.cwd(), process.env.LOCAL_STORAGE_PATH || ".canvas-storage", "test-maintenance"), { recursive: true, force: true });

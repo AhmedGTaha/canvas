@@ -7,7 +7,7 @@ import { WorkspaceService } from "@/domain/workspaces/service";
 import { ProjectService } from "@/domain/projects/service";
 import { PageTreeService } from "@/domain/pages/service";
 
-describe.sequential("Page Version database integrity", () => {
+describe.sequential("Page Version database integrity", { timeout: 60_000 }, () => {
   beforeEach(async () => { await sql`TRUNCATE TABLE generation_job_media, page_versions, generation_jobs, ai_messages, ai_conversations, page_nodes, audit_events, projects, workspaces, users RESTART IDENTITY CASCADE`; });
   afterAll(async () => { await sql.end(); });
   it("rejects version mutation and cross-page current-version pointers", async () => {

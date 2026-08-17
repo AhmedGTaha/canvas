@@ -212,6 +212,10 @@ export const projectThemeSettings = pgTable("project_theme_settings", {
   shadowScale: integer("shadow_scale").notNull().default(50),
   fontScale: integer("font_scale").notNull().default(50),
   borderScale: integer("border_scale").notNull().default(50),
+  // Font *identifiers*, mapped to approved CSS stacks by the theme resolver. Never a
+  // raw font-family: nothing uncontrolled from a client reaches a stylesheet.
+  headingFont: varchar("heading_font", { length: 40 }).notNull().default("system-sans"),
+  bodyFont: varchar("body_font", { length: 40 }).notNull().default("system-sans"),
   revision: integer("revision").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),

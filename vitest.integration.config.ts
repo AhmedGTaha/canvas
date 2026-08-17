@@ -6,11 +6,6 @@ import { assertSeparateTestDatabase, testDatabaseUrl } from "./src/server/db/tes
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const configured = process.env.DATABASE_URL ?? env.DATABASE_URL;
-  // The integration suites truncate every table between cases. Running them
-  // against the database the app is using deletes every account and project in
-  // it, so the tests always get their own — TEST_DATABASE_URL when it is set,
-  // otherwise the configured database with _test appended, created on demand by
-  // the global setup below.
   const testBase = process.env.TEST_DATABASE_URL ?? env.TEST_DATABASE_URL ?? configured;
   const runId = `vitest_${process.pid}_${Date.now().toString(36)}`;
   const resolved = testBase ? testDatabaseUrl(testBase, runId) : undefined;
@@ -18,16 +13,18 @@ export default defineConfig(({ mode }) => {
     assertSeparateTestDatabase(configured, resolved);
     process.env.DATABASE_URL = resolved;
   }
-  // Workspace AI credentials are always stored encrypted, including in tests. A fixed
-  // test key keeps suites hermetic without anyone having to configure one.
   process.env.CANVAS_CREDENTIAL_KEY ??= env.CANVAS_CREDENTIAL_KEY ?? Buffer.alloc(32, 7).toString("base64url");
+
   return {
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
     test: {
       environment: "node",
-      include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-      exclude: ["src/**/*.integration.test.ts", "src/**/*.e2e.test.ts"],
-      // Unit tests do not truncate the database and remain parallel.
+      include: ["src/**/*.integration.test.ts", "src/**/*.e2e.test.ts"],
+      globalSetup: ["./vitest.global-setup.ts"],
+      // These suites intentionally TRUNCATE shared tables. One fork and one file
+      // at a time make that cleanup deterministic without serializing unit tests.
+      fileParallelism: false,
+      pool: "forks",
       coverage: { reporter: ["text", "html"] },
     },
   };
