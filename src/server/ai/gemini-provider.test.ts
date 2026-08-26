@@ -144,6 +144,20 @@ describe("Gemini structured responses", () => {
     expect(schema.properties.blockUsages.items.properties.blockId.format).toBe("uuid");
   });
 
+  it("falls back to JSON mode when Gemini rejects a response schema", async () => {
+    generateContent
+      .mockRejectedValueOnce(new ApiError({ message: "Request contains an invalid argument.", status: 400 }))
+      .mockResolvedValueOnce(reply(JSON.stringify({ schemaVersion: 1, html: "<main>Built</main>" })));
+
+    await expect(provider().generateStructured(request({ responseSchema: generatedPageResponseJsonSchema }), validator))
+      .resolves.toMatchObject({ structuredData: { schemaVersion: 1, html: "<main>Built</main>" } });
+
+    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(generateContent.mock.calls[0]![0].config.responseJsonSchema).toBe(generatedPageResponseJsonSchema);
+    expect(generateContent.mock.calls[1]![0].config).toMatchObject({ responseMimeType: "application/json" });
+    expect(generateContent.mock.calls[1]![0].config.responseJsonSchema).toBeUndefined();
+  });
+
   it("recovers from a stray markdown fence around the JSON", async () => {
     generateContent.mockResolvedValue(reply("```json\n{\"schemaVersion\":1,\"html\":\"x\"}\n```"));
     await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({ structuredData: { html: "x" } });

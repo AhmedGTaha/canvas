@@ -137,7 +137,7 @@ export class GeminiProvider implements AIProvider {
     } catch (error) { throw normalizeGeminiError(error); }
   }
 
-  private async generate(request: AIRequest, structured = false): Promise<AIResponse> {
+  private async generate(request: AIRequest, structured: boolean, responseSchema: unknown): Promise<AIResponse> {
     if (structured) requireModelCapability(this.capabilities, "structuredOutput", this.model);
     if (request.messages.some((message) => message.parts.some((part) => part.type === "image"))) requireModelCapability(this.capabilities, "vision", this.model);
     const startedAt = performance.now();
@@ -169,7 +169,7 @@ export class GeminiProvider implements AIProvider {
           // keeps a long generation from being truncated by dynamic thinking.
           thinkingConfig: request.reasoningBudget === undefined ? undefined : { thinkingBudget: request.reasoningBudget },
           responseMimeType: structured ? "application/json" : undefined,
-          responseJsonSchema: structured ? request.responseSchema : undefined,
+          responseJsonSchema: structured ? responseSchema : undefined,
           abortSignal: controller.signal,
         },
       });
@@ -207,11 +207,21 @@ export class GeminiProvider implements AIProvider {
     }
   }
 
-  generateText(request: AIRequest) { return this.generate(request); }
+  generateText(request: AIRequest) { return this.generate(request, false, undefined); }
 
   /** Parses and validates structured output. Zod stays the contract authority. */
   async generateStructured<T>(request: AIRequest, validator: StructuredValidator<T>): Promise<AIResponse<T>> {
-    const result = await this.generate(request, true);
+    let result: AIResponse;
+    try {
+      result = await this.generate(request, true, request.responseSchema);
+    } catch (error) {
+      // Gemini accepts only a subset of JSON Schema and rejects some valid but deeply
+      // nested schemas with a generic INVALID_ARGUMENT response. Keep JSON mode enabled
+      // and let Canvas's validator remain authoritative, rather than making an otherwise
+      // usable model unable to generate a page at all.
+      if (!request.responseSchema || !(error instanceof AIError) || error.code !== "AI_PROVIDER_INVALID_RESPONSE") throw error;
+      result = await this.generate(request, true, undefined);
+    }
     const sanitized = unwrapJson(result.text);
     const responseDiagnostic = structuredResponseDiagnostic(result.text, sanitized, result.finishReason);
     let parsed: unknown;
