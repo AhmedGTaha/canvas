@@ -24,6 +24,7 @@ export const previewParentMessageSchema = z.discriminatedUnion("type", [
     pageId: z.uuid().nullable(),
   }).strict(),
   z.object({ type: z.literal("CANVAS_ELEMENT_CLEARED"), sessionId: z.string(), instanceId: z.uuid() }).strict(),
+  z.object({ type: z.literal("CANVAS_TEXT_UPDATED"), sessionId: z.string(), instanceId: z.uuid(), canvasId: z.string(), blockId: z.uuid().nullable(), textIndex: z.number().int().nonnegative(), text: z.string().max(5_000) }).strict(),
 ]);
 
 export type ParentPreviewMessage = z.infer<typeof parentPreviewMessageSchema>;

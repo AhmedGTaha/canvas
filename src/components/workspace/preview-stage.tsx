@@ -87,7 +87,7 @@ export function PreviewStage({
   // The same sentence the status bar and the title bar are showing, so the
   // preview never contradicts them; selection mode is the one thing this
   // region knows that they do not.
-  const statusText = status === "ready" && selectMode ? "Selection mode is on. Choose a part of the website." : workLabel;
+  const statusText = status === "ready" && selectMode ? "Selection mode is on. Double-click text to edit it, or choose a part for the agent." : workLabel;
 
   return <section className="ws-stage" aria-label="Website preview">
     <div className="ws-stage-bar">

@@ -100,6 +100,7 @@ export function WorkspaceShell({
   const [taskSummary, setTaskSummary] = useState<ProjectTask[]>([]);
   const completedRefresh = useRef<string | null>(null);
   const pendingSelection = useRef<ElementSelection | null>(null);
+  const refreshPreview = useRef<() => void>(() => undefined);
 
   const currentPageId = session.manifest.routes[route]?.pageId ?? null;
   const currentPage = session.manifest.pages.find((page) => page.pageId === currentPageId) ?? null;
@@ -187,6 +188,15 @@ export function WorkspaceShell({
       else if (message.type === "CANVAS_PREVIEW_ERROR") { setStatus("error"); setError(`${message.message} (${message.detail ?? message.code})`); }
       else if (message.type === "CANVAS_ELEMENT_SELECTED") { const { type, sessionId, instanceId: _instance, ...value } = message; void type; void sessionId; void _instance; pendingSelection.current = value; setSelection(value); }
       else if (message.type === "CANVAS_ELEMENT_CLEARED") { pendingSelection.current = null; setSelection(null); }
+      else if (message.type === "CANVAS_TEXT_UPDATED") {
+        const endpoint = message.blockId
+          ? `/api/projects/${projectId}/blocks/${message.blockId}/text`
+          : currentPageId ? `/api/projects/${projectId}/pages/${currentPageId}/text` : null;
+        if (!endpoint) return;
+        void fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ canvasId: message.canvasId, textIndex: message.textIndex, text: message.text }) })
+          .then(async (response) => { if (!response.ok) { const value = await response.json() as { error?: string }; throw new Error(value.error || "That text could not be saved."); } refreshPreview.current(); })
+          .catch((cause: unknown) => setAgentError(cause instanceof Error ? cause.message : "That text could not be saved."));
+      }
       else if (message.type === "CANVAS_ROUTE_CHANGED") {
         if (message.pageId !== currentPageId) { pendingSelection.current = null; setSelection(null); }
         recordRoute(message.route);
@@ -198,7 +208,7 @@ export function WorkspaceShell({
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, [currentPageId, instanceId, post, recordRoute, selectMode, session.manifest.previewSessionId]);
+  }, [currentPageId, instanceId, post, projectId, recordRoute, selectMode, session.manifest.previewSessionId]);
 
   /*
    * Preview readiness, honestly.
@@ -250,6 +260,7 @@ export function WorkspaceShell({
       setSession(value); recordRoute(retained); setInstanceId(nextInstance); setFrameSrc(makeSrc(value.token, retained, view.theme, nextInstance));
     } catch (cause) { setStatus("error"); setError(cause instanceof Error ? cause.message : "Preview could not be prepared."); }
   }, [currentPageId, makeSrc, projectId, recordRoute, route, view.theme]);
+  refreshPreview.current = () => { void refresh(); };
 
   /*
    * The preview manifest is a snapshot taken when the session was minted, so it
