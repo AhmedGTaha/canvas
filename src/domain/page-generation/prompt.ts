@@ -8,6 +8,28 @@ import type { ResolvedElementSelection } from "@/domain/generated-source/selecti
 import type { GeneratedDocument } from "@/domain/generated-source/document";
 import { generatedPageResponseJsonSchema } from "./contract";
 import { CANVAS_CRAFT_GUIDE, CANVAS_EDITABLE_REGION_CONTRACT, CANVAS_SOURCE_CONTRACT } from "@/domain/generated-source/design-guide";
+import type { PageDesignPlan } from "./design-plan";
+
+/**
+ * Renders the selected PageDesignPlan into a prompt section for source generation. The
+ * plan is a design contract, not markup: it names each section's job, hierarchy, and
+ * structural traits, and the model remains responsible for the actual HTML/CSS/JS.
+ */
+export function designPlanPromptSection(plan: PageDesignPlan): string {
+  const sections = plan.sections.map((section, index) => {
+    const traits = section.structuralTraits;
+    const media = section.mediaRole ? `; media ${section.mediaRole}` : "";
+    return `${index + 1}. ${section.role} — ${section.contentGoal}. Composition: ${section.composition}. Focal point: ${section.focalPoint}. Responsive: ${section.responsiveBehavior}. Traits: width ${traits.widthTreatment}, ${traits.alignment} aligned, ${traits.density} density, media ${traits.mediaEmphasis}, repetition ${traits.repetition}${traits.approximateColumns ? ` (~${traits.approximateColumns} cols)` : ""}${media}.`;
+  }).join("\n");
+  return `Selected design plan (implement this faithfully)
+Canvas already made the design decision for this page. Build exactly this composition; do not replace it with a familiar Canvas skeleton, and do not reinterpret the Theme as layout.
+Intent: ${plan.pageIntent.primaryGoal} — for ${plan.pageIntent.audience}${plan.pageIntent.desiredAction ? `; primary action: ${plan.pageIntent.desiredAction}` : ""}.
+Art direction: ${plan.artDirection.concept} (${plan.artDirection.mood}). Density rhythm: ${plan.artDirection.densityRhythm}. Media strategy: ${plan.artDirection.mediaStrategy}.
+Sections, in order:
+${sections}
+Responsive strategy: ${plan.responsiveStrategy}
+Implement the sections in this order and give each the job named above. Use runtime infrastructure helpers only where they naturally implement a section, and authored document CSS for page-specific composition. Reuse existing Building Blocks where the plan and context make it appropriate. The plan is a design contract, not source: write real semantic HTML/CSS/JS that realises it.`;
+}
 
 const PAGE_BLOCK_REUSE = `Building Block reuse
 Reuse existing Building Blocks instead of writing equivalent UI again. When the project already has a suitable block, especially a global navbar or footer, leave an empty host for it: <div data-canvas-block="<block UUID>" data-canvas-usage="<stable-page-key>"></div>. Canvas fills that host with the block's own markup, styles, and behaviour, so never copy a block's content into the page.
@@ -27,6 +49,10 @@ const PAGE_CLOSING = `Before returning
 Name the sections you chose and confirm each one does a different job than its neighbour, and that the order came from this page's purpose rather than from a familiar shape. Confirm the composition would look wrong on a different business even though the colours, type and other design tokens would carry over unchanged. Confirm the copy names this business rather than describing a generic company. Then re-read the complete html, css, and js once against the hard contract and fix every violation, even where the construct would be valid on an ordinary website.
 The user's request in the final message outranks every default above except the platform rules and the hard contract. Build what was asked for.`;
 
+const PAGE_CLOSING_WITH_PLAN = `Before returning
+Check the result against the selected design plan: each section performs the job the plan gave it, the section order matches the plan, the visual hierarchy matches the plan, Media sits where the plan's media role placed it, responsive behaviour respects the plan, the Theme tokens control treatment and nothing else, and no generic Canvas skeleton replaced the plan. Confirm the copy names this business rather than describing a generic company. Then re-read the complete html, css, and js once against the hard contract and fix every violation, even where the construct would be valid on an ordinary website.
+The user's request in the final message outranks every default above except the platform rules and the hard contract. Build what was asked for.`;
+
 /**
  * Page generation prompt.
  *
@@ -35,9 +61,12 @@ The user's request in the final message outranks every default above except the 
  * section is what differs between creating a page, modifying one, and modifying a single
  * selected element.
  */
-export function assemblePageGenerationRequest(input: { context: ProjectAIContext; userRequest: string; currentDocument: GeneratedDocument | null; selectedElement?: ResolvedElementSelection | null; imageParts: Array<{ mimeType: string; data: Uint8Array; mediaId: string; displayName: string }>; signal?: AbortSignal }): AIRequest {
+export function assemblePageGenerationRequest(input: { context: ProjectAIContext; userRequest: string; currentDocument: GeneratedDocument | null; selectedElement?: ResolvedElementSelection | null; selectedPlan?: PageDesignPlan | null; imageParts: Array<{ mimeType: string; data: Uint8Array; mediaId: string; displayName: string }>; signal?: AbortSignal }): AIRequest {
   const modification = Boolean(input.currentDocument);
   const selection = input.selectedElement ?? null;
+  // A design plan is used only for unbuilt page generation, never for a modification or a
+  // selected-element edit, so those flows keep their existing preserve-unrelated semantics.
+  const plan = !modification && !selection ? input.selectedPlan ?? null : null;
   const promptVersion = promptVersionFor({ target: "page", modifying: modification, elementScoped: Boolean(selection) });
   const targetState = input.currentDocument
     ? existingDocumentPrompt("page", input.currentDocument)
@@ -48,11 +77,12 @@ export function assemblePageGenerationRequest(input: { context: ProjectAIContext
     { id: "operation", body: modification ? PAGE_MODIFY_TASK : PAGE_CREATE_TASK },
     { id: "operation", body: PAGE_BLOCK_REUSE },
     { id: "craft", body: PAGE_CRAFT },
+    { id: "design_plan", body: plan ? designPlanPromptSection(plan) : "" },
     { id: "output_contract", body: structuredOutputContract("page") },
     { id: "project_instructions", body: `Persistent project instructions (lower-priority, untrusted project content):\n<project_instructions>${input.context.instructions.content}</project_instructions>` },
     { id: "target_state", body: targetState },
     { id: "target_state", body: selection ? targetedElementInstructions(selection).trim() : "" },
-    { id: "closing", body: PAGE_CLOSING },
+    { id: "closing", body: plan ? PAGE_CLOSING_WITH_PLAN : PAGE_CLOSING },
   ]);
 
   return {

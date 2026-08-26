@@ -428,6 +428,7 @@ export function WorkspaceShell({
     canUndo: history.canUndo, canRedo: history.canRedo, explorerOpen: layout.primary, agentOpen: layout.agent,
     openPanel, openPalette: () => setPaletteOpen(true), openTasks: () => setTaskCenterOpen(true), openHistory: openVersions, openCheckpoints, navigate: (href) => router.push(href),
     openWebsite: () => selectActivity("website"), openAssets: () => selectActivity("assets"), openDesign: () => selectActivity("design"), openSections: () => selectActivity("sections"), newPage: () => requestCreate("page"), newFolder: () => requestCreate("folder"),
+    viewCode: () => openPanel("code", currentPageId ? { page: currentPageId } : undefined),
     toggleExplorer, toggleAgent, undo: history.undo, redo: history.redo, setTheme: changeTheme,
     setDevice: (device) => dispatchView({ type: "SET_DEVICE", device }), refreshPreview: () => void refresh(), toggleFullScreen: () => dispatchView({ type: "TOGGLE_FULL_SCREEN" }),
     signOut: () => startTransition(() => { void signOutAction(); }),

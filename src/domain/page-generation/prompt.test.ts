@@ -19,7 +19,7 @@ describe("Page generation prompt", () => {
     const request = generate();
     expect(request.structuredContext).toMatchObject({ theme: context.theme });
     expect(request.systemInstructions).toContain("c-surface");
-    expect(request.systemInstructions).toContain("c-logo on an image that is a brand logo");
+    expect(request.systemInstructions).toContain("c-logo on a brand mark");
     expect(request.systemInstructions).toContain("update automatically when that theme changes");
     expect(request.systemInstructions).toContain("var(--color-primary)");
   });
@@ -58,7 +58,7 @@ describe("Page generation prompt", () => {
     expect(instructions).toContain("Lorem ipsum");
     // How the classes behave, so composition is an informed decision — not a sample page
     // to reproduce, which is what turned the design system into a template.
-    expect(instructions).toContain("How the classes behave");
+    expect(instructions).toContain("How the infrastructure helpers behave");
     expect(instructions).toContain("Design system versus composition");
     expect(instructions).not.toContain("Composition patterns");
   });

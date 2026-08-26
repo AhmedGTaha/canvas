@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref so a burst of pushes does not queue up.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # PostgreSQL 16 is compatible with the "15+" the app targets locally.
+        image: postgres:16
+        env:
+          POSTGRES_USER: canvas
+          POSTGRES_PASSWORD: canvas
+          POSTGRES_DB: canvas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U canvas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The integration suites derive their own "_test" database from this URL and
+      # create it on demand, so CI never truncates the primary database above.
+      DATABASE_URL: postgresql://canvas:canvas@localhost:5432/canvas
+      APP_URL: http://localhost:3000
+      NODE_ENV: test
+      STORAGE_DRIVER: local
+      LOCAL_STORAGE_PATH: .canvas-storage
+      # Test-only, deterministic secrets. These never protect anything real and must
+      # never be reused for a deployed environment.
+      PREVIEW_TOKEN_SECRET: ci-preview-token-secret-at-least-32-chars
+      CANVAS_CREDENTIAL_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
+      AI_PROVIDER_TIMEOUT_MS: "120000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      # Unit and database-backed integration suites. Paid provider smoke checks
+      # (npm run test:ai-provider) are intentionally not run here.
+      - run: npm test
+
+      - run: npm run build

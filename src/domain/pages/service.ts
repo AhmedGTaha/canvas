@@ -1,8 +1,9 @@
 import { and, asc, eq, inArray, isNull, sql as drizzleSql } from "drizzle-orm";
 import { db } from "@/server/db/client";
 import { DomainError } from "@/domain/shared/errors";
-import { pageNodes, type PageNode } from "@/server/db/schema";
+import { pageNodes, pageVersions, type PageNode } from "@/server/db/schema";
 import { ProjectAccessService } from "@/server/permissions/project-access";
+import { isLegacyVersion, versionDocument } from "@/domain/generated-source/stored-version";
 import { copyName, copySlug, generateSlug } from "./slug";
 import { computePageRoutes, descendantIds } from "./routes";
 import { createNodeSchema, moveNodeSchema, pageMutationSchema, renameNodeSchema, reorderNodeSchema, updateSeoSchema, updateSlugSchema } from "./schemas";
@@ -19,6 +20,20 @@ export class PageTreeService {
   async listTree(userId: string, projectId: string) {
     await this.access.requireProjectAccess(userId, projectId);
     return (await this.repository.listActive(projectId)).filter((node) => !node.deletedAt);
+  }
+
+  /**
+   * Read-only source of a page's active Version, for the workspace Code View. Enforces the
+   * same project access as every other read, and returns a null document for an unbuilt
+   * page or a legacy Version rather than throwing, so the viewer can show an empty state.
+   */
+  async readActiveSource(userId: string, projectId: string, pageId: string) {
+    await this.access.requireProjectAccess(userId, projectId);
+    const [page] = await db.select().from(pageNodes).where(and(eq(pageNodes.id, pageId), eq(pageNodes.projectId, projectId), eq(pageNodes.type, "page"), isNull(pageNodes.deletedAt))).limit(1);
+    if (!page) throw new DomainError("NOT_FOUND", "Page not found in this project.");
+    if (!page.currentVersionId) return { pageName: page.name, document: null as ReturnType<typeof versionDocument>, legacy: false };
+    const [version] = await db.select({ sourceFormat: pageVersions.sourceFormat, document: pageVersions.document }).from(pageVersions).where(and(eq(pageVersions.id, page.currentVersionId), eq(pageVersions.projectId, projectId))).limit(1);
+    return { pageName: page.name, document: versionDocument(version), legacy: isLegacyVersion(version) };
   }
 
   private async mutate<T>(userId: string, projectId: string, operation: (context: { nodes: ActiveNode[]; transaction: Parameters<Parameters<typeof db.transaction>[0]>[0] }) => Promise<T>) {

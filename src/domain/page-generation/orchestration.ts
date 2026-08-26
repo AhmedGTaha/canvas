@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { db, type Database } from "@/server/db/client";
 import { aiMessages, auditEvents, generationJobMedia, generationJobs, mediaAssets, pageNodes, pageVersions } from "@/server/db/schema";
 import { resolveActorProvider, type ResolvedActorModel } from "@/domain/ai/connections/model-resolution";
@@ -10,7 +10,7 @@ import { MediaService } from "@/domain/media/service";
 import { EditingLeaseService } from "@/domain/collaboration/lease-service";
 import { DomainError } from "@/domain/shared/errors";
 import { AIError, type AIProvider } from "@/domain/ai/provider";
-import { ProjectContextBuilder } from "@/domain/ai/context";
+import { ProjectContextBuilder, type ProjectAIContext } from "@/domain/ai/context";
 import { GenerationJobLifecycle, safeAIError } from "@/domain/ai/job-service";
 import { reconcilePageBlockUsages } from "@/domain/blocks/usages";
 import { recordChangeSet } from "@/domain/history/change-set-service";
@@ -19,6 +19,11 @@ import { elementInvalid, elementStale, findEditableElement, readResolvedSelectio
 import { generatedPageResponseSchema, pageDocumentFrom, type PageChangeSummary } from "./contract";
 import { assemblePageGenerationRequest, pagePromptVersion } from "./prompt";
 import { validateGeneratedPageDocument, type GeneratedPageManifest } from "./validator";
+import { pageDesignPlanBundleSchema, persistedDesignPlanFrom, validatePageDesignPlanBundle, type PageDesignPlan, type PersistedDesignPlan } from "./design-plan";
+import { assemblePageDesignPlanRequest, conflictingCompositionNote } from "./design-plan-prompt";
+import { assertCandidateDiversity, compositionFingerprintFrom, mostSimilar, MAX_ACCEPTABLE_PAGE_COMPOSITION_SIMILARITY, type CompositionFingerprint } from "./composition-fingerprint";
+import { checkDesignPlanConformance } from "./design-plan-conformance";
+import { CANVAS_PROMPT_VERSIONS } from "@/domain/ai/prompts/versions";
 import type { GeneratedDocument } from "@/domain/generated-source/document";
 import { isLegacyVersion, versionDocument } from "@/domain/generated-source/stored-version";
 import { observe } from "@/server/observability/events";
@@ -44,6 +49,36 @@ export type ActorProviderResolver = (actorUserId: string) => Promise<{ resolved:
 export class PageGenerationOrchestrationService {
   constructor(private readonly database: Database = db, private readonly contextBuilder = new ProjectContextBuilder(), private readonly lifecycle = new GenerationJobLifecycle(database), private readonly providerResolver: ActorProviderResolver = (actorUserId) => resolveActorProvider(actorUserId, database), private readonly leases = new EditingLeaseService(), private readonly access = new ProjectAccessService()) {}
   private async current(jobId: string) { const [job] = await this.database.select().from(generationJobs).where(eq(generationJobs.id, jobId)).limit(1); return job; }
+
+  /**
+   * Composition fingerprints for the current version of every *other* built page in the
+   * project. Legacy pages with no design-plan metadata are skipped rather than guessed,
+   * and global Building Block furniture is intentionally excluded because it never enters
+   * a fingerprint. The target page is ignored so a regeneration never conflicts with itself.
+   */
+  private async loadProjectCompositionFingerprints(projectId: string, targetPageId: string): Promise<CompositionFingerprint[]> {
+    const rows = await this.database
+      .select({ manifest: pageVersions.manifest })
+      .from(pageNodes)
+      .innerJoin(pageVersions, and(eq(pageVersions.id, pageNodes.currentVersionId), eq(pageVersions.projectId, pageNodes.projectId)))
+      .where(and(eq(pageNodes.projectId, projectId), eq(pageNodes.type, "page"), isNull(pageNodes.deletedAt), ne(pageNodes.id, targetPageId)));
+    const fingerprints: CompositionFingerprint[] = [];
+    for (const row of rows) {
+      const fingerprint = (row.manifest as GeneratedPageManifest | null)?.designPlan?.compositionFingerprint;
+      if (fingerprint && typeof fingerprint === "object" && fingerprint.version === 1) fingerprints.push(fingerprint);
+    }
+    return fingerprints;
+  }
+
+  /** One planning call returning three validated, diverse candidate plans and the selection. */
+  private async generatePlanBundle(args: { provider: AIProvider; record: ProviderCallRecorder; context: ProjectAIContext; userRequest: string; imageParts: Array<{ mimeType: string; data: Uint8Array; mediaId: string; displayName: string }>; signal: AbortSignal; replanNote?: string }): Promise<{ selected: PageDesignPlan }> {
+    const request = assemblePageDesignPlanRequest({ context: args.context, userRequest: args.userRequest, imageParts: args.imageParts, replanNote: args.replanNote ?? null, signal: args.signal });
+    const run = await generateWithRepair({
+      provider: args.provider, request, schema: pageDesignPlanBundleSchema, promptVersion: CANVAS_PROMPT_VERSIONS.page_design_plan, record: args.record, maxRepairAttempts: 0,
+      validate: async (data) => { const { bundle, selected } = validatePageDesignPlanBundle(data); assertCandidateDiversity(bundle); return { selected }; },
+    });
+    return run.validated;
+  }
   private async cancellation(jobId: string) { const job = await this.current(jobId); if (!job) return true; if (!job.cancelRequestedAt && job.status !== "cancelled") return false; if (!(["completed", "failed", "cancelled"] as string[]).includes(job.status)) await this.lifecycle.transition(jobId, "cancelled", "Cancelled", { errorCode: "AI_JOB_CANCELLED", errorMessage: "The AI request was cancelled." }); return true; }
 
   async process(jobId: string) {
@@ -85,21 +120,15 @@ export class PageGenerationOrchestrationService {
       observe.generationJob("started", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId });
       if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
       if (await this.cancellation(jobId)) return this.current(jobId);
-      await this.lifecycle.transition(jobId, "generating", "Generating page");
       const imageParts = await Promise.all(selected.map(async (asset) => { const binary = await new MediaService().readBinary(initial.actorUserId, asset.id); if (binary.asset.projectId !== initial.projectId) throw new AIError("AI_PROVIDER_INVALID_RESPONSE", "Attached Media is unavailable."); return { mimeType: asset.mimeType, data: binary.bytes, mediaId: asset.id, displayName: asset.displayName }; }));
       // actor → their account's selected connection → selected enabled model → adapter.
       // The credential is decrypted inside this call and never travels through the job
-      // payload, the queue row, the prompt, or anything this job writes.
+      // payload, the queue row, the prompt, or anything this job writes. Resolved once and
+      // used for both the planning call and the source-generation call.
       const { provider, resolved } = await this.providerResolver(initial.actorUserId);
       const usageWorkspaceId = await workspaceOfProject(initial.projectId, this.database);
       const promptVersion = pagePromptVersion({ modifying: Boolean(base), elementScoped: Boolean(selectedElement) });
       await this.database.update(generationJobs).set({ provider: resolved.connection.provider, providerModel: resolved.model.modelId, aiConnectionId: resolved.connection.id, promptVersion }).where(eq(generationJobs.id, jobId));
-
-      const providerRequest = assemblePageGenerationRequest({ context, userRequest: prompt.content, currentDocument: baseDocument, selectedElement, imageParts, signal: providerAbort.signal });
-      const approved = new Set(context.media.map(({ id }) => id)); const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
-      // Only Building Blocks declared in the assembled context, active in this project,
-      // and already generated may be referenced. Anything else is a rejected reference.
-      const availableBlockIds = new Set(context.blocks.filter((block) => block.currentVersionId).map((block) => block.id));
       const pricing = pricingFrom(resolved.model);
       const record: ProviderCallRecorder = async (entry) => {
         const row = await recordAIUsage({
@@ -111,6 +140,42 @@ export class PageGenerationOrchestrationService {
         return row?.id ?? null;
       };
 
+      // Design planning: only unbuilt page generation gets a first-class PageDesignPlan
+      // before any source. Modifications and selected-element edits keep their existing
+      // preserve-unrelated semantics and never route through the planner.
+      let selectedPlan: PageDesignPlan | null = null;
+      let persistedPlan: PersistedDesignPlan<CompositionFingerprint> | null = null;
+      let replanCount = 0; let triggeringSimilarity: number | null = null;
+      if (initial.operation === "page_generate" && !base && !selectedElement) {
+        await this.database.update(generationJobs).set({ progressStage: "Planning page" }).where(eq(generationJobs.id, jobId));
+        const existingFingerprints = await this.loadProjectCompositionFingerprints(initial.projectId, initial.targetId);
+        let candidate = (await this.generatePlanBundle({ provider, record, context, userRequest: prompt.content, imageParts, signal: providerAbort.signal })).selected;
+        let fingerprint = compositionFingerprintFrom(candidate);
+        const match = mostSimilar(fingerprint, existingFingerprints);
+        if (match && match.score >= MAX_ACCEPTABLE_PAGE_COMPOSITION_SIMILARITY) {
+          triggeringSimilarity = match.score;
+          if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
+          if (await this.cancellation(jobId)) return this.current(jobId);
+          candidate = (await this.generatePlanBundle({ provider, record, context, userRequest: prompt.content, imageParts, signal: providerAbort.signal, replanNote: conflictingCompositionNote(match.fingerprint, match.score) })).selected;
+          fingerprint = compositionFingerprintFrom(candidate); replanCount = 1;
+          const second = mostSimilar(fingerprint, existingFingerprints);
+          if (second && second.score >= MAX_ACCEPTABLE_PAGE_COMPOSITION_SIMILARITY) throw new AIError("AI_DESIGN_PLAN_TOO_SIMILAR", "Canvas kept designing this page too much like another page in the project. Try a more specific request describing what makes this page different.");
+        }
+        selectedPlan = candidate;
+        persistedPlan = persistedDesignPlanFrom(candidate, fingerprint);
+        await this.database.update(generationJobs).set({ contextMetadata: { ...context.composition, basePageVersionId: initial.basePageVersionId, selectedMediaCount: selected.length, selectedElement, designPlanId: selectedPlan.id, planPromptVersion: CANVAS_PROMPT_VERSIONS.page_design_plan, compositionFingerprintVersion: fingerprint.version, replanCount, triggeringSimilarity } }).where(eq(generationJobs.id, jobId));
+      }
+
+      if (leaseLost) throw new AIError("AI_PAGE_CONFLICT", "This page is currently being updated by another collaborator.");
+      if (await this.cancellation(jobId)) return this.current(jobId);
+      await this.lifecycle.transition(jobId, "generating", "Generating page");
+
+      const providerRequest = assemblePageGenerationRequest({ context, userRequest: prompt.content, currentDocument: baseDocument, selectedElement, selectedPlan, imageParts, signal: providerAbort.signal });
+      const approved = new Set(context.media.map(({ id }) => id)); const activeRoutes = new Set(context.structure.pages.filter((page) => page.type === "page" && page.route).map((page) => page.route!));
+      // Only Building Blocks declared in the assembled context, active in this project,
+      // and already generated may be referenced. Anything else is a rejected reference.
+      const availableBlockIds = new Set(context.blocks.filter((block) => block.currentVersionId).map((block) => block.id));
+
       const run = await generateWithRepair({
         provider, request: providerRequest, schema: generatedPageResponseSchema, promptVersion, record,
         onCandidate: async (candidate) => { await this.database.update(generationJobs).set({ provider: candidate.provider, providerModel: candidate.model, providerRequestId: candidate.providerRequestId, usageMetadata: candidate.usage }).where(eq(generationJobs.id, jobId)); },
@@ -121,6 +186,13 @@ export class PageGenerationOrchestrationService {
             const { targetCanvasId, targetRemoved } = data;
             if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
             if (!targetRemoved && !manifest.editableElements.some((element) => element.canvasId === selectedElement.canvasId)) elementInvalid("selected element missing from result");
+          }
+          // Conservative output-versus-plan conformance. A failure is surfaced as a
+          // repairable document defect so the bounded repair loop can correct it rather
+          // than discarding an otherwise valid page.
+          if (selectedPlan) {
+            const conformance = checkDesignPlanConformance(selectedPlan, manifest);
+            if (!conformance.ok) throw new AIError("AI_GENERATED_DOCUMENT_INVALID", "The generated page did not implement the selected design plan.", false, undefined, conformance.reason);
           }
           return { manifest, document };
         },
@@ -137,7 +209,7 @@ export class PageGenerationOrchestrationService {
       if (await this.cancellation(jobId)) return this.current(jobId);
       await this.lifecycle.transition(jobId, "applying", "Applying page update");
       await this.access.requireProjectAccess(initial.actorUserId, initial.projectId);
-      const completed = await this.commit({ jobId, document, manifest, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
+      const completed = await this.commit({ jobId, document, manifest, designPlan: persistedPlan, summary: response.structuredData.summary, provider: response.provider, model: response.model, providerRequestId: response.providerRequestId, usage: response.usage });
       const jobDurationMs = performance.now() - startedAt;
       await attachJobDuration(jobId, jobDurationMs, this.database);
       observe.generationJob("completed", { jobId, projectId: initial.projectId, operation: initial.operation, targetId: initial.targetId, durationMs: jobDurationMs, providerLatencyMs: run.providerLatencyMs, repairAttempts: run.repairAttempts, promptVersion });
@@ -166,7 +238,7 @@ export class PageGenerationOrchestrationService {
     }
   }
 
-  private async commit(input: { jobId: string; document: GeneratedDocument; manifest: GeneratedPageManifest; summary: PageChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
+  private async commit(input: { jobId: string; document: GeneratedDocument; manifest: GeneratedPageManifest; designPlan?: PersistedDesignPlan<CompositionFingerprint> | null; summary: PageChangeSummary; provider: string; model: string; providerRequestId?: string; usage?: unknown }) {
     return this.database.transaction(async (transaction) => {
       const [job] = await transaction.select().from(generationJobs).where(eq(generationJobs.id, input.jobId)).for("update");
       if (!job) throw new AIError("AI_INTERNAL_ERROR", "Generation job not found.");
@@ -182,7 +254,7 @@ export class PageGenerationOrchestrationService {
       // Usage rows and the activated Page Version are written together, so active page
       // state and active usage state can never disagree after a successful activation.
       const resolvedUsages = await this.reconcile(transaction, job.projectId, page.id, input.manifest.blockUsages);
-      const manifest = { ...input.manifest, blockUsages: resolvedUsages };
+      const manifest: GeneratedPageManifest = { ...input.manifest, blockUsages: resolvedUsages, ...(input.designPlan ? { designPlan: input.designPlan } : {}) };
       // The Change Set is written first so the immutable version can point at it.
       const versionId = randomUUID();
       const changeSet = await recordChangeSet(transaction, {

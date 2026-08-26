@@ -155,10 +155,10 @@ export function ThemeEditor({ projectId, initialBrand, initialTheme, recoveredFr
 
   return <div className="theme-editor-layout"><div className="theme-settings-column">
     <Section title="Your company" description="What the agent should say about you, and how the website should feel." actions={<SaveIndicator status={brandStatus} error={brandError} />}><div className="stack"><Input label="Company name" value={brand.companyName} onChange={(event) => updateBrand({ companyName: event.target.value })} maxLength={120} /><Textarea label="Company description" value={brand.companyDescription ?? ""} onChange={(event) => updateBrand({ companyDescription: event.target.value })} maxLength={2000} rows={4} /><Textarea label="Brand notes" value={brand.brandNotes ?? ""} onChange={(event) => updateBrand({ brandNotes: event.target.value })} maxLength={4000} rows={4} hint="Describe how your brand should feel — professional, playful, minimal, luxurious, technical." /></div></Section>
-    {/* Ready-made themes sit above the individual controls: the fastest route to
-        a coherent design is picking one, and everything below stays editable
-        afterwards. */}
-    <Section title="Ready-made themes" description="Complete designs — colours, corners, spacing and type. Pick one to preview it, then apply and keep editing.">
+    {/* Visual styles sit above the individual controls: the fastest route to a
+        coherent look is picking one, and everything below stays editable
+        afterwards. A style is a visual language, never a page layout. */}
+    <Section title="Visual styles" description="Colours, typography, corners, spacing and surfaces. A style changes how your site looks, not its page layout or section order. Pick one to preview it, then apply and keep editing.">
       <ThemePresetPicker
         stagedPresetId={stagedPreset?.id ?? null}
         appliedPresetId={appliedPresetId}

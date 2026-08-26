@@ -129,6 +129,23 @@ describe("validator-aware prompting", () => {
     expect(instructions).toContain("No style attributes and no on* handlers");
     expect(instructions).toContain("with no src attribute");
   });
+
+  /**
+   * The contradiction this guards: the technical constraints once named the generation
+   * target as "Next.js + React + TypeScript" while the schema only ever accepts static
+   * HTML/CSS/JS. A generation prompt must tell the model to produce the safe document and
+   * keep Next.js firmly on the export side.
+   */
+  it("separates the generated-document format from the Next.js export target", () => {
+    for (const request of [createPage(), createBlock()]) {
+      const instructions = request.systemInstructions;
+      expect(instructions).toContain("Canvas static document");
+      expect(instructions).toContain("Never emit React, JSX, TSX, Next.js components");
+      expect(instructions).toContain("export");
+      // The one place Next.js may appear is the export shell, never as what to generate.
+      expect(instructions).not.toMatch(/generate[^.]*Next\.js \+ React/i);
+    }
+  });
 });
 
 describe("modification scoping", () => {
@@ -202,6 +219,24 @@ describe("generation quality and precedence", () => {
     expect(instructions).toContain("Overriding the project's colours, typefaces, radius language, or spacing rhythm to make a page look different is a defect");
   });
 
+  /**
+   * The regression this guards: the runtime-class guide once said "Build on them first"
+   * and advertised c-hero/c-card/c-navbar as the vocabulary, which pushed every page onto
+   * the same semantic skeleton. New generation must be pointed at low-level infrastructure
+   * and authored CSS, with the semantic shortcuts kept as compatibility only.
+   */
+  it("demotes the semantic runtime classes from the default page vocabulary", () => {
+    const instructions = createPage().systemInstructions;
+    expect(instructions).not.toContain("Build on them first");
+    expect(instructions).toContain("optional theme-aware infrastructure helpers");
+    expect(instructions).toContain("your document CSS is the normal place for page-specific composition");
+    // The semantic shortcuts are named as compatibility, not promoted as the starting set.
+    expect(instructions).toContain("Do not treat them as the default skeleton for a new page");
+    for (const semantic of ["c-hero", "c-card", "c-navbar"]) {
+      expect(instructions).toContain(semantic);
+    }
+  });
+
   it("ships no canonical page skeleton for the model to copy", () => {
     const instructions = createPage().systemInstructions;
     // Contract mechanics still need their two examples: a Media reference and a block
@@ -219,6 +254,36 @@ describe("generation quality and precedence", () => {
     expect(instructions).toContain("Continuity across the site");
     expect(instructions).toContain("Continuing a design means matching its treatment; it does not mean copying its layout");
     expect(instructions).toContain("if two of them end up with the same section sequence, one of them was not designed");
+  });
+
+  it("feeds a selected design plan into source generation and checks it in the closing", () => {
+    const plan = {
+      id: "p1",
+      pageIntent: { primaryGoal: "book roof surveys", audience: "homeowners", desiredAction: "request a survey" },
+      artDirection: { concept: "field-report", mood: "trustworthy", visualMotifs: ["grid"], densityRhythm: "alternating", mediaStrategy: "dominant opening" },
+      sections: [{
+        id: "open", role: "diagnostic opening", contentGoal: "state the fix", composition: "image-led split with the offer",
+        focalPoint: "the survey CTA", responsiveBehavior: "stacks", mediaRole: "dominant",
+        structuralTraits: { widthTreatment: "full_bleed" as const, alignment: "left" as const, density: "balanced" as const, mediaEmphasis: "dominant" as const, repetition: "none" as const, approximateColumns: null },
+      }],
+      responsiveStrategy: "mobile first",
+      continuity: { sharedSiteLanguage: ["navbar"], deliberatePageDifferences: ["opening"] },
+      originalityRationale: "leads with the diagnosis, not a hero",
+    };
+    const withPlan = assemblePageGenerationRequest({ context, userRequest: "Create a home page", currentDocument: null, selectedPlan: plan as never, imageParts: [] });
+    expect(withPlan.systemInstructions).toContain("Selected design plan (implement this faithfully)");
+    expect(withPlan.systemInstructions).toContain("diagnostic opening");
+    expect(withPlan.systemInstructions).toContain("Check the result against the selected design plan");
+    // The design_plan section sits between craft and the output contract.
+    expect(PROMPT_SECTION_ORDER.indexOf("design_plan")).toBeGreaterThan(PROMPT_SECTION_ORDER.indexOf("craft"));
+    expect(PROMPT_SECTION_ORDER.indexOf("design_plan")).toBeLessThan(PROMPT_SECTION_ORDER.indexOf("output_contract"));
+    // A create page with no plan carries no plan section.
+    expect(createPage().systemInstructions).not.toContain("Selected design plan");
+  });
+
+  it("never routes a modification or element edit through a design plan", () => {
+    const plan = { id: "p" } as never;
+    expect(assemblePageGenerationRequest({ context, userRequest: "x", currentDocument: { schemaVersion: 1, html: EXISTING_PAGE, css: "", js: "", metadata: null }, selectedPlan: plan, imageParts: [] }).systemInstructions).not.toContain("Selected design plan");
   });
 
   it("makes the composition check the last thing a page generation reads", () => {

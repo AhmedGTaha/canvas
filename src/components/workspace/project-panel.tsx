@@ -10,6 +10,7 @@ import { ExportManager } from "@/components/export/export-manager";
 import { BrandLogoSettings } from "@/components/media/brand-logo-settings";
 import { MediaManager } from "@/components/media/media-manager";
 import { PageSettingsEditor } from "@/components/pages/page-tree-manager";
+import { CodeView } from "@/components/workspace/code-view";
 import { ProjectInstructionsEditor } from "@/components/projects/project-instructions-editor";
 import { ArchiveProjectDialog, RenameProjectDialog } from "@/components/projects/project-forms";
 import { ThemeEditor } from "@/components/theme/theme-editor";
@@ -43,8 +44,22 @@ export type PanelView = { title: string; description?: string; size: "wide" | "d
  * tool opened from the menu bar, from a bookmark, or after a reload is always
  * the same render over the same workspace.
  */
-export async function resolvePanel(projectId: string, name: PanelName, options: { nodeId?: string; blockId?: string; assetId?: string; section?: string } = {}): Promise<PanelView> {
+export async function resolvePanel(projectId: string, name: PanelName, options: { nodeId?: string; blockId?: string; assetId?: string; section?: string; pageId?: string } = {}): Promise<PanelView> {
   const user = await requireAuthenticatedUser();
+
+  if (name === "code") {
+    if (!options.pageId) return { title: "Code", description: "The HTML, CSS and JavaScript of the current page.", size: "wide", body: <EmptyState title="No page chosen" description="Pick a page in the Website sidebar, then open Code to inspect its source." /> };
+    let source;
+    try { source = await new PageTreeService().readActiveSource(user.id, projectId, options.pageId); } catch { notFound(); }
+    return {
+      title: "Code",
+      description: source.legacy ? `${source.pageName} was built with an earlier version of Canvas.` : `The generated HTML, CSS and JavaScript of ${source.pageName}. Read-only — edits go through the Agent.`,
+      size: "wide",
+      body: source.legacy
+        ? <EmptyState title="Older page format" description="This page was built with an earlier version of Canvas and has no static source to show. Ask Canvas to rebuild it to bring it up to date." />
+        : <CodeView pageName={source.pageName} html={source.document?.html ?? null} css={source.document?.css ?? null} js={source.document?.js ?? null} title={source.document?.metadata?.title ?? null} description={source.document?.metadata?.description ?? null} />,
+    };
+  }
 
   if (name === "shortcuts") {
     return { title: "Keyboard shortcuts", size: "drawer", body: <Shortcuts /> };

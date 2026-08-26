@@ -11,6 +11,7 @@
  * could move output quality.
  */
 export const CANVAS_PROMPT_VERSIONS = {
+  page_design_plan: "canvas-page-design-plan-v1",
   page_create: "canvas-page-create-v2",
   page_modify: "canvas-page-modify-v2",
   page_element_modify: "canvas-page-element-modify-v2",

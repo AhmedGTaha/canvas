@@ -75,7 +75,7 @@ export default async function ProjectWorkspacePage({ params, searchParams }: { p
 
   // An unrecognised tool name is ignored rather than treated as a missing page:
   // a stale link should still open the website, not a 404.
-  const view = tool && isPanelName(tool) ? await resolvePanel(projectId, tool, { nodeId: node, blockId: block, assetId: asset, section }) : null;
+  const view = tool && isPanelName(tool) ? await resolvePanel(projectId, tool, { nodeId: node, blockId: block, assetId: asset, section, pageId: page }) : null;
 
   return <>
     <WorkspaceShell

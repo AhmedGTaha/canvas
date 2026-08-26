@@ -9,9 +9,10 @@ import type { SemanticColorTokens, ThemeSettingsInput } from "@/domain/theme/sch
 const SWATCHES: Array<keyof SemanticColorTokens> = ["primary", "accent", "surface", "background", "border"];
 
 /**
- * The ready-made theme picker.
+ * The visual-style picker.
  *
- * Choosing a preset does not change the project: it stages the preset, and the
+ * A style is a visual language — colour, type, corners, spacing, surfaces — never a page
+ * layout or a section order. Choosing one does not change the project: it stages the style, and the
  * live preview beside this list starts showing it immediately, so the decision is
  * made by looking rather than by reading colour names. Applying is a separate,
  * explicit act, and it goes through the same theme save path as moving one slider

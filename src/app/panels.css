@@ -703,6 +703,22 @@
   overflow-wrap: anywhere;
 }
 
+/* Read-only Code View: HTML/CSS/JS of the active page, never an editor. */
+.code-view { display: flex; flex-direction: column; gap: var(--sp-4); min-height: 0; }
+.code-view-meta { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin: 0; }
+.code-view-meta div { display: flex; flex-direction: column; gap: var(--sp-1); }
+.code-view-meta dt { font-size: var(--fs-sm); color: var(--text-muted); }
+.code-view-meta dd { margin: 0; font-size: var(--fs-body); color: var(--text); }
+.code-view-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+.code-view-tabs { display: inline-flex; gap: var(--sp-1); padding: var(--sp-1); border: 1px solid var(--border); border-radius: var(--r-2); background: var(--surface-chrome); }
+.code-view-tab { display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); border: 0; border-radius: var(--r-1); background: transparent; color: var(--text-muted); font-size: var(--fs-sm); cursor: pointer; }
+.code-view-tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm, none); }
+.code-view-empty-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); opacity: 0.5; }
+.code-view-copy { display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-2); background: var(--surface); color: var(--text); font-size: var(--fs-sm); cursor: pointer; }
+.code-view-copy:disabled { opacity: 0.5; cursor: default; }
+.code-view-pre { margin: 0; max-height: 60vh; overflow: auto; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-3); background: var(--surface-muted); font-family: var(--font-mono); font-size: var(--fs-sm); line-height: var(--lh-body); white-space: pre; tab-size: 2; }
+.code-view-none { margin: 0; padding: var(--sp-5); color: var(--text-muted); font-size: var(--fs-body); }
+
 @media (max-width: 1100px) {
   .media-layout { grid-template-columns: 180px minmax(0, 1fr); }
   .media-details { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }

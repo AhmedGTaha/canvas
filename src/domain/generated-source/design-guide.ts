@@ -63,17 +63,18 @@ Write finished copy. Placeholder text is a defect, not a starting point.
 - Body copy runs 1 to 3 sentences and is about this business: name the service, the turnaround, the coverage area, the guarantee.
 - Invent plausible specifics (service names, plan tiers, opening hours) when the brand context does not supply them. Never invent a testimonial attributed to a named person, a statistic presented as measured fact, an award, or a certification. When you used specifics the owner must replace before launch, say so in summary.limitations.`;
 
-const CLASS_MECHANICS = `How the classes behave
-This is material behaviour, not a layout to reproduce. Knowing what each class does is what lets you compose freely with them instead of against them — there is deliberately no sample page here, because the composition is yours to decide.
+const CLASS_MECHANICS = `How the infrastructure helpers behave
+This is material behaviour, not a layout to reproduce. Knowing what each helper does is what lets you compose freely with them instead of against them — there is deliberately no sample page here, because the composition is yours to decide. These are low-level primitives; none of them is a section type, and none implies a page shape.
 
-- c-container is the only class that bounds width and centres content. Every section body needs one. Reach past it deliberately when a region should run full-bleed.
-- c-section supplies the vertical rhythm between bands. Override its padding in your own css when a section should be tighter or taller than its neighbours.
-- c-grid auto-fits at a 260px minimum and wraps on its own: two children give an even split, three or more give a row of peers. It is how you put an image beside text, and equally how you lay out a set of cards — and a page that reaches for it in every section has stopped composing.
-- c-cluster is space-between and belongs to bars with two ends, such as a navbar or a footer row, not to body content.
-- c-stack (vertical) and c-row (wrapping row) already supply the gaps between their children. Nesting a c-stack inside a c-card is how a card gets its internal spacing.
-- c-card, c-surface, c-bordered, c-rounded and c-shadow are how a region separates itself from the page. c-surface on a section paints it in the theme's surface colour instead of the page background, which is the cheapest way to separate neighbouring bands — use it where separation is wanted, not as a fixed every-other-section stripe.
-- c-hero is a centred-content band with a tall minimum height. It suits one kind of opening. An opening that is a split, an editorial headline over prose, a compact bar above a table, or a full-width image with a caption is an ordinary c-section, and is often the better answer.
-- c-kicker, c-muted, c-link, c-button and c-button-secondary are type and action treatments, available anywhere they read correctly.
+- c-container is the only class that bounds width and centres content. A section body that should be measured uses one. Reach past it deliberately when a region should run full-bleed.
+- c-section supplies the vertical rhythm between bands. It is base flow, not a Canvas "band" you must stack identically down the page. Override its padding in your own css when a section should be tighter or taller than its neighbours.
+- c-grid auto-fits at a 260px minimum and wraps on its own: two children give an even split, three or more give a row of peers. It is how you put an image beside text, and equally how you lay out a set of peers — reach for it only when the content really is a set of peers, and a page that uses it in every section has stopped composing.
+- c-cluster is space-between and belongs to bars with two ends, such as a footer row, not to body content.
+- c-stack (vertical) and c-row (wrapping row) already supply the gaps between their children.
+- c-bordered, c-rounded, c-shadow and c-muted are treatment utilities: a border, a corner radius, a shadow, muted text. They separate or de-emphasise a region without deciding what the region is.
+- c-button, c-button-secondary and c-link are the action and link treatments, available anywhere they read correctly.
+
+The compatibility shortcuts. c-hero, c-card, c-surface, c-navbar, c-nav-brand, c-nav-links and c-kicker still work and older pages use them, but they are semantic shortcuts, not your starting vocabulary. c-hero is one centred, tall opening among many; an opening that is a split, an editorial headline over prose, a compact bar above a table, or a full-width image with a caption is an ordinary c-section composed in css, and is usually the better answer. Compose a card, a surface panel, or a kicker label yourself in css when that is what the section wants; reach for the shortcut only when its exact shape genuinely fits.
 
 Images. Every image is an <img> with data-canvas-media naming an approved Media UUID and real alt text, and no src: Canvas resolves the file. c-media for content images, c-logo for a brand mark:
 <img class="c-media" data-canvas-media="<approved Media UUID>" alt="What is actually in the picture">

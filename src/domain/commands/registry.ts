@@ -5,7 +5,7 @@ export type WorkspaceCommandContext = {
   canUndo: boolean; canRedo: boolean; explorerOpen: boolean; agentOpen: boolean;
   openPanel: (name: string) => void; navigate: (href: string) => void;
   openPalette: () => void; openTasks: () => void; openHistory: () => void; openCheckpoints: () => void;
-  openWebsite: () => void; newPage: () => void; newFolder: () => void;
+  openWebsite: () => void; newPage: () => void; newFolder: () => void; viewCode: () => void;
   openAssets: () => void; openDesign: () => void; openSections: () => void;
   toggleExplorer: () => void; toggleAgent: () => void; undo: () => void; redo: () => void;
   setTheme: (theme: "light" | "dark") => void; setDevice: (device: "desktop" | "tablet" | "mobile") => void;
@@ -36,7 +36,7 @@ export function createWorkspaceCommands(c: WorkspaceCommandContext): WorkspaceCo
     command({ id: "design.brand", label: "Design", description: "Edit brand, colours, type, and spacing", category: "Design", icon: "palette", run: c.openDesign, synonyms: ["brand", "logo", "colors", "colours", "fonts"] }),
     command({ id: "blocks.manage", label: "Reusable Sections", description: "Manage shared sections", category: "Reusable sections", icon: "blocks", run: c.openSections, synonyms: ["building blocks", "reusable", "shared", "components"] }),
     command({ id: "agent.toggle", label: c.agentOpen ? "Hide Canvas Agent" : "Show Canvas Agent", category: "Agent", icon: "panel-right", shortcut: WORKSPACE_SHORTCUTS[2].shortcut, run: c.toggleAgent, synonyms: ["chat", "assistant"] }),
-    command({ id: "agent.tasks", label: "Background tasks", description: "See AI updates and exports", category: "Agent", icon: "activity", run: c.openTasks, synonyms: ["jobs", "progress", "failures"] }),
+    command({ id: "agent.tasks", label: "Background tasks", description: "AI updates and exports in progress or queued", category: "Agent", icon: "activity", run: c.openTasks, synonyms: ["jobs", "progress", "failures", "queue"] }),
     command({ id: "history.undo", label: "Undo last change", category: "History", icon: "undo", availability: c.canUndo ? yes : no("There is nothing to undo."), run: c.undo }),
     command({ id: "history.redo", label: "Redo last change", category: "History", icon: "redo", availability: c.canRedo ? yes : no("There is nothing to redo."), run: c.redo }),
     command({ id: "history.versions", label: "Version history", category: "History", icon: "history", availability: c.hasPage ? yes : no("Select a page first."), run: c.openHistory }),
@@ -48,6 +48,7 @@ export function createWorkspaceCommands(c: WorkspaceCommandContext): WorkspaceCo
     command({ id: "preview.tablet", label: "Preview on tablet", category: "Preview", icon: "tablet", run: () => c.setDevice("tablet") }),
     command({ id: "preview.mobile", label: "Preview on phone", category: "Preview", icon: "phone", run: () => c.setDevice("mobile") }),
     command({ id: "preview.fullscreen", label: "Toggle full screen", category: "Preview", icon: "maximize", run: c.toggleFullScreen }),
+    command({ id: "preview.code", label: "View code", description: "Inspect the current page's HTML, CSS and JavaScript (read-only)", category: "Preview", icon: "code", availability: c.hasPage ? yes : no("Select a page first."), run: c.viewCode, synonyms: ["source", "html", "css", "javascript", "inspect"] }),
     command({ id: "collaboration.manage", label: "Collaborators", category: "Collaboration", icon: "users", run: panel("collaborators") }),
     command({ id: "project.details", label: "Website settings", category: "Website", icon: "settings", run: panel("overview"), synonyms: ["details"] }),
     command({ id: "project.agent-guidance", label: "Agent guidance", category: "Website", icon: "sparkles", run: panel("settings"), synonyms: ["instructions"] }),

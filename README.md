@@ -8,13 +8,20 @@ TypeScript project.
 Everything Canvas generates is **frontend-only**: there is no generated backend, and
 generated code never runs on the Canvas server.
 
+**Generated document versus export target.** What a model produces is a safe static Canvas
+document — an HTML body fragment, authored CSS, and optional vanilla browser JavaScript —
+never React, JSX, TSX, or Next.js source. That document is what Canvas validates, previews,
+versions, and stores. The *export* step is separate: Canvas assembles the safe documents
+into a runnable **Next.js + React + TypeScript** project shell. Next.js is the export
+target, not the thing the model writes.
+
 ## Features
 
 - **Accounts and workspaces** — Argon2id credentials, opaque session cookies, per-project owner/collaborator roles, invitation links.
 - **Page tree** — folders and pages, canonical routes, homepage selection, SEO metadata, duplication, soft deletion.
 - **Media library** — private, project-scoped images served only through authenticated routes.
 - **Brand and theme** — company identity, logos, semantic light/dark color sets, and design scales resolved into CSS tokens.
-- **AI page generation** — durable jobs, immutable Page Versions, structured validation, restricted compilation.
+- **AI page generation** — durable jobs, a first-class PageDesignPlan before source, immutable Page Versions, and deterministic HTML/CSS/JS validation. New pages are planned, similarity-checked against the rest of the project, and only then generated as a safe static document.
 - **Bring your own AI** — account-owned provider connections (Gemini, OpenAI, Anthropic, OpenAI-compatible), encrypted credentials, one model selection per person, and usage, latency and cost analytics by account and by project.
 - **Building Blocks** — reusable sections; global blocks resolve through one stable UUID and propagate everywhere.
 - **Element-level editing** — click a region in the Preview and ask Canvas to change that region only.
@@ -148,12 +155,33 @@ Removing a connection or disabling a model never damages a website: existing pag
 versions and history are untouched, and that person's next AI request fails with a clear
 configuration error until another model is chosen. Everyone else keeps working.
 
+### Page Design Planning
+
+New page generation begins with a first-class **PageDesignPlan** rather than going straight
+to HTML. One planning call to the same account-selected model returns three lightweight,
+structurally different composition candidates; the planner selects the strongest with a
+rationale, and the server validates it. Canvas then computes a deterministic **composition
+fingerprint** from the selected plan — section roles, width/alignment/density rhythm, media
+emphasis, repetition — using *no* theme values, and compares it against the other pages in
+the project. If the plan is too close to an existing page's skeleton, Canvas performs one
+bounded re-plan; if it is still too similar it fails cleanly (`AI_DESIGN_PLAN_TOO_SIMILAR`)
+rather than shipping a duplicate layout. Only the selected plan is fed into source
+generation, and its compact fingerprint is persisted with the Page Version so later pages
+can be compared without re-planning. Modifications and selected-element edits keep their
+existing preserve-unrelated semantics and never route through the planner.
+
+This enforces the separation the product depends on: the **Theme is a visual language**
+(colour, type, radius, spacing, shadow, borders) and never a page layout; **Building Blocks**
+are the mechanism for intentional shared composition; and each page's composition is
+designed for its own job. Two unrelated businesses on the same Theme share a visual language
+without sharing a template.
+
 ### Generation pipeline
 
 Every result still flows through the same safe pipeline, whichever provider produced it:
 
-provider → structured response → Zod schema validation → source/security validation →
-restricted compile → immutable version → transactional activation.
+provider → design plan → structured response → Zod schema validation → source/security
+validation → composition conformance → immutable version → transactional activation.
 
 Selected Media is sent inline as bytes, so no storage key or signed URL leaves Canvas. A
 model that lacks a capability the request needs — structured output, or image input — fails
@@ -164,8 +192,9 @@ Provider failures are normalized (`AI_NOT_CONFIGURED`, `AI_PROVIDER_AUTH_FAILED`
 `AI_MODEL_CAPABILITY_UNSUPPORTED`), and only transient classes are retried.
 
 Prompts are composed from provider-independent sections in a fixed order — platform rules,
-operation, craft standard, output contract, project instructions, design system, reusable
-sections, site structure, target state, media, conversation, closing anchor — and the same
+operation, craft standard, design plan, output contract, project instructions, design
+system, reusable sections, site structure, target state, media, conversation, closing
+anchor — and the same
 composed prompt goes to whichever adapter the project selected. Each operation (create
 page, modify page, modify element, create/modify a reusable section, validation repair)
 carries its own instructions and a prompt version such as `canvas-page-create-v2`, recorded

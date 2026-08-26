@@ -18,6 +18,7 @@ export const PROMPT_SECTION_ORDER = [
   "platform",            // 1. platform, security, and technical constraints
   "operation",           // 2. what this request is: create, modify, scope of change
   "craft",               //    the design and copy standard for generated output
+  "design_plan",         //    the selected PageDesignPlan this source must implement
   "output_contract",     // 10. what a valid structured response must contain
   "project_instructions",// 3. persistent project instructions (untrusted)
   "design_system",       // 4. brand, theme, and design system notes
