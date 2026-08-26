@@ -30,6 +30,11 @@ describe("design-plan conformance", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("allows a placeholder-led page when no approved Media was available", () => {
+    const result = checkDesignPlanConformance(plan([section("a", "dominant")]), manifest({ referencedMediaIds: [] }), { mediaAvailable: false });
+    expect(result.ok).toBe(true);
+  });
+
   it("passes when dominant Media is present", () => {
     const result = checkDesignPlanConformance(plan([section("a", "dominant")]), manifest({ referencedMediaIds: ["00000000-0000-4000-8000-000000000000"] }));
     expect(result.ok).toBe(true);

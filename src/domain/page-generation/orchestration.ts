@@ -191,7 +191,7 @@ export class PageGenerationOrchestrationService {
           // repairable document defect so the bounded repair loop can correct it rather
           // than discarding an otherwise valid page.
           if (selectedPlan) {
-            const conformance = checkDesignPlanConformance(selectedPlan, manifest);
+            const conformance = checkDesignPlanConformance(selectedPlan, manifest, { mediaAvailable: approved.size > 0 });
             if (!conformance.ok) throw new AIError("AI_GENERATED_DOCUMENT_INVALID", "The generated page did not implement the selected design plan.", false, undefined, conformance.reason);
           }
           return { manifest, document };
