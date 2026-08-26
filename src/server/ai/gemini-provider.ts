@@ -217,10 +217,15 @@ export class GeminiProvider implements AIProvider {
     } catch (error) {
       // Gemini accepts only a subset of JSON Schema and rejects some valid but deeply
       // nested schemas with a generic INVALID_ARGUMENT response. Keep JSON mode enabled
-      // and let Canvas's validator remain authoritative, rather than making an otherwise
-      // usable model unable to generate a page at all.
+      // and give the model the exact schema as a text contract. Canvas's validator remains
+      // authoritative, rather than making an otherwise usable model unable to generate a
+      // page at all.
       if (!request.responseSchema || !(error instanceof AIError) || error.code !== "AI_PROVIDER_INVALID_RESPONSE") throw error;
-      result = await this.generate(request, true, undefined);
+      const schemaContract = JSON.stringify(request.responseSchema);
+      result = await this.generate({
+        ...request,
+        systemInstructions: `${request.systemInstructions}\n\nStructured response compatibility contract\nThe provider could not enforce the response schema for this request. Return exactly one JSON object matching this schema; do not return prose or Markdown.\n<response_json_schema>${schemaContract}</response_json_schema>`,
+      }, true, undefined);
     }
     const sanitized = unwrapJson(result.text);
     const responseDiagnostic = structuredResponseDiagnostic(result.text, sanitized, result.finishReason);

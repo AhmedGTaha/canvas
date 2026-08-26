@@ -156,6 +156,8 @@ describe("Gemini structured responses", () => {
     expect(generateContent.mock.calls[0]![0].config.responseJsonSchema).toBe(generatedPageResponseJsonSchema);
     expect(generateContent.mock.calls[1]![0].config).toMatchObject({ responseMimeType: "application/json" });
     expect(generateContent.mock.calls[1]![0].config.responseJsonSchema).toBeUndefined();
+    expect(generateContent.mock.calls[1]![0].config.systemInstruction).toContain("Structured response compatibility contract");
+    expect(generateContent.mock.calls[1]![0].config.systemInstruction).toContain('"schemaVersion"');
   });
 
   it("recovers from a stray markdown fence around the JSON", async () => {
