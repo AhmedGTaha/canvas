@@ -39,6 +39,20 @@ function failureStage(error: AIError, fallback: string) {
   return fallback;
 }
 
+/** A static page may safely lose unsolicited behaviour; an explicitly interactive page may not. */
+function requestsInteractivity(request: string) {
+  return /\b(?:interactive|interactivity|accordion|modal|toggle|dropdown|carousel|slideshow|filter(?:ing)?|search(?:able)?|calculator|form validation|animation)\b/i.test(request);
+}
+
+function canDiscardUnsafeJavaScript(input: { operation: string; selectedElement: unknown; request: string; error: unknown }) {
+  return input.operation === "page_generate"
+    && !input.selectedElement
+    && !requestsInteractivity(input.request)
+    && input.error instanceof AIError
+    && input.error.code === "AI_GENERATED_DOCUMENT_INVALID"
+    && /^unsafe JavaScript/i.test(input.error.diagnostic ?? "");
+}
+
 /**
  * Resolves the credential for a job at execution time, from the account of the person who
  * created it. The job carries the actor's id and nothing else; the key itself is fetched,
@@ -181,7 +195,18 @@ export class PageGenerationOrchestrationService {
         onCandidate: async (candidate) => { await this.database.update(generationJobs).set({ provider: candidate.provider, providerModel: candidate.model, providerRequestId: candidate.providerRequestId, usageMetadata: candidate.usage }).where(eq(generationJobs.id, jobId)); },
         validate: async (data) => {
           const repaired = repairGeneratedCanvasIds(data.html);
-          const { manifest, document } = validateGeneratedPageDocument({ document: { ...pageDocumentFrom(data), html: repaired.html }, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds, availableBlockIds, declaredBlockUsages: data.blockUsages });
+          const documentInput = { ...pageDocumentFrom(data), html: repaired.html };
+          let validated: ReturnType<typeof validateGeneratedPageDocument>;
+          try {
+            validated = validateGeneratedPageDocument({ document: documentInput, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds, availableBlockIds, declaredBlockUsages: data.blockUsages });
+          } catch (error) {
+            // Static informational pages do not need model-added behaviour. If that
+            // behaviour is unsafe, discard it rather than letting it block the safe HTML
+            // and CSS the user requested. Explicitly interactive work still fails closed.
+            if (!canDiscardUnsafeJavaScript({ operation: initial.operation, selectedElement, request: prompt.content, error })) throw error;
+            validated = validateGeneratedPageDocument({ document: { ...documentInput, js: "" }, approvedMediaIds: approved, activeRoutes, declaredMediaIds: data.referencedMediaIds, availableBlockIds, declaredBlockUsages: data.blockUsages });
+          }
+          const { manifest, document } = validated;
           if (selectedElement) {
             const { targetCanvasId, targetRemoved } = data;
             if (targetCanvasId && targetCanvasId !== selectedElement.canvasId) elementInvalid(`target mismatch: ${targetCanvasId}`);
