@@ -165,6 +165,11 @@ describe("Gemini structured responses", () => {
     await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({ structuredData: { html: "x" } });
   });
 
+  it("recovers a JSON object wrapped in provider prose", async () => {
+    generateContent.mockResolvedValue(reply("Here is the requested response:\n```json\n{\"schemaVersion\":1,\"html\":\"x\"}\n```"));
+    await expect(provider().generateStructured(request(), validator)).resolves.toMatchObject({ structuredData: { html: "x" } });
+  });
+
   it("rejects unparseable and contract-violating responses without weakening the contract", async () => {
     generateContent.mockResolvedValue(reply("not json at all"));
     await expect(provider().generateStructured(request(), validator)).rejects.toMatchObject({ code: "AI_RESPONSE_MALFORMED", retryable: false, diagnostic: expect.stringContaining("stage=response_parse") });

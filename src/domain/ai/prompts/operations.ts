@@ -25,7 +25,8 @@ This conversation is read-only: respond with context-aware planning or summary t
 
 export const PAGE_CREATE_TASK = `Your task
 Return one complete static page as structured JSON: html for its markup, css for its styles, js for its behaviour, and metadata for its title and description.
-This page does not exist yet. Design it end to end: decide its section list, its hierarchy, and its copy before writing source.`;
+This page does not exist yet. Design it end to end: decide its section list, its hierarchy, and its copy before writing source.
+Default to a fully static page: set js to an empty string unless the user explicitly requests an interaction that HTML and CSS cannot provide. Do not add animation, scrolling, timers, or event listeners merely for presentation.`;
 
 export const PAGE_MODIFY_TASK = `Your task
 Return one complete static page as structured JSON — html, css, js, and metadata — as a full replacement for the existing page below.

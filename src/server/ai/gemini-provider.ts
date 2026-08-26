@@ -102,7 +102,29 @@ function schemaDiagnostic(error: unknown) {
 /** Strips a stray markdown fence if the model wraps its JSON despite the MIME type. */
 function unwrapJson(text: string) {
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/i.exec(text.trim());
-  return (fenced ? fenced[1]! : text).trim();
+  const candidate = (fenced ? fenced[1]! : text).trim();
+  if (/^[{[]/.test(candidate)) return candidate;
+
+  // A provider occasionally surrounds an otherwise valid object with a one-line
+  // introduction or a Markdown fence. Extract only a balanced top-level object, while
+  // respecting quoted strings and escapes; the normal JSON parser and Zod contract still
+  // reject anything malformed or out of contract afterwards.
+  const start = candidate.indexOf("{");
+  if (start < 0) return candidate;
+  let depth = 0; let quoted = false; let escaped = false;
+  for (let index = start; index < candidate.length; index += 1) {
+    const char = candidate[index]!;
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') { quoted = true; continue; }
+    if (char === "{") depth += 1;
+    if (char === "}" && --depth === 0) return candidate.slice(start, index + 1);
+  }
+  return candidate;
 }
 
 /**
